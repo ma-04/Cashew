@@ -1,0 +1,224 @@
+name: Release
+
+# Builds and publishes a GitHub Release whenever a version tag is pushed:
+#   git tag v5.4.3 && git push origin v5.4.3
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v5.4.3)"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.24.5"
+  JAVA_VERSION: "17"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: budget
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code (drift)
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Test
+        run: flutter test
+
+  build:
+    name: Build Android
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: budget
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signed_with_upload_key: ${{ steps.signing.outputs.signed_with_upload_key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Strip a leading "v" and use the tag as the version name when it
+          # looks like a semver, otherwise fall back to whatever pubspec says.
+          STRIPPED="${TAG#v}"
+          if [[ "$STRIPPED" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            BUILD_NAME="$STRIPPED"
+          else
+            BUILD_NAME="$(grep '^version:' pubspec.yaml | sed 's/^version:[[:space:]]*//' | cut -d'+' -f1)"
+          fi
+          BUILD_NUMBER="$(grep '^version:' pubspec.yaml | sed 's/^version:[[:space:]]*//' | cut -d'+' -f2)"
+          echo "version=$BUILD_NAME" >> "$GITHUB_OUTPUT"
+          echo "build_name=$BUILD_NAME" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Building $BUILD_NAME+$BUILD_NUMBER from tag $TAG"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate code (drift)
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Set up Android signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$(pwd)/android/ci-keystore.jks"
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "Using the configured upload keystore."
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            STORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+            KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            echo "signed_with_upload_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret set - this release is signed with a throwaway key and cannot be used for Play Store uploads or in-place upgrades."
+            STORE_PASSWORD="cibuild"
+            KEY_PASSWORD="cibuild"
+            KEY_ALIAS="ci"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype JKS \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias "$KEY_ALIAS" \
+              -storepass "$STORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -dname "CN=Cashew CI, OU=CI, O=Cashew, L=None, S=None, C=US"
+            echo "signed_with_upload_key=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "storeFile=$KEYSTORE_PATH"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build universal APK
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.version.outputs.build_name }} \
+            --build-number=${{ steps.version.outputs.build_number }}
+
+      - name: Build per-ABI APKs
+        run: |
+          flutter build apk --release --split-per-abi \
+            --build-name=${{ steps.version.outputs.build_name }} \
+            --build-number=${{ steps.version.outputs.build_number }}
+
+      - name: Build App Bundle
+        run: |
+          flutter build appbundle --release \
+            --build-name=${{ steps.version.outputs.build_name }} \
+            --build-number=${{ steps.version.outputs.build_number }}
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          V="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/cashew-$V-universal.apk"
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            src="build/app/outputs/flutter-apk/app-$abi-release.apk"
+            if [ -f "$src" ]; then
+              cp "$src" "dist/cashew-$V-$abi.apk"
+            fi
+          done
+          cp build/app/outputs/bundle/release/app-release.aab "dist/cashew-$V.aab"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: budget/dist
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          {
+            echo "Automated build of \`${{ github.event.inputs.tag || github.ref_name }}\`."
+            echo
+            echo "### Downloads"
+            echo "- \`cashew-${{ needs.build.outputs.version }}-universal.apk\` — works on any Android device (largest)"
+            echo "- \`cashew-${{ needs.build.outputs.version }}-arm64-v8a.apk\` — most modern phones (smallest, recommended)"
+            echo "- \`cashew-${{ needs.build.outputs.version }}.aab\` — App Bundle for Play Store upload"
+            echo
+            if [ "${{ needs.build.outputs.signed_with_upload_key }}" != "true" ]; then
+              echo "> **Note:** these builds are signed with a throwaway CI key because no"
+              echo "> \`ANDROID_KEYSTORE_BASE64\` secret is configured. You must uninstall any"
+              echo "> previously installed build before installing this one, and the \`.aab\`"
+              echo "> cannot be uploaded to the Play Store."
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          files: dist/*
+          fail_on_unmatched_files: true
