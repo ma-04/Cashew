@@ -9,6 +9,7 @@ import 'package:budget/pages/aboutPage.dart';
 import 'package:budget/pages/accountsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/struct/shareBudget.dart';
 import 'package:budget/struct/syncClient.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -917,6 +918,39 @@ class _BackupManagementState extends State<BackupManagement> {
               ? SettingsContainerSwitch(
                   enableBorderRadius: true,
                   onSwitched: (value) async {
+                    // Google Drive sync and Firefly III sync are mutually
+                    // exclusive per install (see fireflySettingsPage.dart's
+                    // symmetric check on the other side of this toggle).
+                    if (value && fireflyEnabled) {
+                      bool confirmed = false;
+                      await openPopup(
+                        context,
+                        title: "cloud-sync".tr(),
+                        description:
+                            "firefly-disable-firefly-sync-warning".tr(),
+                        icon: appStateSettings["outlinedIcons"]
+                            ? Icons.warning_amber_outlined
+                            : Icons.warning_amber_rounded,
+                        onSubmitLabel: "continue".tr(),
+                        onSubmit: () {
+                          confirmed = true;
+                          popRoute(context);
+                        },
+                        onCancelLabel: "cancel".tr(),
+                        onCancel: () {
+                          popRoute(context);
+                        },
+                      );
+                      if (!confirmed) return false;
+                      await setFireflyEnabled(false);
+                      await updateSettings("backupSync", true,
+                          pagesNeedingRefresh: [], updateGlobalState: false);
+                      sidebarStateKey.currentState?.refreshState();
+                      setState(() {
+                        backupSync = true;
+                      });
+                      return true;
+                    }
                     // Only update global is the sidebar is shown
                     await updateSettings("backupSync", value,
                         pagesNeedingRefresh: [], updateGlobalState: false);

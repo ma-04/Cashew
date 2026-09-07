@@ -19,6 +19,9 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "backupLimit": 20,
     "backupSync": true,
     "syncEveryChange": kIsWeb,
+    "fireflyEnabled": false,
+    "fireflyHostUrl": "",
+    "fireflyLastSyncedAt": "",
     "devicesHaveBeenSynced": 1,
     "numBackups": 1,
     "theme": "system", //system, light, dark

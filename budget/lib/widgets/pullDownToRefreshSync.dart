@@ -1,5 +1,6 @@
 import 'package:budget/colors.dart';
 import 'package:budget/functions.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
 import 'package:budget/widgets/navigationFramework.dart';
@@ -14,9 +15,10 @@ import 'package:timer_builder/timer_builder.dart';
 bool enableSwipeDownToRefresh(BuildContext context) {
   return selectingTransactionsActive == 0 &&
       runningCloudFunctions == false &&
-      appStateSettings["hasSignedIn"] != false &&
-      appStateSettings["backupSync"] == true &&
-      googleUser != null;
+      ((appStateSettings["hasSignedIn"] != false &&
+              appStateSettings["backupSync"] == true &&
+              googleUser != null) ||
+          fireflyEnabled);
   // && getIsFullScreen(context) == false;
 }
 

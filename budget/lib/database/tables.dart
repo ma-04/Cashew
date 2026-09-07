@@ -26,7 +26,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 46;
+int schemaVersionGlobal = 47;
 
 // To update and migrate the database, check the README
 
@@ -125,6 +125,7 @@ enum MethodAdded {
   csv,
   preview,
   appLink,
+  firefly,
 }
 
 enum SharedStatus { waiting, shared, error }
@@ -245,6 +246,29 @@ class DeleteLogs extends Table {
 
   @override
   Set<Column> get primaryKey => {deleteLogPk};
+}
+
+// Maps a local UUID-keyed row (Wallet/Transaction/Category) to the numeric id
+// of the corresponding resource on a linked Firefly III instance, so pull/push
+// sync can resolve either direction without touching the core tables.
+enum FireflySyncEntityType { wallet, transaction, category }
+
+@DataClassName('FireflySyncMapEntry')
+class FireflySyncMap extends Table {
+  TextColumn get syncMapPk => text().clientDefault(() => uuid.v4())();
+  IntColumn get entityType => intEnum<FireflySyncEntityType>()();
+  TextColumn get localPk => text()();
+  IntColumn get fireflyId => integer()();
+  DateTimeColumn get fireflyUpdatedAt => dateTime().nullable()();
+  // The local dateTimeModified value at the moment this record was last
+  // pushed/pulled - lets us detect "changed locally since last synced"
+  // without re-diffing the full row.
+  DateTimeColumn get lastSyncedLocalModified => dateTime().nullable()();
+  DateTimeColumn get dateCreated =>
+      dateTime().clientDefault(() => new DateTime.now())();
+
+  @override
+  Set<Column> get primaryKey => {syncMapPk};
 }
 
 @DataClassName('TransactionWallet')
@@ -688,6 +712,7 @@ class CategoryWithTotal {
   ScannerTemplates,
   DeleteLogs,
   Objectives,
+  FireflySyncMap,
 ])
 class FinanceDatabase extends _$FinanceDatabase {
   // FinanceDatabase() : super(_openConnection());
@@ -1166,6 +1191,22 @@ class FinanceDatabase extends _$FinanceDatabase {
             },
           ),
         );
+        // Note: this migration is intentionally handled here instead of as a
+        // `from46To47` step within `migrationSteps` above. The generated
+        // `schema_versions.dart` only defines schemas up to Schema46, and a
+        // new `fromXToY` step can only be added once
+        // `drift_schemas/drift_schema_v47.json` has been dumped and
+        // `schema_versions.dart` regenerated. Creating the table directly
+        // needs no generated schema snapshot, matching the `if (from <= N)`
+        // style used for the earlier migrations above.
+        if (from <= 46) {
+          try {
+            await migrator.createTable($FireflySyncMapTable(database));
+          } catch (e) {
+            print("Migration Error: Error creating table FireflySyncMap " +
+                e.toString());
+          }
+        }
       },
       beforeOpen: (details) async {
         // This code exists because migration 42to43 may have not run correctly...

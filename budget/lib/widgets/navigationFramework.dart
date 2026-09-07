@@ -31,6 +31,8 @@ import 'package:budget/pages/creditDebtTransactionsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/defaultPreferences.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart';
+import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/struct/quickActions.dart';
 import 'package:budget/struct/settings.dart';
@@ -311,6 +313,10 @@ Future<bool> runAllCloudFunctions(BuildContext context,
     loadingIndeterminateKey.currentState?.setVisibility(true);
     await runForceSignIn(context);
     await syncData(context);
+    if (fireflyEnabled) {
+      loadingIndeterminateKey.currentState?.setVisibility(true);
+      await fireflySyncNow();
+    }
     if (appStateSettings["emailScanningPullToRefresh"] ||
         entireAppLoaded == false) {
       loadingIndeterminateKey.currentState?.setVisibility(true);
@@ -465,6 +471,9 @@ class PageNavigationFrameworkState extends State<PageNavigationFramework> {
         // so it shouldn't be an issue
         if (runningCloudFunctions == false && googleUser != null) {
           createSyncBackup(changeMadeSync: true);
+        }
+        if (fireflyEnabled) {
+          scheduleFireflyPush();
         }
       });
 
