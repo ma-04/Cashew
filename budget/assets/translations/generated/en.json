@@ -1187,6 +1187,7 @@
   "firefly-host-url": "Host URL",
   "firefly-personal-access-token": "Personal Access Token",
   "firefly-token-note": "Your Personal Access Token is stored securely on this device and is never included in backups or Google Drive sync",
+  "firefly-scope-note": "Joins a populated Firefly III budget: all asset accounts, categories, and transactions (including opening balances, reconciliations, and every split in a journal). Cashew subcategories are not sent to Firefly because Firefly categories are flat. Expense and revenue accounts are fetched from Firefly and used as payees; they do not become extra Cashew wallets. Deletes go both ways and are written to the local delete log.",
   "test-connection": "Test Connection",
   "testing": "Testing",
   "firefly-host-and-token-required": "Please enter a host URL and Personal Access Token",
@@ -1203,5 +1204,13 @@
   "cloud-sync": "Cloud Sync",
   "on": "on",
   "off": "off",
-  "saved": "Saved"
+  "saved": "Saved",
+  "firefly-balance-anchor": "Firefly balance",
+  "firefly-sync-window": "Sync window",
+  "firefly-sync-window-description": "How far back automatic syncing reaches. Older transactions are fetched on demand when you search, filter, or open an account.",
+  "firefly-sync-all-history": "Sync all history",
+  "firefly-sync-all-history-warning": "This downloads every transaction Firefly holds, ignoring the sync window. On a large instance this can take a while and use a lot of storage.",
+  "firefly-upload-local-history": "Upload local history",
+  "firefly-upload-local-history-warning": "This uploads every local transaction, including ones created before you linked Firefly. Anything Firefly already has will be duplicated. Only use this when Firefly is empty.",
+  "firefly-uncategorized": "Uncategorized"
 }

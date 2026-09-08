@@ -44,6 +44,45 @@ Future<void> setFireflyHostUrl(String url) {
   return updateSettings("fireflyHostUrl", url, updateGlobalState: false);
 }
 
+// How far back the routine automatic sync reaches.
+//
+// Firefly is the system of record; Cashew keeps a rolling recent window of it
+// locally so that a routine sync stays cheap regardless of how many years of
+// history the server holds. Anything older is fetched on demand (searching,
+// filtering, or opening an account) and cached from then on, and each
+// account's true balance is carried by a balance anchor so that totals and
+// net worth stay correct even though most history is not stored locally.
+const int kFireflyDefaultSyncWindowDays = 30;
+
+// Guard rails for the user-configurable value.
+const int kFireflyMinSyncWindowDays = 7;
+const int kFireflyMaxSyncWindowDays = 3650;
+
+int get fireflySyncWindowDays {
+  Object? raw = appStateSettings["fireflySyncWindowDays"];
+  int? parsed = raw is int ? raw : int.tryParse(raw?.toString() ?? "");
+  if (parsed == null) return kFireflyDefaultSyncWindowDays;
+  if (parsed < kFireflyMinSyncWindowDays) return kFireflyMinSyncWindowDays;
+  if (parsed > kFireflyMaxSyncWindowDays) return kFireflyMaxSyncWindowDays;
+  return parsed;
+}
+
+Future<void> setFireflySyncWindowDays(int days) {
+  return updateSettings("fireflySyncWindowDays", days,
+      updateGlobalState: false);
+}
+
+// Start of the routine sync window. Dates are truncated to midnight because
+// Firefly's start/end query parameters are date-only - keeping a time
+// component here would make the boundary ambiguous between the request we
+// send and the comparisons we make locally.
+DateTime fireflySyncWindowStart({DateTime? now}) {
+  DateTime reference = now ?? DateTime.now();
+  DateTime start =
+      reference.subtract(Duration(days: fireflySyncWindowDays));
+  return DateTime(start.year, start.month, start.day);
+}
+
 DateTime? get fireflyLastSyncedAt {
   String? iso = appStateSettings["fireflyLastSyncedAt"]?.toString();
   if (iso == null || iso.isEmpty) return null;

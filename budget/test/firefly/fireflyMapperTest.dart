@@ -82,14 +82,15 @@ void main() {
       expect(roundTripped.order, 5);
     });
 
-    test('fireflyAccountToWallet uses placeholder pk when none given', () {
+    test('fireflyAccountToWallet generates a pk when none given', () {
       FireflyAccount account = FireflyAccount(
         id: 42,
         name: "Savings",
         type: kFireflyAssetAccountType,
       );
       TransactionWallet wallet = fireflyAccountToWallet(account, order: 0);
-      expect(wallet.walletPk, "-1");
+      expect(wallet.walletPk, isNotEmpty);
+      expect(wallet.walletPk, isNot("-1"));
     });
   });
 
@@ -123,9 +124,13 @@ void main() {
       expect(classifySplitType("transfer"), FireflyPulledSplitKind.transfer);
     });
 
-    test('skips opening-balance and reconciliation types', () {
-      expect(classifySplitType("opening balance"), FireflyPulledSplitKind.skip);
-      expect(classifySplitType("reconciliation"), FireflyPulledSplitKind.skip);
+    test('maps opening-balance and reconciliation, skips unknown', () {
+      expect(classifySplitType("opening balance"),
+          FireflyPulledSplitKind.openingBalance);
+      expect(classifySplitType("opening-balance"),
+          FireflyPulledSplitKind.openingBalance);
+      expect(classifySplitType("reconciliation"),
+          FireflyPulledSplitKind.reconciliation);
       expect(classifySplitType("unknown"), FireflyPulledSplitKind.skip);
     });
   });
@@ -166,6 +171,7 @@ void main() {
         withdrawalSplit,
         walletPk: "wallet-1",
         categoryPk: "category-1",
+        isIncome: false,
       );
       expect(rebuilt.amount, -50.0);
       expect(rebuilt.income, isFalse);
@@ -180,6 +186,7 @@ void main() {
         depositSplit,
         walletPk: "wallet-1",
         categoryPk: "category-1",
+        isIncome: true,
       );
       expect(rebuiltIncome.amount, 200.0);
       expect(rebuiltIncome.income, isTrue);
@@ -202,6 +209,52 @@ void main() {
       expect(split.amount, 100.0);
       expect(split.sourceId, 1);
       expect(split.destinationId, 2);
+    });
+
+    test('description/notes overrides let the destination leg win', () {
+      Transaction from = _transaction(
+          transactionPk: "from-1",
+          amount: -100.0,
+          income: false,
+          name: "old name",
+          note: "old note");
+      Transaction to = _transaction(
+          transactionPk: "to-1",
+          amount: 100.0,
+          income: true,
+          name: "edited name",
+          note: "edited note");
+      FireflyTransactionSplit split = transferPairToFireflySplit(
+        fromTransaction: from,
+        toTransaction: to,
+        fromWalletFireflyId: 1,
+        toWalletFireflyId: 2,
+        descriptionOverride: to.name,
+        notesOverride: to.note,
+      );
+      expect(split.description, "edited name");
+      expect(split.notes, "edited note");
+    });
+
+    test('blank overrides fall back to the source leg', () {
+      Transaction from = _transaction(
+          transactionPk: "from-1",
+          amount: -100.0,
+          income: false,
+          name: "source name",
+          note: "source note");
+      Transaction to = _transaction(
+          transactionPk: "to-1", amount: 100.0, income: true, name: "", note: "");
+      FireflyTransactionSplit split = transferPairToFireflySplit(
+        fromTransaction: from,
+        toTransaction: to,
+        fromWalletFireflyId: 1,
+        toWalletFireflyId: 2,
+        descriptionOverride: to.name,
+        notesOverride: to.note,
+      );
+      expect(split.description, "source name");
+      expect(split.notes, "source note");
     });
 
     test('fireflySplitToTransferPair produces two linked transactions', () {
@@ -229,6 +282,136 @@ void main() {
       expect(source.pairedTransactionFk, dest.transactionPk);
       expect(dest.pairedTransactionFk, source.transactionPk);
       expect(source.transactionPk, isNot(equals(dest.transactionPk)));
+    });
+  });
+
+  group('account role', () {
+    test('a new account gets the default role', () {
+      expect(walletToFireflyAccount(_wallet()).accountRole, "defaultAsset");
+    });
+
+    test('an update carries the role the remote account already has', () {
+      expect(
+        walletToFireflyAccount(_wallet(), existingAccountRole: "savingAsset")
+            .accountRole,
+        "savingAsset",
+      );
+    });
+  });
+
+  group('balance anchors', () {
+    test('anchor pks are recognisable and wallet-specific', () {
+      String pk = fireflyBalanceAnchorPk("wallet-1");
+      expect(isFireflyBalanceAnchorPk(pk), isTrue);
+      expect(isFireflyBalanceAnchorPk("wallet-1"), isFalse);
+      expect(pk == fireflyBalanceAnchorPk("wallet-2"), isFalse);
+    });
+
+    test('an anchor lands in the balance-correction category', () {
+      Transaction anchor = buildFireflyBalanceAnchor(
+        walletPk: "wallet-1",
+        amount: -420.5,
+        date: DateTime(2024, 1, 1),
+        name: "Firefly balance",
+      );
+      // Category "0" is what keeps the anchor inside net totals and net worth
+      // while keeping it out of income/expense breakdowns.
+      expect(anchor.categoryFk, kBalanceCorrectionCategoryPk);
+      expect(anchor.walletFk, "wallet-1");
+      expect(anchor.amount, -420.5);
+      expect(anchor.income, isFalse);
+      expect(anchor.paid, isTrue);
+    });
+
+    test('a positive anchor is marked as income', () {
+      expect(
+        buildFireflyBalanceAnchor(
+          walletPk: "wallet-1",
+          amount: 1200.0,
+          date: DateTime(2024, 1, 1),
+          name: "Firefly balance",
+        ).income,
+        isTrue,
+      );
+    });
+  });
+
+
+  group('counterparty helpers', () {
+    test('assetFireflyIdForSplit prefers a synced source, then dest', () {
+      FireflyTransactionSplit split = FireflyTransactionSplit(
+        type: "withdrawal",
+        date: DateTime(2024, 3, 15),
+        amount: 10,
+        description: "Coffee",
+        sourceId: 7,
+        destinationId: 99,
+      );
+      expect(assetFireflyIdForSplit(split, {7, 8}), 7);
+      expect(assetFireflyIdForSplit(split, {99}), 99);
+      expect(assetFireflyIdForSplit(split, {1}), isNull);
+    });
+
+    test('resolvePushCounterparty uses stored id, then name, then category', () {
+      FireflyAccount aldi = FireflyAccount(
+        id: 10,
+        name: "Aldi",
+        type: kFireflyExpenseAccountType,
+      );
+      FireflyAccount groceries = FireflyAccount(
+        id: 11,
+        name: "Groceries",
+        type: kFireflyExpenseAccountType,
+      );
+      expect(
+        resolvePushCounterparty(
+          isIncome: false,
+          transactionName: "Coffee",
+          categoryName: "Groceries",
+          storedCounterpartyId: 10,
+          counterpartiesById: {10: aldi, 11: groceries},
+          expenseByName: {"aldi": aldi, "groceries": groceries},
+          revenueByName: {},
+        )?.id,
+        10,
+      );
+      expect(
+        resolvePushCounterparty(
+          isIncome: false,
+          transactionName: "Aldi",
+          categoryName: "Groceries",
+          storedCounterpartyId: null,
+          counterpartiesById: {10: aldi, 11: groceries},
+          expenseByName: {"aldi": aldi, "groceries": groceries},
+          revenueByName: {},
+        )?.id,
+        10,
+      );
+      expect(
+        resolvePushCounterparty(
+          isIncome: false,
+          transactionName: "Unknown shop",
+          categoryName: "Groceries",
+          storedCounterpartyId: null,
+          counterpartiesById: {10: aldi, 11: groceries},
+          expenseByName: {"aldi": aldi, "groceries": groceries},
+          revenueByName: {},
+        )?.id,
+        11,
+      );
+    });
+
+    test('transactionToFireflySplit sends destination_name when no counterparty id',
+        () {
+      Transaction expense = _transaction(amount: -50.0, name: "Coffee");
+      FireflyTransactionSplit split = transactionToFireflySplit(
+        expense,
+        walletFireflyId: 7,
+        counterpartyName: "Coffee",
+      );
+      expect(split.sourceId, 7);
+      expect(split.destinationId, isNull);
+      expect(split.destinationName, "Coffee");
     });
   });
 

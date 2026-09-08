@@ -4,47 +4,60 @@
 // pks) are resolved by the caller (fireflySyncEngine.dart) so this file stays
 // trivially unit-testable. See test/firefly/fireflyMapperTest.dart.
 //
-// Phase 1 scope only covers Accounts/Transactions/Categories - see
-// budget/FIREFLY_SYNC_FUTURE_SCOPE.md for what's deliberately not handled
-// here (subcategories, splits, tags, budgets, non-asset accounts, etc).
+// Phase 1 covers Accounts/Transactions/Categories. Subcategories are not
+// flattened (see skipped-subcategory reporting in the sync engine).
 
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart' show uuid;
 import 'package:budget/struct/firefly/fireflyModels.dart';
 
-// Every local Wallet is pushed as this Firefly account type; only Firefly
-// accounts of this type are pulled in as/kept as local Wallets.
 const String kFireflyAssetAccountType = "asset";
+const String kFireflyExpenseAccountType = "expense";
+const String kFireflyRevenueAccountType = "revenue";
+const String kFireflyCashAccountType = "cash";
 
-// The local pk Cashew already treats as "no specific category" - reused
-// as the category for pulled transfers, which have no Firefly category.
-const String kUncategorizedCategoryPk = "0";
+// Cashew's reserved balance-correction category, created lazily by
+// initializeBalanceCorrectionCategory(). Rows in it are counted in net totals
+// and net worth but kept out of income/expense breakdowns and spending graphs
+// - which is exactly right for balance anchors and for both legs of a
+// transfer, and exactly wrong for ordinary spending.
+const String kBalanceCorrectionCategoryPk = "0";
+
+// Firefly lets a transaction have no category at all; Cashew requires one.
+// Those rows go into a dedicated local bucket rather than into the
+// balance-correction category, so that real spending Firefly happens not to
+// have categorised still shows up in budgets, breakdowns and graphs. It is
+// never pushed to Firefly - see _pushCategories and _fireflyPushCategoryOf.
+const String kFireflyUncategorizedCategoryPk = "firefly-uncategorized";
 
 // ---------------------------------------------------------------------------
 // Accounts <-> Wallets
 // ---------------------------------------------------------------------------
 
-FireflyAccount walletToFireflyAccount(TransactionWallet wallet) {
+FireflyAccount walletToFireflyAccount(
+  TransactionWallet wallet, {
+  // The role the remote account already has, when we are updating one. Firefly
+  // requires account_role on every asset-account write, so omitting it on an
+  // update would silently reset a savings/credit-card account to a plain one.
+  String? existingAccountRole,
+}) {
   return FireflyAccount(
-    id: 0, // unused - ignored by FireflyApiClient's create/update request body
+    id: 0,
     name: wallet.name,
     type: kFireflyAssetAccountType,
     currencyCode: wallet.currency?.toUpperCase(),
+    accountRole: existingAccountRole ?? "defaultAsset",
     active: true,
   );
 }
 
-// existingWalletPk: pass the local pk when updating an already-linked wallet.
-// Leave null when materializing a brand new local wallet from a pulled
-// Firefly account - the DAO's insert:true path ignores this placeholder and
-// generates a fresh uuid.
 TransactionWallet fireflyAccountToWallet(
   FireflyAccount account, {
   required int order,
   String? existingWalletPk,
 }) {
   return TransactionWallet(
-    walletPk: existingWalletPk ?? "-1",
+    walletPk: existingWalletPk ?? uuid.v4(),
     name: account.name,
     dateCreated: account.createdAt ?? DateTime.now(),
     dateTimeModified: DateTime.now(),
@@ -58,9 +71,6 @@ TransactionWallet fireflyAccountToWallet(
 // Categories
 // ---------------------------------------------------------------------------
 
-// Returns null for subcategories (mainCategoryPk != null) - Firefly has no
-// nested categories, and phase 1 deliberately skips subcategory sync rather
-// than lossily flattening names. See FIREFLY_SYNC_FUTURE_SCOPE.md.
 FireflyCategory? categoryToFireflyCategory(TransactionCategory category) {
   if (category.mainCategoryPk != null) return null;
   return FireflyCategory(id: 0, name: category.name);
@@ -72,7 +82,7 @@ TransactionCategory fireflyCategoryToCategory(
   String? existingCategoryPk,
 }) {
   return TransactionCategory(
-    categoryPk: existingCategoryPk ?? "-1",
+    categoryPk: existingCategoryPk ?? uuid.v4(),
     name: fireflyCategory.name,
     dateCreated: fireflyCategory.createdAt ?? DateTime.now(),
     dateTimeModified: DateTime.now(),
@@ -85,10 +95,15 @@ TransactionCategory fireflyCategoryToCategory(
 // Transactions
 // ---------------------------------------------------------------------------
 
-enum FireflyPulledSplitKind { withdrawal, deposit, transfer, skip }
+enum FireflyPulledSplitKind {
+  withdrawal,
+  deposit,
+  transfer,
+  openingBalance,
+  reconciliation,
+  skip,
+}
 
-// reconciliation/opening balance splits are phase-1 deferred (skip) - see
-// FIREFLY_SYNC_FUTURE_SCOPE.md.
 FireflyPulledSplitKind classifySplitType(String fireflyType) {
   switch (fireflyType) {
     case "withdrawal":
@@ -97,29 +112,114 @@ FireflyPulledSplitKind classifySplitType(String fireflyType) {
       return FireflyPulledSplitKind.deposit;
     case "transfer":
       return FireflyPulledSplitKind.transfer;
+    case "opening-balance":
+    case "opening balance":
+      return FireflyPulledSplitKind.openingBalance;
+    case "reconciliation":
+      return FireflyPulledSplitKind.reconciliation;
     default:
       return FireflyPulledSplitKind.skip;
   }
 }
 
-// Non-transfer local transaction -> Firefly split (withdrawal or deposit).
-// Sign convention matches createOrUpdateTransaction: income == amount > 0.
+bool splitKindIsBalanceCorrection(FireflyPulledSplitKind kind) {
+  return kind == FireflyPulledSplitKind.openingBalance ||
+      kind == FireflyPulledSplitKind.reconciliation;
+}
+
+// The asset-account side of a split, if either end is a synced wallet.
+int? assetFireflyIdForSplit(
+  FireflyTransactionSplit split,
+  Set<int> assetFireflyIds,
+) {
+  if (split.sourceId != null && assetFireflyIds.contains(split.sourceId)) {
+    return split.sourceId;
+  }
+  if (split.destinationId != null &&
+      assetFireflyIds.contains(split.destinationId)) {
+    return split.destinationId;
+  }
+  return null;
+}
+
+// The non-wallet Firefly account on the other side of the asset (payee).
+int? counterpartyFireflyIdForSplit(
+  FireflyTransactionSplit split,
+  int walletFireflyId,
+) {
+  if (split.sourceId == walletFireflyId) return split.destinationId;
+  if (split.destinationId == walletFireflyId) return split.sourceId;
+  return null;
+}
+
+String? counterpartyNameForSplit(
+  FireflyTransactionSplit split,
+  int walletFireflyId,
+) {
+  if (split.sourceId == walletFireflyId) return split.destinationName;
+  if (split.destinationId == walletFireflyId) return split.sourceName;
+  return split.destinationName ?? split.sourceName;
+}
+
+// Money into the asset account is income.
+bool splitIsIncomeForAsset(
+  FireflyTransactionSplit split,
+  int walletFireflyId,
+) {
+  return split.destinationId == walletFireflyId;
+}
+
+FireflyAccount? resolvePushCounterparty({
+  required bool isIncome,
+  required String transactionName,
+  required String? categoryName,
+  required int? storedCounterpartyId,
+  required Map<int, FireflyAccount> counterpartiesById,
+  required Map<String, FireflyAccount> expenseByName,
+  required Map<String, FireflyAccount> revenueByName,
+}) {
+  if (storedCounterpartyId != null &&
+      counterpartiesById.containsKey(storedCounterpartyId)) {
+    return counterpartiesById[storedCounterpartyId];
+  }
+  Map<String, FireflyAccount> byName = isIncome ? revenueByName : expenseByName;
+  String nameKey = transactionName.trim().toLowerCase();
+  if (nameKey.isNotEmpty && byName.containsKey(nameKey)) {
+    return byName[nameKey];
+  }
+  String categoryKey = (categoryName ?? "").trim().toLowerCase();
+  if (categoryKey.isNotEmpty && byName.containsKey(categoryKey)) {
+    return byName[categoryKey];
+  }
+  return null;
+}
+
 FireflyTransactionSplit transactionToFireflySplit(
   Transaction transaction, {
   required int walletFireflyId,
   String? walletCurrencyCode,
   int? categoryFireflyId,
   String? categoryName,
+  int? counterpartyFireflyId,
+  String? counterpartyName,
 }) {
   bool isIncome = transaction.amount > 0;
+  String fallbackName = transaction.name.trim().isEmpty
+      ? "(no description)"
+      : transaction.name;
   return FireflyTransactionSplit(
     type: isIncome ? "deposit" : "withdrawal",
     date: transaction.dateCreated,
     amount: transaction.amount.abs(),
-    description:
-        transaction.name.trim().isEmpty ? "(no description)" : transaction.name,
-    sourceId: isIncome ? null : walletFireflyId,
-    destinationId: isIncome ? walletFireflyId : null,
+    description: fallbackName,
+    sourceId: isIncome ? counterpartyFireflyId : walletFireflyId,
+    sourceName: isIncome && counterpartyFireflyId == null
+        ? (counterpartyName ?? fallbackName)
+        : null,
+    destinationId: isIncome ? walletFireflyId : counterpartyFireflyId,
+    destinationName: !isIncome && counterpartyFireflyId == null
+        ? (counterpartyName ?? fallbackName)
+        : null,
     categoryId: categoryFireflyId,
     categoryName: categoryFireflyId == null ? categoryName : null,
     currencyCode: walletCurrencyCode?.toUpperCase(),
@@ -127,46 +227,51 @@ FireflyTransactionSplit transactionToFireflySplit(
   );
 }
 
-// A local transfer is two paired Transaction rows (fromTransaction has the
-// negative amount, toTransaction the positive one) - collapsed into a single
-// Firefly "transfer" split, matching Firefly's model of transfers.
 FireflyTransactionSplit transferPairToFireflySplit({
   required Transaction fromTransaction,
   required Transaction toTransaction,
   required int fromWalletFireflyId,
   required int toWalletFireflyId,
   String? currencyCode,
+  // A transfer is one Firefly split but two local rows, and the user may have
+  // edited either of them. The caller decides which side's text wins (the more
+  // recently modified one) and passes it here; without this the destination
+  // side's edits would never reach Firefly.
+  String? descriptionOverride,
+  String? notesOverride,
 }) {
+  String description = (descriptionOverride ?? "").trim().isNotEmpty
+      ? descriptionOverride!
+      : (fromTransaction.name.trim().isNotEmpty
+          ? fromTransaction.name
+          : (toTransaction.name.trim().isNotEmpty
+              ? toTransaction.name
+              : "(no description)"));
+  String notes = (notesOverride ?? "").trim().isNotEmpty
+      ? notesOverride!
+      : fromTransaction.note;
   return FireflyTransactionSplit(
     type: "transfer",
     date: fromTransaction.dateCreated,
     amount: fromTransaction.amount.abs(),
-    description: fromTransaction.name.trim().isNotEmpty
-        ? fromTransaction.name
-        : (toTransaction.name.trim().isNotEmpty
-            ? toTransaction.name
-            : "(no description)"),
+    description: description,
     sourceId: fromWalletFireflyId,
     destinationId: toWalletFireflyId,
     currencyCode: currencyCode?.toUpperCase(),
-    notes: fromTransaction.note.trim().isEmpty ? null : fromTransaction.note,
+    notes: notes.trim().isEmpty ? null : notes,
   );
 }
 
-// Firefly withdrawal/deposit split -> local transaction. walletPk/categoryPk
-// must already be resolved by the caller via FireflySyncMap.
-// existingTransactionPk null => a brand new local row (caller should insert
-// with insert:true, letting the DAO generate the real pk).
 Transaction fireflySplitToTransaction(
   FireflyTransactionSplit split, {
   required String walletPk,
   required String categoryPk,
+  required bool isIncome,
   String? existingTransactionPk,
 }) {
-  bool isIncome = split.type == "deposit";
   double signedAmount = isIncome ? split.amount.abs() : -split.amount.abs();
   return Transaction(
-    transactionPk: existingTransactionPk ?? "-1",
+    transactionPk: existingTransactionPk ?? uuid.v4(),
     name: split.description,
     amount: signedAmount,
     note: split.notes ?? "",
@@ -181,11 +286,90 @@ Transaction fireflySplitToTransaction(
   );
 }
 
-// Firefly transfer split -> a pair of linked local transactions. Both pks
-// are generated up front (rather than relying on the DAO's insert-time
-// uuid) so each row can reference the other via pairedTransactionFk before
-// either exists in the DB. Caller should always insert these with
-// insert:false, since the pks are already final.
+// Applies the fields Firefly owns onto an existing local row.
+//
+// createOrUpdateTransaction persists with InsertMode.insertOrReplace, and
+// SQLite REPLACE deletes the old row before re-inserting it - so any column
+// missing from the companion comes back as its default rather than its former
+// value. Rebuilding a fresh Transaction here would therefore silently drop
+// every Cashew-only field (subcategory, objective, budget exclusions, loan
+// links, notes the user attached locally...) each time a remote edit is
+// pulled. Copying onto the row we already have keeps them.
+Transaction fireflyApplySplitToExisting(
+  Transaction local,
+  FireflyTransactionSplit split, {
+  required String walletPk,
+  required String categoryPk,
+  required bool isIncome,
+}) {
+  double signedAmount = isIncome ? split.amount.abs() : -split.amount.abs();
+  return local.copyWith(
+    name: split.description,
+    amount: signedAmount,
+    note: split.notes ?? "",
+    categoryFk: categoryPk,
+    walletFk: walletPk,
+    dateCreated: split.date,
+    dateTimeModified: Value(DateTime.now()),
+    income: isIncome,
+    paid: true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Balance anchor
+// ---------------------------------------------------------------------------
+//
+// Only a recent window of Firefly's history is kept locally, so summing the
+// local rows for a wallet would report a balance that is wrong by exactly the
+// history that was never pulled. To fix that without holding the full ledger,
+// each synced wallet gets one synthetic "anchor" row carrying everything that
+// happened before the window:
+//
+//     anchor = firefly_current_balance - sum(other local rows for the wallet)
+//
+// It is stored with categoryFk "0", Cashew's balance-correction category,
+// which is exactly the right vehicle: onlyShowIfNotBalanceCorrection() in
+// tables.dart includes category-"0" rows in net totals (isIncome == null) and
+// excludes them from income/expense breakdowns. So wallet balances and net
+// worth come out right with no change to any existing query, while spending
+// graphs and budgets are unaffected by it.
+//
+// The pk is derived from the wallet pk rather than random so the row can be
+// recomputed idempotently on every sync, and so the push side can recognise
+// and skip it - an anchor must never be sent to Firefly, it is a local
+// artefact of not storing the whole ledger.
+
+const String kFireflyBalanceAnchorPkPrefix = "firefly-balance-anchor-";
+
+String fireflyBalanceAnchorPk(String walletPk) =>
+    kFireflyBalanceAnchorPkPrefix + walletPk;
+
+bool isFireflyBalanceAnchorPk(String transactionPk) =>
+    transactionPk.startsWith(kFireflyBalanceAnchorPkPrefix);
+
+Transaction buildFireflyBalanceAnchor({
+  required String walletPk,
+  required double amount,
+  required DateTime date,
+  required String name,
+}) {
+  return Transaction(
+    transactionPk: fireflyBalanceAnchorPk(walletPk),
+    name: name,
+    amount: amount,
+    note: "",
+    categoryFk: kBalanceCorrectionCategoryPk,
+    walletFk: walletPk,
+    dateCreated: date,
+    dateTimeModified: DateTime.now(),
+    income: amount > 0,
+    paid: true,
+    skipPaid: true,
+    methodAdded: MethodAdded.firefly,
+  );
+}
+
 (Transaction, Transaction) fireflySplitToTransferPair(
   FireflyTransactionSplit split, {
   required String sourceWalletPk,
@@ -202,7 +386,7 @@ Transaction fireflySplitToTransaction(
     name: split.description,
     amount: -split.amount.abs(),
     note: split.notes ?? "",
-    categoryFk: kUncategorizedCategoryPk,
+    categoryFk: kBalanceCorrectionCategoryPk,
     walletFk: sourceWalletPk,
     dateCreated: split.date,
     dateTimeModified: now,
@@ -217,7 +401,7 @@ Transaction fireflySplitToTransaction(
     name: split.description,
     amount: split.amount.abs(),
     note: split.notes ?? "",
-    categoryFk: kUncategorizedCategoryPk,
+    categoryFk: kBalanceCorrectionCategoryPk,
     walletFk: destWalletPk,
     dateCreated: split.date,
     dateTimeModified: now,
@@ -235,13 +419,6 @@ Transaction fireflySplitToTransaction(
 
 enum FireflySyncDirection { none, push, pull }
 
-// Last-write-wins conflict resolution, mirroring the existing Google Drive
-// sync's dateTimeModified-based diffing (lib/struct/syncClient.dart).
-//
-// - Neither side changed since the last successful sync => none.
-// - Only one side changed => that side wins outright.
-// - Both changed (a real conflict) => whichever timestamp is newer wins;
-//   a missing timestamp on one side loses to the side that has one.
 FireflySyncDirection decideSyncDirection({
   required DateTime? localModified,
   required DateTime? remoteUpdatedAt,
@@ -259,7 +436,6 @@ FireflySyncDirection decideSyncDirection({
   if (localChanged && !remoteChanged) return FireflySyncDirection.push;
   if (!localChanged && remoteChanged) return FireflySyncDirection.pull;
 
-  // Both changed since the last sync - resolve by most-recent timestamp.
   if (localModified == null) return FireflySyncDirection.pull;
   if (remoteUpdatedAt == null) return FireflySyncDirection.push;
   return localModified.isAfter(remoteUpdatedAt)

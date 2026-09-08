@@ -6615,6 +6615,554 @@ class DeleteLogsCompanion extends UpdateCompanion<DeleteLog> {
   }
 }
 
+class $FireflySyncMapTable extends FireflySyncMap
+    with TableInfo<$FireflySyncMapTable, FireflySyncMapEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $FireflySyncMapTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _syncMapPkMeta =
+      const VerificationMeta('syncMapPk');
+  @override
+  late final GeneratedColumn<String> syncMapPk = GeneratedColumn<String>(
+      'sync_map_pk', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      clientDefault: () => uuid.v4());
+  static const VerificationMeta _entityTypeMeta =
+      const VerificationMeta('entityType');
+  @override
+  late final GeneratedColumnWithTypeConverter<FireflySyncEntityType, int>
+      entityType = GeneratedColumn<int>('entity_type', aliasedName, false,
+              type: DriftSqlType.int, requiredDuringInsert: true)
+          .withConverter<FireflySyncEntityType>(
+              $FireflySyncMapTable.$converterentityType);
+  static const VerificationMeta _localPkMeta =
+      const VerificationMeta('localPk');
+  @override
+  late final GeneratedColumn<String> localPk = GeneratedColumn<String>(
+      'local_pk', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _fireflyIdMeta =
+      const VerificationMeta('fireflyId');
+  @override
+  late final GeneratedColumn<int> fireflyId = GeneratedColumn<int>(
+      'firefly_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _fireflyUpdatedAtMeta =
+      const VerificationMeta('fireflyUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> fireflyUpdatedAt =
+      GeneratedColumn<DateTime>('firefly_updated_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _lastSyncedLocalModifiedMeta =
+      const VerificationMeta('lastSyncedLocalModified');
+  @override
+  late final GeneratedColumn<DateTime> lastSyncedLocalModified =
+      GeneratedColumn<DateTime>('last_synced_local_modified', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _isTombstoneMeta =
+      const VerificationMeta('isTombstone');
+  @override
+  late final GeneratedColumn<bool> isTombstone = GeneratedColumn<bool>(
+      'is_tombstone', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("is_tombstone" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _counterpartyFireflyIdMeta =
+      const VerificationMeta('counterpartyFireflyId');
+  @override
+  late final GeneratedColumn<int> counterpartyFireflyId = GeneratedColumn<int>(
+      'counterparty_firefly_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _fireflySplitIndexMeta =
+      const VerificationMeta('fireflySplitIndex');
+  @override
+  late final GeneratedColumn<int> fireflySplitIndex = GeneratedColumn<int>(
+      'firefly_split_index', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _dateCreatedMeta =
+      const VerificationMeta('dateCreated');
+  @override
+  late final GeneratedColumn<DateTime> dateCreated = GeneratedColumn<DateTime>(
+      'date_created', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      clientDefault: () => new DateTime.now());
+  @override
+  List<GeneratedColumn> get $columns => [
+        syncMapPk,
+        entityType,
+        localPk,
+        fireflyId,
+        fireflyUpdatedAt,
+        lastSyncedLocalModified,
+        isTombstone,
+        counterpartyFireflyId,
+        fireflySplitIndex,
+        dateCreated
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'firefly_sync_map';
+  @override
+  VerificationContext validateIntegrity(Insertable<FireflySyncMapEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('sync_map_pk')) {
+      context.handle(
+          _syncMapPkMeta,
+          syncMapPk.isAcceptableOrUnknown(
+              data['sync_map_pk']!, _syncMapPkMeta));
+    }
+    context.handle(_entityTypeMeta, const VerificationResult.success());
+    if (data.containsKey('local_pk')) {
+      context.handle(_localPkMeta,
+          localPk.isAcceptableOrUnknown(data['local_pk']!, _localPkMeta));
+    } else if (isInserting) {
+      context.missing(_localPkMeta);
+    }
+    if (data.containsKey('firefly_id')) {
+      context.handle(_fireflyIdMeta,
+          fireflyId.isAcceptableOrUnknown(data['firefly_id']!, _fireflyIdMeta));
+    } else if (isInserting) {
+      context.missing(_fireflyIdMeta);
+    }
+    if (data.containsKey('firefly_updated_at')) {
+      context.handle(
+          _fireflyUpdatedAtMeta,
+          fireflyUpdatedAt.isAcceptableOrUnknown(
+              data['firefly_updated_at']!, _fireflyUpdatedAtMeta));
+    }
+    if (data.containsKey('last_synced_local_modified')) {
+      context.handle(
+          _lastSyncedLocalModifiedMeta,
+          lastSyncedLocalModified.isAcceptableOrUnknown(
+              data['last_synced_local_modified']!,
+              _lastSyncedLocalModifiedMeta));
+    }
+    if (data.containsKey('is_tombstone')) {
+      context.handle(
+          _isTombstoneMeta,
+          isTombstone.isAcceptableOrUnknown(
+              data['is_tombstone']!, _isTombstoneMeta));
+    }
+    if (data.containsKey('counterparty_firefly_id')) {
+      context.handle(
+          _counterpartyFireflyIdMeta,
+          counterpartyFireflyId.isAcceptableOrUnknown(
+              data['counterparty_firefly_id']!, _counterpartyFireflyIdMeta));
+    }
+    if (data.containsKey('firefly_split_index')) {
+      context.handle(
+          _fireflySplitIndexMeta,
+          fireflySplitIndex.isAcceptableOrUnknown(
+              data['firefly_split_index']!, _fireflySplitIndexMeta));
+    }
+    if (data.containsKey('date_created')) {
+      context.handle(
+          _dateCreatedMeta,
+          dateCreated.isAcceptableOrUnknown(
+              data['date_created']!, _dateCreatedMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {syncMapPk};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {entityType, localPk},
+      ];
+  @override
+  FireflySyncMapEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return FireflySyncMapEntry(
+      syncMapPk: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}sync_map_pk'])!,
+      entityType: $FireflySyncMapTable.$converterentityType.fromSql(
+          attachedDatabase.typeMapping
+              .read(DriftSqlType.int, data['${effectivePrefix}entity_type'])!),
+      localPk: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}local_pk'])!,
+      fireflyId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}firefly_id'])!,
+      fireflyUpdatedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}firefly_updated_at']),
+      lastSyncedLocalModified: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime,
+          data['${effectivePrefix}last_synced_local_modified']),
+      isTombstone: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_tombstone'])!,
+      counterpartyFireflyId: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}counterparty_firefly_id']),
+      fireflySplitIndex: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}firefly_split_index'])!,
+      dateCreated: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}date_created'])!,
+    );
+  }
+
+  @override
+  $FireflySyncMapTable createAlias(String alias) {
+    return $FireflySyncMapTable(attachedDatabase, alias);
+  }
+
+  static JsonTypeConverter2<FireflySyncEntityType, int, int>
+      $converterentityType = const EnumIndexConverter<FireflySyncEntityType>(
+          FireflySyncEntityType.values);
+}
+
+class FireflySyncMapEntry extends DataClass
+    implements Insertable<FireflySyncMapEntry> {
+  final String syncMapPk;
+  final FireflySyncEntityType entityType;
+  final String localPk;
+  final int fireflyId;
+  final DateTime? fireflyUpdatedAt;
+  final DateTime? lastSyncedLocalModified;
+  final bool isTombstone;
+  final int? counterpartyFireflyId;
+  final int fireflySplitIndex;
+  final DateTime dateCreated;
+  const FireflySyncMapEntry(
+      {required this.syncMapPk,
+      required this.entityType,
+      required this.localPk,
+      required this.fireflyId,
+      this.fireflyUpdatedAt,
+      this.lastSyncedLocalModified,
+      required this.isTombstone,
+      this.counterpartyFireflyId,
+      required this.fireflySplitIndex,
+      required this.dateCreated});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['sync_map_pk'] = Variable<String>(syncMapPk);
+    {
+      final converter = $FireflySyncMapTable.$converterentityType;
+      map['entity_type'] = Variable<int>(converter.toSql(entityType));
+    }
+    map['local_pk'] = Variable<String>(localPk);
+    map['firefly_id'] = Variable<int>(fireflyId);
+    if (!nullToAbsent || fireflyUpdatedAt != null) {
+      map['firefly_updated_at'] = Variable<DateTime>(fireflyUpdatedAt);
+    }
+    if (!nullToAbsent || lastSyncedLocalModified != null) {
+      map['last_synced_local_modified'] =
+          Variable<DateTime>(lastSyncedLocalModified);
+    }
+    map['is_tombstone'] = Variable<bool>(isTombstone);
+    if (!nullToAbsent || counterpartyFireflyId != null) {
+      map['counterparty_firefly_id'] = Variable<int>(counterpartyFireflyId);
+    }
+    map['firefly_split_index'] = Variable<int>(fireflySplitIndex);
+    map['date_created'] = Variable<DateTime>(dateCreated);
+    return map;
+  }
+
+  FireflySyncMapCompanion toCompanion(bool nullToAbsent) {
+    return FireflySyncMapCompanion(
+      syncMapPk: Value(syncMapPk),
+      entityType: Value(entityType),
+      localPk: Value(localPk),
+      fireflyId: Value(fireflyId),
+      fireflyUpdatedAt: fireflyUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fireflyUpdatedAt),
+      lastSyncedLocalModified: lastSyncedLocalModified == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSyncedLocalModified),
+      isTombstone: Value(isTombstone),
+      counterpartyFireflyId: counterpartyFireflyId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(counterpartyFireflyId),
+      fireflySplitIndex: Value(fireflySplitIndex),
+      dateCreated: Value(dateCreated),
+    );
+  }
+
+  factory FireflySyncMapEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return FireflySyncMapEntry(
+      syncMapPk: serializer.fromJson<String>(json['syncMapPk']),
+      entityType: $FireflySyncMapTable.$converterentityType
+          .fromJson(serializer.fromJson<int>(json['entityType'])),
+      localPk: serializer.fromJson<String>(json['localPk']),
+      fireflyId: serializer.fromJson<int>(json['fireflyId']),
+      fireflyUpdatedAt:
+          serializer.fromJson<DateTime?>(json['fireflyUpdatedAt']),
+      lastSyncedLocalModified:
+          serializer.fromJson<DateTime?>(json['lastSyncedLocalModified']),
+      isTombstone: serializer.fromJson<bool>(json['isTombstone']),
+      counterpartyFireflyId:
+          serializer.fromJson<int?>(json['counterpartyFireflyId']),
+      fireflySplitIndex: serializer.fromJson<int>(json['fireflySplitIndex']),
+      dateCreated: serializer.fromJson<DateTime>(json['dateCreated']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'syncMapPk': serializer.toJson<String>(syncMapPk),
+      'entityType': serializer.toJson<int>(
+          $FireflySyncMapTable.$converterentityType.toJson(entityType)),
+      'localPk': serializer.toJson<String>(localPk),
+      'fireflyId': serializer.toJson<int>(fireflyId),
+      'fireflyUpdatedAt': serializer.toJson<DateTime?>(fireflyUpdatedAt),
+      'lastSyncedLocalModified':
+          serializer.toJson<DateTime?>(lastSyncedLocalModified),
+      'isTombstone': serializer.toJson<bool>(isTombstone),
+      'counterpartyFireflyId': serializer.toJson<int?>(counterpartyFireflyId),
+      'fireflySplitIndex': serializer.toJson<int>(fireflySplitIndex),
+      'dateCreated': serializer.toJson<DateTime>(dateCreated),
+    };
+  }
+
+  FireflySyncMapEntry copyWith(
+          {String? syncMapPk,
+          FireflySyncEntityType? entityType,
+          String? localPk,
+          int? fireflyId,
+          Value<DateTime?> fireflyUpdatedAt = const Value.absent(),
+          Value<DateTime?> lastSyncedLocalModified = const Value.absent(),
+          bool? isTombstone,
+          Value<int?> counterpartyFireflyId = const Value.absent(),
+          int? fireflySplitIndex,
+          DateTime? dateCreated}) =>
+      FireflySyncMapEntry(
+        syncMapPk: syncMapPk ?? this.syncMapPk,
+        entityType: entityType ?? this.entityType,
+        localPk: localPk ?? this.localPk,
+        fireflyId: fireflyId ?? this.fireflyId,
+        fireflyUpdatedAt: fireflyUpdatedAt.present
+            ? fireflyUpdatedAt.value
+            : this.fireflyUpdatedAt,
+        lastSyncedLocalModified: lastSyncedLocalModified.present
+            ? lastSyncedLocalModified.value
+            : this.lastSyncedLocalModified,
+        isTombstone: isTombstone ?? this.isTombstone,
+        counterpartyFireflyId: counterpartyFireflyId.present
+            ? counterpartyFireflyId.value
+            : this.counterpartyFireflyId,
+        fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+        dateCreated: dateCreated ?? this.dateCreated,
+      );
+  @override
+  String toString() {
+    return (StringBuffer('FireflySyncMapEntry(')
+          ..write('syncMapPk: $syncMapPk, ')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('fireflyId: $fireflyId, ')
+          ..write('fireflyUpdatedAt: $fireflyUpdatedAt, ')
+          ..write('lastSyncedLocalModified: $lastSyncedLocalModified, ')
+          ..write('isTombstone: $isTombstone, ')
+          ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
+          ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('dateCreated: $dateCreated')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      syncMapPk,
+      entityType,
+      localPk,
+      fireflyId,
+      fireflyUpdatedAt,
+      lastSyncedLocalModified,
+      isTombstone,
+      counterpartyFireflyId,
+      fireflySplitIndex,
+      dateCreated);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is FireflySyncMapEntry &&
+          other.syncMapPk == this.syncMapPk &&
+          other.entityType == this.entityType &&
+          other.localPk == this.localPk &&
+          other.fireflyId == this.fireflyId &&
+          other.fireflyUpdatedAt == this.fireflyUpdatedAt &&
+          other.lastSyncedLocalModified == this.lastSyncedLocalModified &&
+          other.isTombstone == this.isTombstone &&
+          other.counterpartyFireflyId == this.counterpartyFireflyId &&
+          other.fireflySplitIndex == this.fireflySplitIndex &&
+          other.dateCreated == this.dateCreated);
+}
+
+class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
+  final Value<String> syncMapPk;
+  final Value<FireflySyncEntityType> entityType;
+  final Value<String> localPk;
+  final Value<int> fireflyId;
+  final Value<DateTime?> fireflyUpdatedAt;
+  final Value<DateTime?> lastSyncedLocalModified;
+  final Value<bool> isTombstone;
+  final Value<int?> counterpartyFireflyId;
+  final Value<int> fireflySplitIndex;
+  final Value<DateTime> dateCreated;
+  final Value<int> rowid;
+  const FireflySyncMapCompanion({
+    this.syncMapPk = const Value.absent(),
+    this.entityType = const Value.absent(),
+    this.localPk = const Value.absent(),
+    this.fireflyId = const Value.absent(),
+    this.fireflyUpdatedAt = const Value.absent(),
+    this.lastSyncedLocalModified = const Value.absent(),
+    this.isTombstone = const Value.absent(),
+    this.counterpartyFireflyId = const Value.absent(),
+    this.fireflySplitIndex = const Value.absent(),
+    this.dateCreated = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  FireflySyncMapCompanion.insert({
+    this.syncMapPk = const Value.absent(),
+    required FireflySyncEntityType entityType,
+    required String localPk,
+    required int fireflyId,
+    this.fireflyUpdatedAt = const Value.absent(),
+    this.lastSyncedLocalModified = const Value.absent(),
+    this.isTombstone = const Value.absent(),
+    this.counterpartyFireflyId = const Value.absent(),
+    this.fireflySplitIndex = const Value.absent(),
+    this.dateCreated = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : entityType = Value(entityType),
+        localPk = Value(localPk),
+        fireflyId = Value(fireflyId);
+  static Insertable<FireflySyncMapEntry> custom({
+    Expression<String>? syncMapPk,
+    Expression<int>? entityType,
+    Expression<String>? localPk,
+    Expression<int>? fireflyId,
+    Expression<DateTime>? fireflyUpdatedAt,
+    Expression<DateTime>? lastSyncedLocalModified,
+    Expression<bool>? isTombstone,
+    Expression<int>? counterpartyFireflyId,
+    Expression<int>? fireflySplitIndex,
+    Expression<DateTime>? dateCreated,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (syncMapPk != null) 'sync_map_pk': syncMapPk,
+      if (entityType != null) 'entity_type': entityType,
+      if (localPk != null) 'local_pk': localPk,
+      if (fireflyId != null) 'firefly_id': fireflyId,
+      if (fireflyUpdatedAt != null) 'firefly_updated_at': fireflyUpdatedAt,
+      if (lastSyncedLocalModified != null)
+        'last_synced_local_modified': lastSyncedLocalModified,
+      if (isTombstone != null) 'is_tombstone': isTombstone,
+      if (counterpartyFireflyId != null)
+        'counterparty_firefly_id': counterpartyFireflyId,
+      if (fireflySplitIndex != null) 'firefly_split_index': fireflySplitIndex,
+      if (dateCreated != null) 'date_created': dateCreated,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  FireflySyncMapCompanion copyWith(
+      {Value<String>? syncMapPk,
+      Value<FireflySyncEntityType>? entityType,
+      Value<String>? localPk,
+      Value<int>? fireflyId,
+      Value<DateTime?>? fireflyUpdatedAt,
+      Value<DateTime?>? lastSyncedLocalModified,
+      Value<bool>? isTombstone,
+      Value<int?>? counterpartyFireflyId,
+      Value<int>? fireflySplitIndex,
+      Value<DateTime>? dateCreated,
+      Value<int>? rowid}) {
+    return FireflySyncMapCompanion(
+      syncMapPk: syncMapPk ?? this.syncMapPk,
+      entityType: entityType ?? this.entityType,
+      localPk: localPk ?? this.localPk,
+      fireflyId: fireflyId ?? this.fireflyId,
+      fireflyUpdatedAt: fireflyUpdatedAt ?? this.fireflyUpdatedAt,
+      lastSyncedLocalModified:
+          lastSyncedLocalModified ?? this.lastSyncedLocalModified,
+      isTombstone: isTombstone ?? this.isTombstone,
+      counterpartyFireflyId:
+          counterpartyFireflyId ?? this.counterpartyFireflyId,
+      fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+      dateCreated: dateCreated ?? this.dateCreated,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (syncMapPk.present) {
+      map['sync_map_pk'] = Variable<String>(syncMapPk.value);
+    }
+    if (entityType.present) {
+      final converter = $FireflySyncMapTable.$converterentityType;
+      map['entity_type'] = Variable<int>(converter.toSql(entityType.value));
+    }
+    if (localPk.present) {
+      map['local_pk'] = Variable<String>(localPk.value);
+    }
+    if (fireflyId.present) {
+      map['firefly_id'] = Variable<int>(fireflyId.value);
+    }
+    if (fireflyUpdatedAt.present) {
+      map['firefly_updated_at'] = Variable<DateTime>(fireflyUpdatedAt.value);
+    }
+    if (lastSyncedLocalModified.present) {
+      map['last_synced_local_modified'] =
+          Variable<DateTime>(lastSyncedLocalModified.value);
+    }
+    if (isTombstone.present) {
+      map['is_tombstone'] = Variable<bool>(isTombstone.value);
+    }
+    if (counterpartyFireflyId.present) {
+      map['counterparty_firefly_id'] =
+          Variable<int>(counterpartyFireflyId.value);
+    }
+    if (fireflySplitIndex.present) {
+      map['firefly_split_index'] = Variable<int>(fireflySplitIndex.value);
+    }
+    if (dateCreated.present) {
+      map['date_created'] = Variable<DateTime>(dateCreated.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FireflySyncMapCompanion(')
+          ..write('syncMapPk: $syncMapPk, ')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('fireflyId: $fireflyId, ')
+          ..write('fireflyUpdatedAt: $fireflyUpdatedAt, ')
+          ..write('lastSyncedLocalModified: $lastSyncedLocalModified, ')
+          ..write('isTombstone: $isTombstone, ')
+          ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
+          ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('dateCreated: $dateCreated, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$FinanceDatabase extends GeneratedDatabase {
   _$FinanceDatabase(QueryExecutor e) : super(e);
   late final $WalletsTable wallets = $WalletsTable(this);
@@ -6630,6 +7178,7 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
   late final $ScannerTemplatesTable scannerTemplates =
       $ScannerTemplatesTable(this);
   late final $DeleteLogsTable deleteLogs = $DeleteLogsTable(this);
+  late final $FireflySyncMapTable fireflySyncMap = $FireflySyncMapTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6644,6 +7193,7 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
         associatedTitles,
         appSettings,
         scannerTemplates,
-        deleteLogs
+        deleteLogs,
+        fireflySyncMap
       ];
 }

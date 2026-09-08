@@ -30,6 +30,13 @@ class FireflyNetworkException implements Exception {
   String toString() => "FireflyNetworkException: $message";
 }
 
+class FireflyNotFoundException implements Exception {
+  final String message;
+  FireflyNotFoundException([this.message = "Resource not found on Firefly"]);
+  @override
+  String toString() => "FireflyNotFoundException: $message";
+}
+
 class FireflyApiClient {
   final String baseUrl;
   final String personalAccessToken;
@@ -44,8 +51,14 @@ class FireflyApiClient {
 
   static String _normalizeBaseUrl(String url) {
     String trimmed = url.trim();
+    if (trimmed.isNotEmpty && !trimmed.contains("://")) {
+      trimmed = "https://$trimmed";
+    }
     while (trimmed.endsWith("/")) {
       trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    if (trimmed.toLowerCase().endsWith("/api/v1")) {
+      trimmed = trimmed.substring(0, trimmed.length - 7);
     }
     return trimmed;
   }
@@ -68,6 +81,9 @@ class FireflyApiClient {
   Future<Map<String, dynamic>> _handleResponse(http.Response response) async {
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw FireflyAuthException();
+    }
+    if (response.statusCode == 404) {
+      throw FireflyNotFoundException();
     }
     if (response.statusCode == 429) {
       throw FireflyRateLimitException();
@@ -129,9 +145,10 @@ class FireflyApiClient {
 
   // ---- Accounts ----
 
-  Future<List<FireflyAccount>> getAccounts({String type = "asset"}) async {
-    List<Map<String, dynamic>> pages =
-        await _getAllPages("/accounts", {"type": type});
+  Future<List<FireflyAccount>> getAccounts({String? type}) async {
+    Map<String, dynamic> query = {};
+    if (type != null) query["type"] = type;
+    List<Map<String, dynamic>> pages = await _getAllPages("/accounts", query);
     return pages.map((json) => FireflyAccount.fromJson(json)).toList();
   }
 
@@ -148,6 +165,14 @@ class FireflyApiClient {
   }
 
   Future<void> deleteAccount(int id) => _delete("/accounts/$id");
+
+  // Single-account read, used to refresh a balance on demand without pulling
+  // the whole account list.
+  Future<FireflyAccount> getAccount(int id) async {
+    Map<String, dynamic> json = await _get("/accounts/$id");
+    return FireflyAccount.fromJson(
+        Map<String, dynamic>.from(json["data"]));
+  }
 
   // ---- Categories ----
 
@@ -203,6 +228,36 @@ class FireflyApiClient {
         Map<String, dynamic>.from(json["data"]));
   }
 
+  // Transactions belonging to one asset account, optionally date-bounded.
+  // Backs "load older transactions for this account" without widening the
+  // whole sync window.
+  Future<List<FireflyTransactionGroup>> getTransactionsForAccount(
+    int accountId, {
+    DateTime? start,
+    DateTime? end,
+  }) async {
+    Map<String, dynamic> query = {};
+    if (start != null) query["start"] = _formatDate(start);
+    if (end != null) query["end"] = _formatDate(end);
+    List<Map<String, dynamic>> pages =
+        await _getAllPages("/accounts/$accountId/transactions", query);
+    return pages.map((json) => FireflyTransactionGroup.fromJson(json)).toList();
+  }
+
+  // Full-text search across transactions, used to reach records that fall
+  // outside the locally cached window.
+  Future<List<FireflyTransactionGroup>> searchTransactions(String query) async {
+    List<Map<String, dynamic>> pages =
+        await _getAllPages("/search/transactions", {"query": query});
+    return pages.map((json) => FireflyTransactionGroup.fromJson(json)).toList();
+  }
+
+  Future<FireflyTransactionGroup> getTransaction(int id) async {
+    Map<String, dynamic> json = await _get("/transactions/$id");
+    return FireflyTransactionGroup.fromJson(
+        Map<String, dynamic>.from(json["data"]));
+  }
+
   Future<void> deleteTransaction(int id) => _delete("/transactions/$id");
 
   String _formatDate(DateTime date) {
@@ -211,6 +266,20 @@ class FireflyApiClient {
   }
 
   // Follows Firefly's JSON:API pagination (meta.pagination.total_pages).
+  static const int _kPageSize = 50;
+
+  // Hard stop so a server that keeps reporting "there is another page" cannot
+  // spin this loop forever. 2000 pages x 50 = 100k records.
+  static const int _kMaxPages = 2000;
+
+  // Fetches every page of a list endpoint.
+  //
+  // This MUST either return the complete result set or throw. Callers
+  // (notably the sync engine's delete reconciliation) treat the returned list
+  // as the authoritative remote state and delete local rows that are missing
+  // from it - so silently returning a truncated list here would destroy user
+  // data. Every ambiguous response is therefore an exception, never an early
+  // `break`.
   Future<List<Map<String, dynamic>>> _getAllPages(
       String path, Map<String, dynamic> query) async {
     List<Map<String, dynamic>> results = [];
@@ -218,6 +287,7 @@ class FireflyApiClient {
     while (true) {
       Map<String, dynamic> pageQuery = Map<String, dynamic>.from(query);
       pageQuery["page"] = page;
+      pageQuery["limit"] = _kPageSize;
       Map<String, dynamic> json = await _get(path, pageQuery);
       List<dynamic> data = List<dynamic>.from(json["data"] ?? []);
       results.addAll(data.map((item) => Map<String, dynamic>.from(item)));
@@ -228,11 +298,42 @@ class FireflyApiClient {
       Map<String, dynamic>? pagination = meta?["pagination"] == null
           ? null
           : Map<String, dynamic>.from(meta!["pagination"]);
-      int totalPages = pagination == null
-          ? 1
-          : int.tryParse(pagination["total_pages"].toString()) ?? 1;
-      if (page >= totalPages || data.isEmpty) break;
+
+      if (pagination == null) {
+        // Firefly always sends meta.pagination on its list endpoints. Its
+        // absence means we are talking to something we do not understand, so
+        // we cannot know whether more pages exist. A short page is safe to
+        // treat as the end; a full page is not.
+        if (data.length >= _kPageSize) {
+          throw FireflyNetworkException(
+              "Firefly returned a full page for $path with no pagination "
+              "metadata, so the result set may be incomplete. Refusing to "
+              "continue rather than risk acting on partial data.");
+        }
+        break;
+      }
+
+      String rawTotalPages = pagination["total_pages"].toString();
+      int? totalPages = int.tryParse(rawTotalPages);
+      if (totalPages == null) {
+        throw FireflyNetworkException(
+            "Firefly returned unparseable pagination metadata for $path "
+            "(total_pages=$rawTotalPages). Refusing to continue rather than "
+            "risk acting on partial data.");
+      }
+
+      if (page >= totalPages) break;
+      // A page that came back empty while the server still claims more pages
+      // follow would loop forever; treat it as a broken response.
+      if (data.isEmpty) {
+        throw FireflyNetworkException(
+            "Firefly returned an empty page $page of $totalPages for $path.");
+      }
       page++;
+      if (page > _kMaxPages) {
+        throw FireflyNetworkException(
+            "Firefly reported more than $_kMaxPages pages for $path.");
+      }
     }
     return results;
   }

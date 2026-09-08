@@ -24,6 +24,10 @@ class FireflyAccount {
   final String type;
   final String? currencyCode;
   final double? currentBalance;
+  // Firefly rejects an asset-account create/update that has no account_role
+  // (422). It is meaningless for every other account type and must be omitted
+  // there, so it is nullable and only emitted for assets.
+  final String? accountRole;
   final bool active;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -34,6 +38,7 @@ class FireflyAccount {
     required this.type,
     this.currencyCode,
     this.currentBalance,
+    this.accountRole,
     this.active = true,
     this.createdAt,
     this.updatedAt,
@@ -48,6 +53,7 @@ class FireflyAccount {
       type: attributes["type"]?.toString() ?? "asset",
       currencyCode: attributes["currency_code"]?.toString(),
       currentBalance: _parseDouble(attributes["current_balance"]),
+      accountRole: attributes["account_role"]?.toString(),
       active: attributes["active"] == null ? true : attributes["active"] == true,
       createdAt: _parseDate(attributes["created_at"]),
       updatedAt: _parseDate(attributes["updated_at"]),
@@ -59,6 +65,10 @@ class FireflyAccount {
       "name": name,
       "type": type,
       if (currencyCode != null) "currency_code": currencyCode,
+      // Required by Firefly for asset accounts, rejected for other types.
+      // Preserve whatever role the remote account already had so a round-trip
+      // update does not silently demote e.g. a savings account.
+      if (type == "asset") "account_role": accountRole ?? "defaultAsset",
       "active": active,
     };
   }

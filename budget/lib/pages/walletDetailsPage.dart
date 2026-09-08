@@ -12,6 +12,7 @@ import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/pages/transactionsSearchPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/spendingSummaryHelper.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -163,6 +164,13 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
         skipSearchQuery: true,
       );
     }
+    if (widget.wallet != null) {
+      // Routine syncing only keeps a recent window of this account locally.
+      // Opening the account is the user asking for all of it, so fetch the
+      // rest in the background - the list below is stream-backed and fills in
+      // on its own as rows arrive.
+      fireflyEnsureWalletHistoryCached(widget.wallet!.walletPk);
+    }
     super.initState();
   }
 
@@ -253,6 +261,8 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
           ),
         );
       });
+      fireflyEnsureRangeCached(
+          selectedDateTimeRange?.start, selectedDateTimeRange?.end);
     }
   }
 
@@ -298,6 +308,8 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
               selectedDateTimeRangeIndex = tappedRangeIndex;
             }
           });
+          fireflyEnsureRangeCached(
+              selectedDateTimeRange?.start, selectedDateTimeRange?.end);
           Future.delayed(Duration(milliseconds: 100), () {
             _tabController.animateTo(0);
           });

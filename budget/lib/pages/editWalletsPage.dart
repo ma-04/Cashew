@@ -5,6 +5,7 @@ import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/editAssociatedTitlesPage.dart';
 import 'package:budget/pages/editBudgetPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
 import 'package:budget/widgets/dropdownSelect.dart';
@@ -55,6 +56,10 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
         widget.runWhenOpen!();
       }
       database.fixOrderWallets();
+      // Balances shown here come from Firefly's own figures rather than from
+      // summing the locally cached window, so re-read them while the page is
+      // open. One account list request - far cheaper than a sync.
+      fireflyRefreshBalances();
     });
     super.initState();
   }

@@ -30,24 +30,14 @@ of scope for phase 1.
 - **Per-transaction foreign currency** (amount + rate distinct from the
   wallet's currency). Not synced; Firefly's `foreign_amount`/
   `foreign_currency_id` fields are ignored on pull and never sent on push.
-- **Transaction splits beyond the first**. A Firefly transaction group can
-  contain multiple splits (Cashew has no concept of a multi-split
-  transaction). Only `splits.first` is consumed on pull; extra splits are
-  silently skipped. Recommendation for a future pass: surface a "N splits
-  skipped" count to the user rather than silently dropping data.
 - **Subcategories**. Firefly categories are flat; Cashew categories have one
-  level of nesting. Phase 1 only syncs main categories
-  (`mainCategoryPk == null`) - subcategories are never pushed and never
-  created from a pull. Recommended future approach: either flatten via a
-  `"Parent: Child"` naming convention on push, or add real hierarchical
-  category support to Firefly's side via tags.
-- **Non-asset Firefly accounts** (expense, revenue, cash, liability accounts).
-  Only `asset` accounts become/stay linked to local Wallets. When a pulled
-  transaction's counterparty is a non-asset account, only the transaction's
-  own wallet/category/amount fields are used - the counterparty name is not
-  currently persisted (a future pass could append it to the transaction note).
-- **Opening balance / reconciliation transaction types**. Both are skipped by
-  `classifySplitType()` (returns `FireflyPulledSplitKind.skip`).
+  level of nesting. Main categories sync. Subcategories are never pushed
+  (counted in the sync report) and never created from a pull. Recommended
+  future approach: flatten via `"Parent: Child"` names, or map children
+  through Firefly tags.
+- **Liability accounts** (loan, debt, mortgage). Still not synced as wallets.
+  Expense, revenue, and cash accounts are fetched as counterparties/payees
+  and do not become Cashew wallets.
 - **Richer conflict-resolution UI**. Phase 1 is last-write-wins with no user
   visibility into what got overwritten. A future pass could log conflicts
   and let the user review them.
@@ -71,9 +61,7 @@ of scope for phase 1.
   storage (reduced protection vs. native platforms). This is a known,
   accepted tradeoff consistent with other web-specific compromises already
   present in the app - not something phase 1 attempts to fix.
-- **Transfer pull updates**: an edit made on the Firefly side to an
-  already-linked transfer is not currently pulled back down (see the comment
-  in `fireflySyncEngine.dart`'s `_pullTransactions` - new transfers are
-  pulled, but updates to existing linked transfer pairs are deferred to a
-  future iteration and left to the push side's last-write-wins check
-  instead).
+- **Remote deletes of in-use wallets**: if Firefly deletes an asset account
+  that still has local transactions, the Cashew wallet is kept and the map
+  row is tombstoned (warned in the sync report) rather than deleting the
+  wallet and its history.

@@ -22,6 +22,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "fireflyEnabled": false,
     "fireflyHostUrl": "",
     "fireflyLastSyncedAt": "",
+    "fireflySyncWindowDays": 30,
     "devicesHaveBeenSynced": 1,
     "numBackups": 1,
     "theme": "system", //system, light, dark

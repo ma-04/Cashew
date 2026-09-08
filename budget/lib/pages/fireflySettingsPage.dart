@@ -38,8 +38,25 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   TextEditingController patController = TextEditingController();
   bool testingConnection = false;
   bool syncingNow = false;
+  bool runningHistoryAction = false;
+  late int syncWindowDays = fireflySyncWindowDays;
+
+  // Offered window lengths, in days. Kept as a fixed list rather than a free
+  // text field so the value always stays inside the clamp in fireflySettings.
+  static const List<int> _windowOptions = [7, 14, 30, 60, 90, 180, 365, 730];
 
   Future<bool> enableFirefly() async {
+    if (!await _hasCredentials()) {
+      openSnackbar(
+        SnackbarMessage(
+          title: "firefly-host-and-token-required".tr(),
+          icon: appStateSettings["outlinedIcons"]
+              ? Icons.error_outlined
+              : Icons.error_rounded,
+        ),
+      );
+      return false;
+    }
     if (appStateSettings["backupSync"] == true) {
       bool confirmed = false;
       await openPopup(
@@ -63,11 +80,28 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       await updateSettings("backupSync", false,
           pagesNeedingRefresh: [], updateGlobalState: false);
     }
-    await _doEnableFirefly();
-    return true;
+    return await _doEnableFirefly();
   }
 
-  Future<void> _doEnableFirefly() async {
+  Future<bool> _hasCredentials() async {
+    if (hostController.text.trim().isEmpty) return false;
+    if (patController.text.trim().isNotEmpty) return true;
+    String? stored = await getFireflyPat();
+    return stored != null && stored.isNotEmpty;
+  }
+
+  Future<bool> _doEnableFirefly() async {
+    if (!await _hasCredentials()) {
+      openSnackbar(
+        SnackbarMessage(
+          title: "firefly-host-and-token-required".tr(),
+          icon: appStateSettings["outlinedIcons"]
+              ? Icons.error_outlined
+              : Icons.error_rounded,
+        ),
+      );
+      return false;
+    }
     await setFireflyHostUrl(hostController.text.trim());
     if (patController.text.trim().isNotEmpty) {
       await setFireflyPat(patController.text.trim());
@@ -78,6 +112,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       enabled = true;
     });
     fireflySyncNow();
+    return true;
   }
 
   Future<bool> disableFirefly() async {
@@ -95,6 +130,9 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       patController.clear();
       setState(() {});
     }
+    // A different server invalidates everything the on-demand fetches think
+    // they have already cached.
+    fireflyClearOnDemandCacheMemory();
     openSnackbar(SnackbarMessage(title: "saved".tr()));
   }
 
@@ -157,17 +195,96 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         syncingNow = false;
       });
     }
+    String? description = success
+        ? fireflySyncReportNotifier.value?.summary()
+        : fireflySyncErrorNotifier.value;
+    if (success && (fireflySyncReportNotifier.value?.warnings.isNotEmpty ?? false)) {
+      description = (description ?? "") +
+          "\n" +
+          fireflySyncReportNotifier.value!.warnings.join("\n");
+    }
     openSnackbar(
       SnackbarMessage(
         title: success
             ? "firefly-sync-successful".tr()
             : "firefly-sync-failed".tr(),
-        description: success ? null : fireflySyncErrorNotifier.value,
+        description: description,
         icon: appStateSettings["outlinedIcons"]
             ? (success ? Icons.check_circle_outlined : Icons.error_outlined)
             : (success ? Icons.check_circle_rounded : Icons.error_rounded),
       ),
     );
+  }
+
+  Future<void> _runHistoryAction(Future<bool> Function() action) async {
+    setState(() {
+      runningHistoryAction = true;
+    });
+    bool success = await action();
+    if (mounted) {
+      setState(() {
+        runningHistoryAction = false;
+      });
+    }
+    openSnackbar(
+      SnackbarMessage(
+        title: success
+            ? "firefly-sync-successful".tr()
+            : "firefly-sync-failed".tr(),
+        description: success
+            ? fireflySyncReportNotifier.value?.summary()
+            : fireflySyncErrorNotifier.value,
+        icon: appStateSettings["outlinedIcons"]
+            ? (success ? Icons.check_circle_outlined : Icons.error_outlined)
+            : (success ? Icons.check_circle_rounded : Icons.error_rounded),
+      ),
+    );
+  }
+
+  Future<void> syncAllHistory() async {
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-sync-all-history".tr(),
+      description: "firefly-sync-all-history-warning".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.history_outlined
+          : Icons.history_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    if (!confirmed) return;
+    await _runHistoryAction(fireflySyncAllHistory);
+  }
+
+  Future<void> uploadExistingLocalHistory() async {
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-upload-local-history".tr(),
+      description: "firefly-upload-local-history-warning".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.warning_amber_outlined
+          : Icons.warning_amber_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    if (!confirmed) return;
+    await _runHistoryAction(fireflyUploadExistingLocalHistory);
   }
 
   @override
@@ -223,7 +340,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
             child: TextFont(
               text: "firefly-token-note".tr(),
               fontSize: 13,
-              maxLines: 3,
+              maxLines: 4,
               textColor: getColor(context, "textLight"),
             ),
           ),
@@ -289,6 +406,73 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                     label: syncingNow ? "syncing".tr() : "sync-now".tr(),
                     disabled: syncingNow,
                     onTap: syncNow,
+                  ),
+                  SizedBox(height: 12),
+                  SettingsContainerDropdown(
+                    enableBorderRadius: true,
+                    title: "firefly-sync-window".tr(),
+                    description: "firefly-sync-window-description".tr(),
+                    icon: appStateSettings["outlinedIcons"]
+                        ? Icons.date_range_outlined
+                        : Icons.date_range_rounded,
+                    initial: syncWindowDays.toString(),
+                    items: [
+                      for (int days in _windowOptions) days.toString(),
+                    ],
+                    getLabel: (String value) => value + " " + "days".tr(),
+                    onChanged: (String value) async {
+                      int? days = int.tryParse(value);
+                      if (days == null) return;
+                      await setFireflySyncWindowDays(days);
+                      // Ranges skipped as "inside the window" under the old
+                      // setting may now sit outside it.
+                      fireflyClearOnDemandCacheMemory();
+                      setState(() {
+                        syncWindowDays = fireflySyncWindowDays;
+                      });
+                    },
+                  ),
+                  SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "firefly-sync-all-history".tr(),
+                          disabled: runningHistoryAction || syncingNow,
+                          onTap: syncAllHistory,
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Button(
+                          label: "firefly-upload-local-history".tr(),
+                          disabled: runningHistoryAction || syncingNow,
+                          onTap: uploadExistingLocalHistory,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 12),
+                  TextFont(
+                    text: "firefly-scope-note".tr(),
+                    fontSize: 13,
+                    maxLines: 8,
+                    textColor: getColor(context, "textLight"),
+                  ),
+                  ValueListenableBuilder<FireflySyncReport?>(
+                    valueListenable: fireflySyncReportNotifier,
+                    builder: (context, report, child) {
+                      if (report == null) return SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsetsDirectional.only(top: 8),
+                        child: TextFont(
+                          text: report.summary(),
+                          fontSize: 13,
+                          maxLines: 8,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
