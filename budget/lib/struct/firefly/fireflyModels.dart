@@ -120,6 +120,11 @@ class FireflyTransactionSplit {
   final String? categoryName;
   final String? currencyCode;
   final String? notes;
+  // Firefly's stable identity for this split. Unlike the split's position in
+  // group.splits it survives a sibling being deleted, so it - not the position
+  // - is what the sync map matches on. Null for splits built locally for a
+  // create, which have no journal yet.
+  final int? transactionJournalId;
 
   FireflyTransactionSplit({
     required this.type,
@@ -134,6 +139,7 @@ class FireflyTransactionSplit {
     this.categoryName,
     this.currencyCode,
     this.notes,
+    this.transactionJournalId,
   });
 
   factory FireflyTransactionSplit.fromJson(Map<String, dynamic> json) {
@@ -156,6 +162,9 @@ class FireflyTransactionSplit {
       categoryName: json["category_name"]?.toString(),
       currencyCode: json["currency_code"]?.toString(),
       notes: json["notes"]?.toString(),
+      transactionJournalId: json["transaction_journal_id"] == null
+          ? null
+          : int.tryParse(json["transaction_journal_id"].toString()),
     );
   }
 
@@ -175,6 +184,12 @@ class FireflyTransactionSplit {
         "category_name": categoryName,
       if (currencyCode != null) "currency_code": currencyCode,
       if (notes != null) "notes": notes,
+      // transaction_journal_id is deliberately not sent. Whether Firefly's PUT
+      // uses it to decide which existing journal each submitted split updates
+      // is unverified; if it does, sending it would also stop PUTs destroying
+      // and recreating journal rows, which is worth having but is a separate
+      // change. Nothing here depends on it being sent - it is read-only state
+      // used purely to identify splits on the way in.
     };
   }
 }

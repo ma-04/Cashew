@@ -443,3 +443,68 @@ FireflySyncDirection decideSyncDirection({
       ? FireflySyncDirection.push
       : FireflySyncDirection.pull;
 }
+
+// ---------------------------------------------------------------------------
+// Split identity
+// ---------------------------------------------------------------------------
+//
+// A Firefly journal group can hold several splits, and every local row mapped
+// to that group stores the same group id. What distinguishes one split from
+// another used to be fireflySplitIndex - the split's array position - which is
+// not a stable identity: deleting a split from the middle of a journal on the
+// Firefly side renumbers everything after it, so a stored index starts
+// pointing at its neighbour. One local row then gets overwritten from the
+// wrong split and the last one is re-imported as a duplicate, silently
+// skewing the account balance.
+//
+// Firefly gives each split a transaction_journal_id that survives its siblings
+// being deleted. These helpers match on that, and fall back to the position
+// only for rows written before the id was stored - which the caller then
+// backfills, so any given row takes the fallback path at most once.
+
+// Only rows with no journal id may be matched by position. A row that already
+// carries a *different* journal id belongs to a different split, and matching
+// it by position is exactly the corruption being fixed here.
+bool _matchesSplit(
+    FireflySyncMapEntry map, int? splitJournalId, int splitIndex) {
+  if (splitJournalId != null && map.fireflyJournalId != null) {
+    return map.fireflyJournalId == splitJournalId;
+  }
+  return map.fireflyJournalId == null && map.fireflySplitIndex == splitIndex;
+}
+
+// The sync-map row for one split, or null if this split is not mapped yet.
+FireflySyncMapEntry? matchSplitToSyncMap({
+  required List<FireflySyncMapEntry> groupMaps,
+  required int? splitJournalId,
+  required int splitIndex,
+}) {
+  List<FireflySyncMapEntry> matches = matchSplitToSyncMaps(
+    groupMaps: groupMaps,
+    splitJournalId: splitJournalId,
+    splitIndex: splitIndex,
+  );
+  return matches.isEmpty ? null : matches.first;
+}
+
+// Every sync-map row belonging to one split. A transfer is two local rows
+// sharing a single remote split, so this can legitimately return two.
+//
+// Journal-id matches win outright: if any row carries this split's journal id,
+// rows still awaiting backfill are not considered, because a position match
+// against an already-identified split is what caused the mis-pairing.
+List<FireflySyncMapEntry> matchSplitToSyncMaps({
+  required List<FireflySyncMapEntry> groupMaps,
+  required int? splitJournalId,
+  required int splitIndex,
+}) {
+  if (splitJournalId != null) {
+    List<FireflySyncMapEntry> byJournalId = groupMaps
+        .where((m) => m.fireflyJournalId == splitJournalId)
+        .toList();
+    if (byJournalId.isNotEmpty) return byJournalId;
+  }
+  return groupMaps
+      .where((m) => _matchesSplit(m, splitJournalId, splitIndex))
+      .toList();
+}

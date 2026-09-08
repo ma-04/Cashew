@@ -6662,6 +6662,12 @@ class $FireflySyncMapTable extends FireflySyncMap
       type: DriftSqlType.int,
       requiredDuringInsert: false,
       defaultValue: const Constant(0));
+  static const VerificationMeta _fireflyJournalIdMeta =
+      const VerificationMeta('fireflyJournalId');
+  @override
+  late final GeneratedColumn<int> fireflyJournalId = GeneratedColumn<int>(
+      'firefly_journal_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _dateCreatedMeta =
       const VerificationMeta('dateCreated');
   @override
@@ -6681,6 +6687,7 @@ class $FireflySyncMapTable extends FireflySyncMap
         isTombstone,
         counterpartyFireflyId,
         fireflySplitIndex,
+        fireflyJournalId,
         dateCreated
       ];
   @override
@@ -6744,6 +6751,12 @@ class $FireflySyncMapTable extends FireflySyncMap
           fireflySplitIndex.isAcceptableOrUnknown(
               data['firefly_split_index']!, _fireflySplitIndexMeta));
     }
+    if (data.containsKey('firefly_journal_id')) {
+      context.handle(
+          _fireflyJournalIdMeta,
+          fireflyJournalId.isAcceptableOrUnknown(
+              data['firefly_journal_id']!, _fireflyJournalIdMeta));
+    }
     if (data.containsKey('date_created')) {
       context.handle(
           _dateCreatedMeta,
@@ -6783,6 +6796,8 @@ class $FireflySyncMapTable extends FireflySyncMap
           DriftSqlType.int, data['${effectivePrefix}counterparty_firefly_id']),
       fireflySplitIndex: attachedDatabase.typeMapping.read(
           DriftSqlType.int, data['${effectivePrefix}firefly_split_index'])!,
+      fireflyJournalId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}firefly_journal_id']),
       dateCreated: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}date_created'])!,
     );
@@ -6809,6 +6824,7 @@ class FireflySyncMapEntry extends DataClass
   final bool isTombstone;
   final int? counterpartyFireflyId;
   final int fireflySplitIndex;
+  final int? fireflyJournalId;
   final DateTime dateCreated;
   const FireflySyncMapEntry(
       {required this.syncMapPk,
@@ -6820,6 +6836,7 @@ class FireflySyncMapEntry extends DataClass
       required this.isTombstone,
       this.counterpartyFireflyId,
       required this.fireflySplitIndex,
+      this.fireflyJournalId,
       required this.dateCreated});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -6843,6 +6860,9 @@ class FireflySyncMapEntry extends DataClass
       map['counterparty_firefly_id'] = Variable<int>(counterpartyFireflyId);
     }
     map['firefly_split_index'] = Variable<int>(fireflySplitIndex);
+    if (!nullToAbsent || fireflyJournalId != null) {
+      map['firefly_journal_id'] = Variable<int>(fireflyJournalId);
+    }
     map['date_created'] = Variable<DateTime>(dateCreated);
     return map;
   }
@@ -6864,6 +6884,9 @@ class FireflySyncMapEntry extends DataClass
           ? const Value.absent()
           : Value(counterpartyFireflyId),
       fireflySplitIndex: Value(fireflySplitIndex),
+      fireflyJournalId: fireflyJournalId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fireflyJournalId),
       dateCreated: Value(dateCreated),
     );
   }
@@ -6885,6 +6908,7 @@ class FireflySyncMapEntry extends DataClass
       counterpartyFireflyId:
           serializer.fromJson<int?>(json['counterpartyFireflyId']),
       fireflySplitIndex: serializer.fromJson<int>(json['fireflySplitIndex']),
+      fireflyJournalId: serializer.fromJson<int?>(json['fireflyJournalId']),
       dateCreated: serializer.fromJson<DateTime>(json['dateCreated']),
     );
   }
@@ -6903,6 +6927,7 @@ class FireflySyncMapEntry extends DataClass
       'isTombstone': serializer.toJson<bool>(isTombstone),
       'counterpartyFireflyId': serializer.toJson<int?>(counterpartyFireflyId),
       'fireflySplitIndex': serializer.toJson<int>(fireflySplitIndex),
+      'fireflyJournalId': serializer.toJson<int?>(fireflyJournalId),
       'dateCreated': serializer.toJson<DateTime>(dateCreated),
     };
   }
@@ -6917,6 +6942,7 @@ class FireflySyncMapEntry extends DataClass
           bool? isTombstone,
           Value<int?> counterpartyFireflyId = const Value.absent(),
           int? fireflySplitIndex,
+          Value<int?> fireflyJournalId = const Value.absent(),
           DateTime? dateCreated}) =>
       FireflySyncMapEntry(
         syncMapPk: syncMapPk ?? this.syncMapPk,
@@ -6934,6 +6960,9 @@ class FireflySyncMapEntry extends DataClass
             ? counterpartyFireflyId.value
             : this.counterpartyFireflyId,
         fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+        fireflyJournalId: fireflyJournalId.present
+            ? fireflyJournalId.value
+            : this.fireflyJournalId,
         dateCreated: dateCreated ?? this.dateCreated,
       );
   @override
@@ -6948,6 +6977,7 @@ class FireflySyncMapEntry extends DataClass
           ..write('isTombstone: $isTombstone, ')
           ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
           ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('fireflyJournalId: $fireflyJournalId, ')
           ..write('dateCreated: $dateCreated')
           ..write(')'))
         .toString();
@@ -6964,6 +6994,7 @@ class FireflySyncMapEntry extends DataClass
       isTombstone,
       counterpartyFireflyId,
       fireflySplitIndex,
+      fireflyJournalId,
       dateCreated);
   @override
   bool operator ==(Object other) =>
@@ -6978,6 +7009,7 @@ class FireflySyncMapEntry extends DataClass
           other.isTombstone == this.isTombstone &&
           other.counterpartyFireflyId == this.counterpartyFireflyId &&
           other.fireflySplitIndex == this.fireflySplitIndex &&
+          other.fireflyJournalId == this.fireflyJournalId &&
           other.dateCreated == this.dateCreated);
 }
 
@@ -6991,6 +7023,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
   final Value<bool> isTombstone;
   final Value<int?> counterpartyFireflyId;
   final Value<int> fireflySplitIndex;
+  final Value<int?> fireflyJournalId;
   final Value<DateTime> dateCreated;
   final Value<int> rowid;
   const FireflySyncMapCompanion({
@@ -7003,6 +7036,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     this.isTombstone = const Value.absent(),
     this.counterpartyFireflyId = const Value.absent(),
     this.fireflySplitIndex = const Value.absent(),
+    this.fireflyJournalId = const Value.absent(),
     this.dateCreated = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -7016,6 +7050,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     this.isTombstone = const Value.absent(),
     this.counterpartyFireflyId = const Value.absent(),
     this.fireflySplitIndex = const Value.absent(),
+    this.fireflyJournalId = const Value.absent(),
     this.dateCreated = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : entityType = Value(entityType),
@@ -7031,6 +7066,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     Expression<bool>? isTombstone,
     Expression<int>? counterpartyFireflyId,
     Expression<int>? fireflySplitIndex,
+    Expression<int>? fireflyJournalId,
     Expression<DateTime>? dateCreated,
     Expression<int>? rowid,
   }) {
@@ -7046,6 +7082,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       if (counterpartyFireflyId != null)
         'counterparty_firefly_id': counterpartyFireflyId,
       if (fireflySplitIndex != null) 'firefly_split_index': fireflySplitIndex,
+      if (fireflyJournalId != null) 'firefly_journal_id': fireflyJournalId,
       if (dateCreated != null) 'date_created': dateCreated,
       if (rowid != null) 'rowid': rowid,
     });
@@ -7061,6 +7098,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       Value<bool>? isTombstone,
       Value<int?>? counterpartyFireflyId,
       Value<int>? fireflySplitIndex,
+      Value<int?>? fireflyJournalId,
       Value<DateTime>? dateCreated,
       Value<int>? rowid}) {
     return FireflySyncMapCompanion(
@@ -7075,6 +7113,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       counterpartyFireflyId:
           counterpartyFireflyId ?? this.counterpartyFireflyId,
       fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+      fireflyJournalId: fireflyJournalId ?? this.fireflyJournalId,
       dateCreated: dateCreated ?? this.dateCreated,
       rowid: rowid ?? this.rowid,
     );
@@ -7113,6 +7152,9 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     if (fireflySplitIndex.present) {
       map['firefly_split_index'] = Variable<int>(fireflySplitIndex.value);
     }
+    if (fireflyJournalId.present) {
+      map['firefly_journal_id'] = Variable<int>(fireflyJournalId.value);
+    }
     if (dateCreated.present) {
       map['date_created'] = Variable<DateTime>(dateCreated.value);
     }
@@ -7134,6 +7176,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
           ..write('isTombstone: $isTombstone, ')
           ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
           ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('fireflyJournalId: $fireflyJournalId, ')
           ..write('dateCreated: $dateCreated, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -10241,6 +10284,7 @@ typedef $$FireflySyncMapTableInsertCompanionBuilder = FireflySyncMapCompanion
   Value<bool> isTombstone,
   Value<int?> counterpartyFireflyId,
   Value<int> fireflySplitIndex,
+  Value<int?> fireflyJournalId,
   Value<DateTime> dateCreated,
   Value<int> rowid,
 });
@@ -10255,6 +10299,7 @@ typedef $$FireflySyncMapTableUpdateCompanionBuilder = FireflySyncMapCompanion
   Value<bool> isTombstone,
   Value<int?> counterpartyFireflyId,
   Value<int> fireflySplitIndex,
+  Value<int?> fireflyJournalId,
   Value<DateTime> dateCreated,
   Value<int> rowid,
 });
@@ -10289,6 +10334,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             Value<bool> isTombstone = const Value.absent(),
             Value<int?> counterpartyFireflyId = const Value.absent(),
             Value<int> fireflySplitIndex = const Value.absent(),
+            Value<int?> fireflyJournalId = const Value.absent(),
             Value<DateTime> dateCreated = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -10302,6 +10348,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             isTombstone: isTombstone,
             counterpartyFireflyId: counterpartyFireflyId,
             fireflySplitIndex: fireflySplitIndex,
+            fireflyJournalId: fireflyJournalId,
             dateCreated: dateCreated,
             rowid: rowid,
           ),
@@ -10315,6 +10362,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             Value<bool> isTombstone = const Value.absent(),
             Value<int?> counterpartyFireflyId = const Value.absent(),
             Value<int> fireflySplitIndex = const Value.absent(),
+            Value<int?> fireflyJournalId = const Value.absent(),
             Value<DateTime> dateCreated = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -10328,6 +10376,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             isTombstone: isTombstone,
             counterpartyFireflyId: counterpartyFireflyId,
             fireflySplitIndex: fireflySplitIndex,
+            fireflyJournalId: fireflyJournalId,
             dateCreated: dateCreated,
             rowid: rowid,
           ),
@@ -10398,6 +10447,11 @@ class $$FireflySyncMapTableFilterComposer
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
+  ColumnFilters<int> get fireflyJournalId => $state.composableBuilder(
+      column: $state.table.fireflyJournalId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
   ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
       column: $state.table.dateCreated,
       builder: (column, joinBuilders) =>
@@ -10450,6 +10504,11 @@ class $$FireflySyncMapTableOrderingComposer
 
   ColumnOrderings<int> get fireflySplitIndex => $state.composableBuilder(
       column: $state.table.fireflySplitIndex,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get fireflyJournalId => $state.composableBuilder(
+      column: $state.table.fireflyJournalId,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

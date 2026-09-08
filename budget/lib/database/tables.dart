@@ -26,7 +26,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 48;
+int schemaVersionGlobal = 49;
 
 // To update and migrate the database, check the README
 
@@ -271,9 +271,15 @@ class FireflySyncMap extends Table {
   // Firefly expense/revenue/cash account id used as the counterparty of
   // this transaction (not a Cashew wallet).
   IntColumn get counterpartyFireflyId => integer().nullable()();
-  // Index of this row inside a multi-split Firefly journal group.
+  // Index of this row inside a multi-split Firefly journal group. This is a
+  // position, not an identity - it is kept because rebuilding a journal's
+  // split list needs an ordering, but matching is done on fireflyJournalId.
   IntColumn get fireflySplitIndex =>
       integer().withDefault(const Constant(0))();
+  // Firefly's stable per-split journal id, which survives its siblings being
+  // deleted. Nullable: rows written before this column existed have none and
+  // are matched by fireflySplitIndex until the next pull backfills them.
+  IntColumn get fireflyJournalId => integer().nullable()();
   DateTimeColumn get dateCreated =>
       dateTime().clientDefault(() => new DateTime.now())();
 
@@ -1259,6 +1265,26 @@ class FinanceDatabase extends _$FinanceDatabase {
             print(
                 "Migration Error: Error creating FireflySyncMap unique index " +
                     e.toString());
+          }
+        }
+        // Guarded at `>= 47` on purpose, not just `<= 48`. The `from <= 46`
+        // branch above calls createTable, which reflects the *current* table
+        // definition and therefore already includes fireflyJournalId. An
+        // unguarded addColumn would throw on those installs, be swallowed by
+        // the catch, and print a migration error for a table that is fine.
+        //
+        // Its own try/catch, separate from the v47 block, so a throw up there
+        // cannot skip this.
+        if (from >= 47 && from <= 48) {
+          try {
+            $FireflySyncMapTable fireflySyncMapTable =
+                $FireflySyncMapTable(database);
+            await migrator.addColumn(
+                fireflySyncMapTable, fireflySyncMapTable.fireflyJournalId);
+          } catch (e) {
+            print("Migration Error: Error adding column "
+                    "FireflySyncMap.fireflyJournalId " +
+                e.toString());
           }
         }
       },

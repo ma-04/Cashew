@@ -360,6 +360,7 @@ Future<void> _upsertSyncMap({
   bool isTombstone = false,
   int? counterpartyFireflyId,
   int fireflySplitIndex = 0,
+  int? fireflyJournalId,
 }) async {
   await database.into(database.fireflySyncMap).insert(
         FireflySyncMapCompanion(
@@ -373,6 +374,7 @@ Future<void> _upsertSyncMap({
           isTombstone: Value(isTombstone),
           counterpartyFireflyId: Value(counterpartyFireflyId),
           fireflySplitIndex: Value(fireflySplitIndex),
+          fireflyJournalId: Value(fireflyJournalId),
         ),
         mode: InsertMode.insertOrReplace,
       );
@@ -389,6 +391,7 @@ Future<void> _tombstoneMapRow(FireflySyncMapEntry map) async {
     isTombstone: true,
     counterpartyFireflyId: map.counterpartyFireflyId,
     fireflySplitIndex: map.fireflySplitIndex,
+    fireflyJournalId: map.fireflyJournalId,
   );
 }
 
@@ -669,16 +672,29 @@ Future<Set<int>> _pullTransactions(
     // the entire group when any one split was deleted locally froze all of its
     // siblings: they kept their mappings but stopped receiving remote updates,
     // permanently.
-    Set<int> tombstonedSplitIndexes = {
-      for (FireflySyncMapEntry m in await _syncMapsByFireflyId(
-          FireflySyncEntityType.transaction, group.id,
-          includeTombstones: true))
-        if (m.isTombstone) m.fireflySplitIndex
-    };
+    // Keyed by journal id where the tombstone has one, and by position for
+    // rows written before that column existed. Both sets are consulted: a
+    // tombstone still awaiting backfill can only be recognised by its index.
+    Set<int> tombstonedJournalIds = {};
+    Set<int> tombstonedSplitIndexes = {};
+    for (FireflySyncMapEntry m in await _syncMapsByFireflyId(
+        FireflySyncEntityType.transaction, group.id,
+        includeTombstones: true)) {
+      if (!m.isTombstone) continue;
+      if (m.fireflyJournalId != null) {
+        tombstonedJournalIds.add(m.fireflyJournalId!);
+      } else {
+        tombstonedSplitIndexes.add(m.fireflySplitIndex);
+      }
+    }
 
     for (int splitIndex = 0; splitIndex < group.splits.length; splitIndex++) {
-      if (tombstonedSplitIndexes.contains(splitIndex)) continue;
       FireflyTransactionSplit split = group.splits[splitIndex];
+      if (tombstonedSplitIndexes.contains(splitIndex) ||
+          (split.transactionJournalId != null &&
+              tombstonedJournalIds.contains(split.transactionJournalId))) {
+        continue;
+      }
       FireflyPulledSplitKind kind = classifySplitType(split.type);
       if (kind == FireflyPulledSplitKind.skip) {
         report.skippedUnsupported++;
@@ -727,26 +743,13 @@ Future<Set<int>> _pullTransactions(
               kFireflyUncategorizedCategoryPk);
       int? counterpartyId = counterpartyFireflyIdForSplit(split, assetId);
 
-      // KNOWN LIMITATION: splits are matched by their position in the group.
-      // Position is not a stable identity - deleting a middle split on Firefly
-      // shifts every later split down one, after which a stored index points
-      // at its neighbour, so one local row is updated from the wrong split and
-      // the last one is re-imported as a duplicate. Firefly does give each
-      // split a stable transaction_journal_id; using it needs a new column on
-      // FireflySyncMap, which needs a Drift schema regeneration (and so the
-      // Flutter SDK), so it is deliberately left for that change rather than
-      // half-solved here. Deletions made through Cashew already reindex the
-      // survivors (see _removeSplitFromRemoteGroup); this only bites when the
-      // split was removed on the Firefly side.
       List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
           FireflySyncEntityType.transaction, group.id);
-      FireflySyncMapEntry? existingMap;
-      for (FireflySyncMapEntry candidate in groupMaps) {
-        if (candidate.fireflySplitIndex == splitIndex) {
-          existingMap = candidate;
-          break;
-        }
-      }
+      FireflySyncMapEntry? existingMap = matchSplitToSyncMap(
+        groupMaps: groupMaps,
+        splitJournalId: split.transactionJournalId,
+        splitIndex: splitIndex,
+      );
 
       if (existingMap == null) {
         Transaction newTransaction = fireflySplitToTransaction(
@@ -774,12 +777,32 @@ Future<Set<int>> _pullTransactions(
             lastSyncedLocalModified: saved.dateTimeModified,
             counterpartyFireflyId: counterpartyId,
             fireflySplitIndex: splitIndex,
+            fireflyJournalId: split.transactionJournalId,
           );
           return true;
         });
         if (!inserted) continue;
         report.pulledTransactions++;
       } else {
+        // Backfill a row that was matched by position, so it is matched by
+        // identity from here on. Deliberately before the direction check: a
+        // row whose direction comes out "none" this cycle still needs the id,
+        // or it stays position-matched indefinitely and the next sibling
+        // deletion corrupts it anyway.
+        if (split.transactionJournalId != null &&
+            existingMap.fireflyJournalId == null) {
+          await _upsertSyncMap(
+            syncMapPk: existingMap.syncMapPk,
+            type: FireflySyncEntityType.transaction,
+            localPk: existingMap.localPk,
+            fireflyId: existingMap.fireflyId,
+            fireflyUpdatedAt: existingMap.fireflyUpdatedAt,
+            lastSyncedLocalModified: existingMap.lastSyncedLocalModified,
+            counterpartyFireflyId: existingMap.counterpartyFireflyId,
+            fireflySplitIndex: existingMap.fireflySplitIndex,
+            fireflyJournalId: split.transactionJournalId,
+          );
+        }
         Transaction? local =
             await database.tryGetTransactionFromPk(existingMap.localPk);
         if (local == null) continue;
@@ -811,6 +834,8 @@ Future<Set<int>> _pullTransactions(
                 saved?.dateTimeModified ?? updated.dateTimeModified,
             counterpartyFireflyId: counterpartyId,
             fireflySplitIndex: splitIndex,
+            fireflyJournalId:
+                split.transactionJournalId ?? existingMap.fireflyJournalId,
           );
           report.pulledTransactions++;
         }
@@ -839,9 +864,11 @@ Future<void> _pullTransferSplit({
 
   List<FireflySyncMapEntry> existingMaps = await _syncMapsByFireflyId(
       FireflySyncEntityType.transaction, group.id);
-  List<FireflySyncMapEntry> thisSplitMaps = existingMaps
-      .where((m) => m.fireflySplitIndex == splitIndex)
-      .toList();
+  List<FireflySyncMapEntry> thisSplitMaps = matchSplitToSyncMaps(
+    groupMaps: existingMaps,
+    splitJournalId: split.transactionJournalId,
+    splitIndex: splitIndex,
+  );
 
   if (thisSplitMaps.isEmpty) {
     (Transaction, Transaction) pair = fireflySplitToTransferPair(
@@ -868,6 +895,7 @@ Future<void> _pullTransferSplit({
         fireflyUpdatedAt: group.updatedAt,
         lastSyncedLocalModified: savedFrom?.dateTimeModified,
         fireflySplitIndex: splitIndex,
+        fireflyJournalId: split.transactionJournalId,
       );
       await _upsertSyncMap(
         type: FireflySyncEntityType.transaction,
@@ -876,6 +904,7 @@ Future<void> _pullTransferSplit({
         fireflyUpdatedAt: group.updatedAt,
         lastSyncedLocalModified: savedTo?.dateTimeModified,
         fireflySplitIndex: splitIndex,
+        fireflyJournalId: split.transactionJournalId,
       );
     });
     report.pulledTransactions += 2;
@@ -903,6 +932,25 @@ Future<void> _pullTransferSplit({
       newestWatermark = map.lastSyncedLocalModified;
     }
   }
+  // Backfill before the direction gate below returns - a transfer that needs
+  // no pull this cycle still has to stop being position-matched.
+  if (split.transactionJournalId != null) {
+    for (FireflySyncMapEntry map in thisSplitMaps) {
+      if (map.fireflyJournalId != null) continue;
+      await _upsertSyncMap(
+        syncMapPk: map.syncMapPk,
+        type: FireflySyncEntityType.transaction,
+        localPk: map.localPk,
+        fireflyId: map.fireflyId,
+        fireflyUpdatedAt: map.fireflyUpdatedAt,
+        lastSyncedLocalModified: map.lastSyncedLocalModified,
+        counterpartyFireflyId: map.counterpartyFireflyId,
+        fireflySplitIndex: map.fireflySplitIndex,
+        fireflyJournalId: split.transactionJournalId,
+      );
+    }
+  }
+
   FireflySyncDirection direction = decideSyncDirection(
     localModified: newestLocal,
     remoteUpdatedAt: group.updatedAt,
@@ -967,6 +1015,8 @@ Future<void> _pullTransferSplit({
     fireflyUpdatedAt: group.updatedAt,
     lastSyncedLocalModified: savedFrom?.dateTimeModified,
     fireflySplitIndex: splitIndex,
+    fireflyJournalId:
+        split.transactionJournalId ?? fromMap?.fireflyJournalId,
   );
   await _upsertSyncMap(
     syncMapPk: toMap?.syncMapPk,
@@ -976,6 +1026,7 @@ Future<void> _pullTransferSplit({
     fireflyUpdatedAt: group.updatedAt,
     lastSyncedLocalModified: savedTo?.dateTimeModified,
     fireflySplitIndex: splitIndex,
+    fireflyJournalId: split.transactionJournalId ?? toMap?.fireflyJournalId,
   );
   report.pulledTransactions += 2;
 }
@@ -1437,6 +1488,9 @@ Future<void> _pushTransactions(
         fireflyUpdatedAt: created.updatedAt,
         lastSyncedLocalModified: transaction.dateTimeModified,
         counterpartyFireflyId: createdCounterpartyId,
+        fireflyJournalId: created.splits.isEmpty
+            ? null
+            : created.splits.first.transactionJournalId,
       );
       report.pushedTransactions++;
     } else {
@@ -1479,6 +1533,7 @@ Future<void> _pushTransactions(
           lastSyncedLocalModified: transaction.dateTimeModified,
           counterpartyFireflyId: counterparty?.id ?? map.counterpartyFireflyId,
           fireflySplitIndex: map.fireflySplitIndex,
+          fireflyJournalId: map.fireflyJournalId,
         );
         report.pushedTransactions++;
       }
@@ -1621,6 +1676,7 @@ Future<void> _pushExistingMultiSplitGroup({
       lastSyncedLocalModified: local?.dateTimeModified,
       counterpartyFireflyId: map.counterpartyFireflyId,
       fireflySplitIndex: map.fireflySplitIndex,
+      fireflyJournalId: map.fireflyJournalId,
     );
   }
   report.pushedTransactions++;
@@ -1677,12 +1733,18 @@ Future<void> _pushTransfer({
 
   if (fromMap == null && toMap == null) {
     FireflyTransactionGroup created = await client.createTransaction(group);
+    // Both legs of a transfer are one remote split, so they share its journal
+    // id - which is what identifies them on the next pull.
+    int? createdJournalId = created.splits.isEmpty
+        ? null
+        : created.splits.first.transactionJournalId;
     await _upsertSyncMap(
       type: FireflySyncEntityType.transaction,
       localPk: fromTransaction.transactionPk,
       fireflyId: created.id,
       fireflyUpdatedAt: created.updatedAt,
       lastSyncedLocalModified: fromTransaction.dateTimeModified,
+      fireflyJournalId: createdJournalId,
     );
     await _upsertSyncMap(
       type: FireflySyncEntityType.transaction,
@@ -1690,6 +1752,7 @@ Future<void> _pushTransfer({
       fireflyId: created.id,
       fireflyUpdatedAt: created.updatedAt,
       lastSyncedLocalModified: toTransaction.dateTimeModified,
+      fireflyJournalId: createdJournalId,
     );
     report.pushedTransactions++;
   } else {
@@ -1739,6 +1802,17 @@ Future<void> _pushTransfer({
       }
       FireflyTransactionGroup updated =
           await client.updateTransaction(linkedMap.fireflyId, group);
+      // _upsertSyncMap writes with insertOrReplace, so anything not passed
+      // here comes back as its default - omitting the journal id would blank
+      // it on every transfer push and drop these rows back to position
+      // matching. Prefer what the PUT returned, and fall back to what is
+      // already stored so a response carrying no journal id cannot erase it.
+      int? transferJournalId = (updated.splits.isEmpty
+              ? null
+              : updated.splits.first.transactionJournalId) ??
+          fromMap?.fireflyJournalId ??
+          toMap?.fireflyJournalId ??
+          linkedMap.fireflyJournalId;
       await _upsertSyncMap(
         syncMapPk: fromMap?.syncMapPk,
         type: FireflySyncEntityType.transaction,
@@ -1746,6 +1820,7 @@ Future<void> _pushTransfer({
         fireflyId: linkedMap.fireflyId,
         fireflyUpdatedAt: updated.updatedAt,
         lastSyncedLocalModified: fromTransaction.dateTimeModified,
+        fireflyJournalId: transferJournalId,
       );
       await _upsertSyncMap(
         syncMapPk: toMap?.syncMapPk,
@@ -1754,6 +1829,7 @@ Future<void> _pushTransfer({
         fireflyId: linkedMap.fireflyId,
         fireflyUpdatedAt: updated.updatedAt,
         lastSyncedLocalModified: toTransaction.dateTimeModified,
+        fireflyJournalId: transferJournalId,
       );
       report.pushedTransactions++;
     }
@@ -1806,13 +1882,21 @@ Future<void> _pushDeletes(
           bool siblingExists =
               await database.tryGetTransactionFromPk(sibling.localPk) != null;
           // A transfer is two local rows mapped to the SAME remote split. A
-          // surviving sibling that shares this split index is that other leg,
-          // not another split of the journal. Counting it as a survivor sent
-          // every transfer delete down the split-removal path below, where the
+          // surviving sibling that shares this split is that other leg, not
+          // another split of the journal. Counting it as a survivor sent every
+          // transfer delete down the split-removal path below, where the
           // completeness check could never pass (one remote split against two
           // known local rows), so deleting a transfer in Cashew never reached
           // Firefly and the warning repeated on every cycle.
-          if (sibling.fireflySplitIndex == map.fireflySplitIndex) {
+          //
+          // Both legs are one remote split, so they share a journal id as well
+          // as an index. Compare on the id when both rows have one; fall back
+          // to the index for rows not yet backfilled.
+          bool sameRemoteSplit = (sibling.fireflyJournalId != null &&
+                  map.fireflyJournalId != null)
+              ? sibling.fireflyJournalId == map.fireflyJournalId
+              : sibling.fireflySplitIndex == map.fireflySplitIndex;
+          if (sameRemoteSplit) {
             if (siblingExists) pairedLegStillLocal = true;
             continue;
           }
@@ -1925,8 +2009,10 @@ Future<void> _removeSplitFromRemoteGroup({
   );
   await _tombstoneMapRow(deletedMap);
   // The surviving splits shift down by one position in the rewritten journal,
-  // so their stored indices have to move with them or the next pull would
-  // match rows to the wrong splits.
+  // so their stored indices have to move with them - the indices still drive
+  // ordering when the split list is rebuilt. The journal ids are carried
+  // through unchanged: they are what identifies these rows now, and Firefly
+  // keeps them across the rewrite.
   for (int i = 0; i < survivingMaps.length; i++) {
     Transaction? local =
         await database.tryGetTransactionFromPk(survivingMaps[i].localPk);
@@ -1939,6 +2025,7 @@ Future<void> _removeSplitFromRemoteGroup({
       lastSyncedLocalModified: local?.dateTimeModified,
       counterpartyFireflyId: survivingMaps[i].counterpartyFireflyId,
       fireflySplitIndex: i,
+      fireflyJournalId: survivingMaps[i].fireflyJournalId,
     );
   }
   report.deletedRemote++;

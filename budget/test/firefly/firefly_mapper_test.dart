@@ -62,6 +62,25 @@ Transaction _transaction({
   );
 }
 
+FireflySyncMapEntry _syncMap({
+  required String localPk,
+  required int splitIndex,
+  int? journalId,
+  int fireflyId = 42,
+  bool isTombstone = false,
+}) {
+  return FireflySyncMapEntry(
+    syncMapPk: "map-$localPk",
+    entityType: FireflySyncEntityType.transaction,
+    localPk: localPk,
+    fireflyId: fireflyId,
+    isTombstone: isTombstone,
+    fireflySplitIndex: splitIndex,
+    fireflyJournalId: journalId,
+    dateCreated: DateTime(2024, 1, 1),
+  );
+}
+
 void main() {
   group('walletToFireflyAccount / fireflyAccountToWallet', () {
     test('round-trips name and currency', () {
@@ -478,6 +497,190 @@ void main() {
         ),
         FireflySyncDirection.pull,
       );
+    });
+  });
+
+  // Regression cover for splits being matched by their array position. A
+  // Firefly journal renumbers its splits when one is deleted from the middle,
+  // so a stored position silently starts pointing at a neighbour. See
+  // matchSplitToSyncMap in fireflyMapper.dart.
+  group("matchSplitToSyncMap", () {
+    // Group 42 held three splits: 0=Groceries(LA), 1=Fuel(LB), 2=Rent(LC).
+    // Fuel is deleted in the Firefly web UI, so Firefly now returns two
+    // splits reindexed as 0=Groceries, 1=Rent.
+    List<FireflySyncMapEntry> threeMapped() => [
+          _syncMap(localPk: "LA", splitIndex: 0, journalId: 1001),
+          _syncMap(localPk: "LB", splitIndex: 1, journalId: 1002),
+          _syncMap(localPk: "LC", splitIndex: 2, journalId: 1003),
+        ];
+
+    test("a middle split deleted remotely does not shift rows onto neighbours",
+        () {
+      List<FireflySyncMapEntry> maps = threeMapped();
+
+      // Position 0 - Groceries, journal 1001. Unambiguous either way.
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1001, splitIndex: 0)
+            ?.localPk,
+        "LA",
+      );
+      // Position 1 is now Rent (journal 1003). Matching by position would
+      // return LB, which is Fuel - the row that would get overwritten.
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1003, splitIndex: 1)
+            ?.localPk,
+        "LC",
+      );
+      // And LC is not left orphaned to be re-imported as a duplicate.
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1003, splitIndex: 1)
+            ?.localPk,
+        isNot("LB"),
+      );
+    });
+
+    test("a journal id with no mapped row matches nothing", () {
+      expect(
+        matchSplitToSyncMap(
+            groupMaps: threeMapped(), splitJournalId: 9999, splitIndex: 0),
+        isNull,
+      );
+    });
+
+    test("rows written before the column existed still match by position", () {
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "LA", splitIndex: 0),
+        _syncMap(localPk: "LB", splitIndex: 1),
+      ];
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1002, splitIndex: 1)
+            ?.localPk,
+        "LB",
+      );
+    });
+
+    test("a split with no journal id at all falls back to position", () {
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "LA", splitIndex: 0),
+        _syncMap(localPk: "LB", splitIndex: 1),
+      ];
+      expect(
+        matchSplitToSyncMap(groupMaps: maps, splitJournalId: null, splitIndex: 1)
+            ?.localPk,
+        "LB",
+      );
+    });
+
+    test("a backfilled row is never matched by position again", () {
+      // LA carries journal 1001. A split at position 0 belonging to a
+      // different journal must not claim it - that is the corruption.
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "LA", splitIndex: 0, journalId: 1001),
+      ];
+      expect(
+        matchSplitToSyncMap(
+            groupMaps: maps, splitJournalId: 2002, splitIndex: 0),
+        isNull,
+      );
+    });
+
+    test("mixed group: identified rows match by id, the rest by position", () {
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "LA", splitIndex: 0, journalId: 1001),
+        _syncMap(localPk: "LB", splitIndex: 1),
+      ];
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1001, splitIndex: 0)
+            ?.localPk,
+        "LA",
+      );
+      expect(
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: 1002, splitIndex: 1)
+            ?.localPk,
+        "LB",
+      );
+    });
+  });
+
+  group("matchSplitToSyncMaps", () {
+    test("both legs of a transfer share one split and both come back", () {
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "from", splitIndex: 0, journalId: 1001),
+        _syncMap(localPk: "to", splitIndex: 0, journalId: 1001),
+      ];
+      List<FireflySyncMapEntry> matched = matchSplitToSyncMaps(
+          groupMaps: maps, splitJournalId: 1001, splitIndex: 0);
+      expect(matched.map((m) => m.localPk).toList(), ["from", "to"]);
+    });
+
+    test("an un-backfilled transfer pair still matches by position", () {
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "from", splitIndex: 0),
+        _syncMap(localPk: "to", splitIndex: 0),
+      ];
+      expect(
+        matchSplitToSyncMaps(
+                groupMaps: maps, splitJournalId: 1001, splitIndex: 0)
+            .length,
+        2,
+      );
+    });
+
+    test("a journal-id match excludes rows still awaiting backfill", () {
+      // Otherwise an identified split would drag an unrelated, un-backfilled
+      // row at the same position in with it.
+      List<FireflySyncMapEntry> maps = [
+        _syncMap(localPk: "identified", splitIndex: 0, journalId: 1001),
+        _syncMap(localPk: "stale", splitIndex: 0),
+      ];
+      expect(
+        matchSplitToSyncMaps(
+                groupMaps: maps, splitJournalId: 1001, splitIndex: 0)
+            .map((m) => m.localPk)
+            .toList(),
+        ["identified"],
+      );
+    });
+  });
+
+  group("FireflyTransactionSplit.transactionJournalId", () {
+    test("is parsed from the API payload", () {
+      FireflyTransactionSplit split = FireflyTransactionSplit.fromJson({
+        "type": "withdrawal",
+        "date": "2024-03-01T00:00:00+00:00",
+        "amount": "40.00",
+        "description": "Groceries",
+        "transaction_journal_id": "1001",
+      });
+      expect(split.transactionJournalId, 1001);
+    });
+
+    test("is null when the payload omits it", () {
+      FireflyTransactionSplit split = FireflyTransactionSplit.fromJson({
+        "type": "withdrawal",
+        "date": "2024-03-01T00:00:00+00:00",
+        "amount": "40.00",
+        "description": "Groceries",
+      });
+      expect(split.transactionJournalId, isNull);
+    });
+
+    test("is not sent back to Firefly on a write", () {
+      FireflyTransactionSplit split = FireflyTransactionSplit(
+        type: "withdrawal",
+        date: DateTime(2024, 3, 1),
+        amount: 40,
+        description: "Groceries",
+        transactionJournalId: 1001,
+      );
+      expect(split.toRequestJson().containsKey("transaction_journal_id"),
+          isFalse);
     });
   });
 }
