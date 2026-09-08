@@ -18,7 +18,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.24.5"
+  # Pinned deliberately. This codebase's dependency set is resolved against
+  # Flutter 3.19.x (pubspec.lock declares dart ">=3.3.0" / flutter ">=3.19.0"),
+  # and several pinned packages do not compile on newer SDKs:
+  #   - device_preview 1.1.0 uses TextTheme.headline6/subtitle2, removed in 3.24
+  #   - carousel_slider 4.2.1's CarouselController collides with the one Flutter
+  #     3.24 added in material/carousel.dart
+  #   - home_widget 0.5.0 passes ViewConfiguration(size:), removed in 3.24
+  #   - win32 5.0.6 uses UnmodifiableUint8ListView, removed in Dart 3.4
+  # android/settings.gradle also uses the legacy app_plugin_loader.gradle, which
+  # Flutter 3.29 removed. Raising this pin means upgrading those packages first.
+  FLUTTER_VERSION: "3.19.6"
   JAVA_VERSION: "17"
 
 jobs:
