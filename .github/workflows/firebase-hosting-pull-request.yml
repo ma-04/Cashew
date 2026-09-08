@@ -2,7 +2,28 @@
 # https://github.com/firebase/firebase-tools
 
 name: Deploy to Firebase Hosting on PR
-'on': pull_request
+
+# Disabled: trigger changed from `pull_request` to `workflow_dispatch`.
+#
+# This file came from upstream Cashew and has never been able to run in this
+# fork. It failed in ~9s on every pull request, for two independent reasons:
+#   - `npm ci` needs a package.json, and there is none anywhere in this repo.
+#     This is a Flutter app; the web build is `flutter build web`.
+#   - projectId/`FIREBASE_SERVICE_ACCOUNT_BUDGET_APP_FLUTTER` are upstream's
+#     Firebase project and secret, which this fork cannot authenticate against.
+#     budget/.firebaserc and budget/firebase.json point at them too.
+#
+# Kept rather than deleted so it can be revived. To re-enable, you need all of:
+#   1. Your own Firebase project (Spark/free tier covers Hosting + previews).
+#   2. budget/.firebaserc + budget/firebase.json pointed at it.
+#   3. A service-account secret in this repo (`firebase init hosting:github`
+#      from budget/ creates one with the right roles and uploads it).
+#   4. The npm step below replaced with flutter-action + pub get +
+#      build_runner + `flutter build web`, pinned to FLUTTER_VERSION as in
+#      build.yml, and `entryPoint: budget` on the deploy action since the
+#      Firebase config lives in budget/, not the repo root.
+# Then restore `'on': pull_request`.
+'on': workflow_dispatch
 jobs:
   build_and_preview:
     if: '${{ github.event.pull_request.head.repo.full_name == github.repository }}'
