@@ -1,6 +1,6 @@
 import 'package:budget/colors.dart';
 import 'package:budget/functions.dart';
-import 'package:budget/struct/firefly/fireflyApiClient.dart';
+import 'package:budget/struct/firefly/fireflyModels.dart';
 import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';

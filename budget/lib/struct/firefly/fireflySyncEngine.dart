@@ -37,7 +37,8 @@
 // that record is pulled on demand. That is the accepted cost of not holding
 // the whole ledger; a "Sync all history" action widens the window instead.
 
-import 'package:drift/drift.dart' show Value, InsertMode;
+import 'package:drift/drift.dart'
+    show Value, InsertMode, BooleanExpressionOperators;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:budget/database/tables.dart';
@@ -888,10 +889,13 @@ Future<void> _pullTransferSplit({
   DateTime? newestWatermark = thisSplitMaps.first.lastSyncedLocalModified;
   for (FireflySyncMapEntry map in thisSplitMaps) {
     Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
-    if (local?.dateTimeModified != null &&
-        (newestLocal == null ||
-            local!.dateTimeModified!.isAfter(newestLocal))) {
-      newestLocal = local.dateTimeModified;
+    // Hoisted into a local: Dart does not promote `local` to non-null from a
+    // `local?.field != null` test, so the field has to be captured once and
+    // tested directly.
+    DateTime? localModified = local?.dateTimeModified;
+    if (localModified != null &&
+        (newestLocal == null || localModified.isAfter(newestLocal))) {
+      newestLocal = localModified;
     }
     if (map.lastSyncedLocalModified != null &&
         (newestWatermark == null ||

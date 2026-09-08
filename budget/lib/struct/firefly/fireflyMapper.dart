@@ -7,6 +7,7 @@
 // Phase 1 covers Accounts/Transactions/Categories. Subcategories are not
 // flattened (see skipped-subcategory reporting in the sync engine).
 
+import 'package:drift/drift.dart' show Value;
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart' show uuid;
 import 'package:budget/struct/firefly/fireflyModels.dart';
