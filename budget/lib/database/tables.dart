@@ -28,6 +28,15 @@ part 'tables.g.dart';
 
 int schemaVersionGlobal = 49;
 
+// The highest schema version drift_schemas/ has a snapshot for, and therefore
+// the highest version the generated migrationSteps() in schema_versions.dart
+// can step to. Everything above this is migrated by the hand-rolled blocks at
+// the end of onUpgrade. Raise this only once the matching drift_schema_vNN.json
+// exists and schema_versions.dart has been regenerated from it, or upgrades
+// will throw ArgumentError("Unknown migration from N") and the database will
+// not open.
+const int _lastGeneratedMigrationSchema = 46;
+
 // To update and migrate the database, check the README
 
 // Character Limits
@@ -266,16 +275,14 @@ class FireflySyncMap extends Table {
   DateTimeColumn get lastSyncedLocalModified => dateTime().nullable()();
   // Kept after a local or remote delete so a later pull cannot resurrect
   // the Firefly resource as a new local row.
-  BoolColumn get isTombstone =>
-      boolean().withDefault(const Constant(false))();
+  BoolColumn get isTombstone => boolean().withDefault(const Constant(false))();
   // Firefly expense/revenue/cash account id used as the counterparty of
   // this transaction (not a Cashew wallet).
   IntColumn get counterpartyFireflyId => integer().nullable()();
   // Index of this row inside a multi-split Firefly journal group. This is a
   // position, not an identity - it is kept because rebuilding a journal's
   // split list needs an ordering, but matching is done on fireflyJournalId.
-  IntColumn get fireflySplitIndex =>
-      integer().withDefault(const Constant(0))();
+  IntColumn get fireflySplitIndex => integer().withDefault(const Constant(0))();
   // Firefly's stable per-split journal id, which survives its siblings being
   // deleted. Nullable: rows written before this column existed have none and
   // are matched by fireflySplitIndex until the next pull backfills them.
@@ -909,9 +916,31 @@ class FinanceDatabase extends _$FinanceDatabase {
           await migrator.alterTable(TableMigration(transactions));
           await migrator.deleteTable("Labels");
         }
+        // `to` is deliberately clamped here and is not the target version.
+        //
+        // migrationSteps() below is generated from drift_schemas/, which stops
+        // at v46, and its switch throws ArgumentError("Unknown migration from
+        // N") for every version past that. drift's runMigrationSteps is only
+        // `for (var target = from; target < to;) steps(target, database)`, so
+        // passing the real `to` (currently 49) made it call steps(46) and throw
+        // straight out of onUpgrade - this call is not inside a try/catch, and
+        // deliberately so, since a genuine failure here must not be swallowed.
+        // Every upgrade from an existing install therefore aborted before the
+        // v47+ blocks below could run and the database never opened. Only fresh
+        // installs worked, because those go through onCreate instead.
+        //
+        // Clamping lets the generated steps do exactly what they can and leaves
+        // 46 -> 49 to the hand-rolled blocks after this call. Passing `from`
+        // itself once it has reached the cap runs that loop zero times, which
+        // is the whole of what the call does.
+        //
+        // When drift_schemas/ is extended past v46 and these become real
+        // from46To47 / from47To48 / from48To49 steps, the cap moves up with it.
         await migrator.runMigrationSteps(
           from: from,
-          to: to,
+          to: from < _lastGeneratedMigrationSchema
+              ? _lastGeneratedMigrationSchema
+              : from,
           steps: migrationSteps(
             from33To34: (m, schema) async {
               await m.addColumn(schema.wallets, schema.wallets.decimals);
@@ -1212,12 +1241,21 @@ class FinanceDatabase extends _$FinanceDatabase {
             },
           ),
         );
-        // Note: this migration is intentionally handled here instead of as a
-        // `from46To47` / `from47To48` step within `migrationSteps` above.
-        // `schema_versions.dart` only defines schemas up to Schema46.
+        // Note: these migrations are intentionally handled here instead of as
+        // `from46To47` / `from47To48` / `from48To49` steps within
+        // `migrationSteps` above. `schema_versions.dart` only defines schemas
+        // up to Schema46 - see the comment on the clamp above.
         if (from <= 46) {
           try {
-            await migrator.createTable($FireflySyncMapTable(database));
+            // `fireflySyncMap`, not `$FireflySyncMapTable(database)`: the
+            // latter reaches past `this` for the app-wide
+            // `late FinanceDatabase database` global, which only app startup
+            // assigns. Anywhere the database is constructed directly - under
+            // `flutter test`, for one - all three of these blocks threw
+            // LateInitializationError into their catch and silently migrated
+            // nothing. Every other block here uses the generated accessor on
+            // `this`.
+            await migrator.createTable(fireflySyncMap);
           } catch (e) {
             print("Migration Error: Error creating table FireflySyncMap " +
                 e.toString());
@@ -1225,14 +1263,12 @@ class FinanceDatabase extends _$FinanceDatabase {
         }
         if (from == 47) {
           try {
-            $FireflySyncMapTable fireflySyncMapTable =
-                $FireflySyncMapTable(database);
             await migrator.addColumn(
-                fireflySyncMapTable, fireflySyncMapTable.isTombstone);
+                fireflySyncMap, fireflySyncMap.isTombstone);
             await migrator.addColumn(
-                fireflySyncMapTable, fireflySyncMapTable.counterpartyFireflyId);
+                fireflySyncMap, fireflySyncMap.counterpartyFireflyId);
             await migrator.addColumn(
-                fireflySyncMapTable, fireflySyncMapTable.fireflySplitIndex);
+                fireflySyncMap, fireflySyncMap.fireflySplitIndex);
           } catch (e) {
             print("Migration Error: Error adding FireflySyncMap columns " +
                 e.toString());
@@ -1257,8 +1293,7 @@ class FinanceDatabase extends _$FinanceDatabase {
             await customStatement("DELETE FROM firefly_sync_map "
                 "WHERE rowid NOT IN (SELECT MAX(rowid) FROM firefly_sync_map "
                 "GROUP BY entity_type, local_pk)");
-            await customStatement(
-                "CREATE UNIQUE INDEX IF NOT EXISTS "
+            await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS "
                 "firefly_sync_map_entity_type_local_pk "
                 "ON firefly_sync_map (entity_type, local_pk)");
           } catch (e) {
@@ -1277,10 +1312,8 @@ class FinanceDatabase extends _$FinanceDatabase {
         // cannot skip this.
         if (from >= 47 && from <= 48) {
           try {
-            $FireflySyncMapTable fireflySyncMapTable =
-                $FireflySyncMapTable(database);
             await migrator.addColumn(
-                fireflySyncMapTable, fireflySyncMapTable.fireflyJournalId);
+                fireflySyncMap, fireflySyncMap.fireflyJournalId);
           } catch (e) {
             print("Migration Error: Error adding column "
                     "FireflySyncMap.fireflyJournalId " +
