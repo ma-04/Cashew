@@ -2,7 +2,7 @@
 // Firefly III's REST resources. No DB/HTTP/Flutter globals are touched here
 // on purpose - all foreign-key lookups (wallet/category Firefly ids <-> local
 // pks) are resolved by the caller (fireflySyncEngine.dart) so this file stays
-// trivially unit-testable. See test/firefly/fireflyMapperTest.dart.
+// trivially unit-testable. See test/firefly/firefly_mapper_test.dart.
 //
 // Phase 1 covers Accounts/Transactions/Categories. Subcategories are not
 // flattened (see skipped-subcategory reporting in the sync engine).
