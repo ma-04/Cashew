@@ -1,44 +1,44 @@
-// Orchestrates 2-way sync between the local database and a self-hosted
-// Firefly III instance. Structurally mirrors lib/struct/syncClient.dart's
-// syncData() (in-flight guard, debounce, loading indicators) but is a fully
-// separate, self-contained module - Google Drive sync and Firefly sync are
-// mutually exclusive per install (enforced in the settings UI).
+// Two-way sync between the local database and a self-hosted Firefly III
+// server. Firefly sync and Google Drive sync are mutually exclusive on one
+// installation; the settings page keeps that rule.
 //
-// Sync order per cycle: pull (categories -> accounts -> counterparties ->
-// transactions), apply remote deletes, refresh balance anchors, then push
-// (categories -> accounts -> transactions -> local deletes). Pulling first
-// means a remote-side conflict is visible before any local push could
-// overwrite it.
+// Each cycle pulls the categories, the accounts, the counterparties and the
+// transactions, applies the remote deletes, refreshes the balance anchors,
+// then pushes the categories, the accounts, the transactions and the local
+// deletes. The pull is first, thus a remote change is visible before a push
+// can write over it.
 //
-// WINDOWING
+// WINDOW
 //
-// Firefly is the system of record and may hold years of history. A routine
-// sync therefore only covers a recent booking-date window (see
-// fireflySyncWindowDays, default 30 days). Older records are not held locally
-// until something asks for them - searching, filtering, or opening an account
-// calls into the on-demand section at the bottom of this file, which fetches
-// the requested range and caches it, after which it behaves like any other
-// local row.
+// Firefly is the system of record and can hold many years of data. A routine
+// sync reads only a recent range of booking dates (fireflySyncWindowDays,
+// default 30 days). The local database gets an older record only when the
+// user asks for it: a search, a filter or an open account calls the on-demand
+// functions at the end of this file, which read that range and keep it.
 //
-// Two consequences the rest of this file has to respect:
+// The rest of this file must obey two rules:
 //
-//  1. The local database is deliberately an INCOMPLETE copy of the remote
-//     one. Nothing may infer "absent locally" => "deleted remotely", or
-//     "absent remotely" => "deleted locally", outside the window that was
-//     actually fetched. See _applyRemoteDeletes.
-//  2. Summing local rows for a wallet no longer yields its real balance. Each
-//     synced wallet carries a balance anchor row (see fireflyMapper.dart)
-//     holding everything that happened before the window, derived from
-//     Firefly's authoritative current_balance, so wallet totals and net worth
-//     stay correct. See _refreshBalanceAnchors.
+//  1. The local database is an incomplete copy of the remote one. Do not read
+//     "not in the local database" as "deleted on the server", or "not on the
+//     server" as "deleted in this application", outside of the range that the
+//     sync read. See _applyRemoteDeletes.
+//  2. The sum of the local rows of a wallet is not its balance. Each synced
+//     wallet has a balance anchor row (see fireflyMapper.dart) that holds the
+//     total of the data before the window. The value comes from the
+//     current_balance field of Firefly. Wallet totals and net worth stay
+//     correct because of the anchor. See _refreshBalanceAnchors.
 //
-// Firefly's start/end filters are booking date, not updated_at, so an edit
-// made today to a transaction booked before the window will not be seen until
-// that record is pulled on demand. That is the accepted cost of not holding
-// the whole ledger; a "Sync all history" action widens the window instead.
+// The start and end filters of Firefly apply to the booking date, not to
+// updated_at. Thus a change that the user makes today to an old transaction
+// is not visible until an on-demand fetch reads that record. The "Sync all
+// history" action makes the window larger.
 
 import 'package:drift/drift.dart'
-    show Value, InsertMode, BooleanExpressionOperators;
+    show
+        Value,
+        InsertMode,
+        BooleanExpressionOperators,
+        StringExpressionOperators;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:budget/database/tables.dart';
@@ -65,6 +65,7 @@ class FireflySyncReport {
   int skippedUnsupported = 0;
   int skippedSubcategories = 0;
   int skippedUnmappedWallet = 0;
+  int skippedAmbiguousSplits = 0;
   final List<String> warnings = [];
 
   String summary() {
@@ -87,7 +88,11 @@ class FireflySyncReport {
       parts.add("$skippedSubcategories subcategories not synced");
     }
     if (skippedUnmappedWallet > 0) {
-      parts.add("$skippedUnmappedWallet transactions skipped (wallet not linked)");
+      parts.add(
+          "$skippedUnmappedWallet transactions skipped (wallet not linked)");
+    }
+    if (skippedAmbiguousSplits > 0) {
+      parts.add("$skippedAmbiguousSplits splits skipped (record not known)");
     }
     if (warnings.isNotEmpty) {
       parts.add("${warnings.length} warning(s)");
@@ -103,31 +108,30 @@ final ValueNotifier<FireflySyncReport?> fireflySyncReportNotifier =
     ValueNotifier(null);
 
 bool _canSyncFirefly = true;
-// A depth counter rather than a flag. An on-demand fetch can start and finish
-// while a full sync is still running, and clearing a shared bool on its way out
-// would make the rest of that sync's own writes look like user edits, waking
-// the auto-sync watcher and scheduling a pointless push every cycle.
+// A depth counter, not a flag. An on-demand fetch can start and stop while a
+// sync is in operation. A flag that the fetch clears would make the remaining
+// writes of that sync look like user edits, which starts one more push each
+// cycle.
 int _applyingFireflyWriteDepth = 0;
 bool get _applyingFireflyWrites => _applyingFireflyWriteDepth > 0;
 bool _userEditDuringSync = false;
 final Debouncer fireflyPushDebouncer = Debouncer(milliseconds: 5000);
 
-// Serializes every piece of engine work that talks to Firefly and writes to
-// the local database: the routine sync and all of the on-demand fetches at the
-// bottom of this file.
+// Makes each piece of engine work that reads Firefly and writes to the local
+// database run in sequence: the routine sync and each on-demand fetch at the
+// end of this file.
 //
-// _canSyncFirefly only stops a second *sync* from starting; it says nothing
-// about the on-demand path. Without this queue an on-demand fetch and a sync
-// can both be inside _pullTransactions for the same Firefly group at once,
-// both look up the sync map before either has written one, and both insert
-// their own local copy of the same remote transaction.
+// _canSyncFirefly stops only a second sync. It does not stop an on-demand
+// fetch. Without this queue a fetch and a sync can be in _pullTransactions for
+// the same Firefly group together, read the sync map before either one writes
+// to it, and each insert its own local copy of that remote transaction.
 Future<void> _fireflyEngineQueue = Future<void>.value();
 
 Future<T> _withFireflyEngineLock<T>(Future<T> Function() body) {
   Future<T> result = _fireflyEngineQueue.then((_) => body());
-  // The queue must survive a failed piece of work, or one thrown exception
-  // would block the engine for the rest of the app's life. The error is still
-  // delivered to whoever awaits result.
+  // The queue must continue after a failure, or one exception stops the
+  // engine for the remaining life of the application. The caller that awaits
+  // result still gets the error.
   _fireflyEngineQueue = result.then<void>((_) {}, onError: (Object _) {});
   return result;
 }
@@ -135,11 +139,10 @@ Future<T> _withFireflyEngineLock<T>(Future<T> Function() body) {
 void scheduleFireflyPush() {
   if (!fireflyEnabled) return;
   if (_applyingFireflyWrites) {
-    // This fires for the engine's own writes, but a genuine user edit landing
-    // in the same window is indistinguishable from them here. Returning
-    // without recording anything would drop that edit for good, since the
-    // watermark advances regardless. Flag it so a reconciling cycle runs once
-    // this one finishes; the cost of being wrong is one extra no-op sync.
+    // This is true for the writes of the engine, but a user edit in the same
+    // period looks the same here. To return and record nothing loses that
+    // edit, because the watermark moves in each case. Record it, thus one more
+    // cycle runs when this one stops. A wrong guess costs one empty sync.
     _userEditDuringSync = true;
     return;
   }
@@ -179,6 +182,11 @@ Future<bool> fireflySyncNow({
   // escape hatch for "my older transactions are missing"; expensive on a
   // populated instance, so it is only ever user-initiated.
   bool fullResync = false,
+  // Push the local changes, but do not pull. A cycle that ran while the user
+  // made a change uses this for the second cycle: the change is already behind
+  // the watermark of the first cycle, and a pull is not necessary because each
+  // push reads the live remote record before it writes.
+  bool pushOnly = false,
   // Push local transactions that predate the link to Firefly.
   //
   // Off by default and deliberately so. On a first link both sides are
@@ -226,36 +234,50 @@ Future<bool> fireflySyncNow({
     // install would abort the very first sync. Make sure it exists first.
     await _ensureFireflySystemCategories();
 
+    _FireflyPushBacklog backlog = _FireflyPushBacklog();
+
     await _withFireflyEngineLock(() => _withFireflyWrites(() async {
-          Set<int> remoteCategoryIds = await _pullCategories(client!, report);
-          Set<int> remoteWalletIds = await _pullAccounts(client, report);
-          _FireflyCounterpartyIndex counterparties =
-              await _loadCounterparties(client);
-          Set<int> remoteTransactionIds = await _pullTransactions(
-              client, report,
-              windowStart: windowStart);
-          await _applyRemoteDeletes(
-            client: client,
-            remoteCategoryIds: remoteCategoryIds,
-            remoteWalletIds: remoteWalletIds,
-            remoteTransactionIds: remoteTransactionIds,
-            windowStart: windowStart,
-            report: report,
-          );
-          await _pushCategories(client, lastSynced, report,
+          // A local copy that cannot be null. The closure captures the outer
+          // variable, thus Dart does not keep the result of the null test.
+          FireflyApiClient api = client!;
+          _FireflyCounterpartyIndex counterparties;
+          if (pushOnly) {
+            counterparties = await _loadCounterparties(api);
+          } else {
+            Set<int> remoteCategoryIds = await _pullCategories(api, report);
+            Set<int> remoteWalletIds = await _pullAccounts(api, report);
+            counterparties = await _loadCounterparties(api);
+            Set<int> remoteTransactionIds =
+                await _pullTransactions(api, report, windowStart: windowStart);
+            await _applyRemoteDeletes(
+              client: api,
+              remoteCategoryIds: remoteCategoryIds,
+              remoteWalletIds: remoteWalletIds,
+              remoteTransactionIds: remoteTransactionIds,
+              windowStart: windowStart,
+              report: report,
+            );
+          }
+          await _pushCategories(api, lastSynced, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
-          await _pushAccounts(client, lastSynced, report,
+          await _pushAccounts(api, lastSynced, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
-          await _pushTransactions(client, lastSynced, counterparties, report,
+          await _pushTransactions(
+              api, lastSynced, counterparties, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
-          await _pushDeletes(client, lastSynced, counterparties, report);
-          // Last, because the push we just did changes the remote balances
-          // this reads. Anchoring on a pre-push balance would leave every
-          // wallet we pushed to wrong by the amount pushed.
-          await _refreshBalanceAnchors(client, report);
+          await _pushDeletes(api, lastSynced, report, backlog);
+          // Last, because the push changes the remote balances that this
+          // reads. A balance from before the push would make each wallet that
+          // the cycle pushed to wrong by the amount that it pushed.
+          if (!pushOnly ||
+              report.pushedTransactions > 0 ||
+              report.pushedWallets > 0 ||
+              report.deletedRemote > 0) {
+            await _refreshBalanceAnchors(api, report);
+          }
         }));
 
-    await setFireflyLastSyncedAt(syncStartedAt);
+    await setFireflyLastSyncedAt(backlog.nextWatermark(syncStartedAt));
     fireflySyncReportNotifier.value = report;
     fireflySyncStatusNotifier.value = FireflySyncStatus.idle;
     return true;
@@ -270,8 +292,33 @@ Future<bool> fireflySyncNow({
     _canSyncFirefly = true;
     if (_userEditDuringSync) {
       _userEditDuringSync = false;
-      scheduleFireflyPush();
+      fireflyPushDebouncer.run(() {
+        fireflySyncNow(pushOnly: true);
+      });
     }
+  }
+}
+
+// Holds the modification time of the oldest local row that a cycle did not
+// push. The cycle then moves the push watermark back to that time, thus the
+// next cycle finds the row again. Without this the watermark moves past each
+// row that a warning or a conflict stopped, and the app never pushes it.
+class _FireflyPushBacklog {
+  DateTime? oldestNotPushed;
+
+  void recordNotPushed(DateTime? localModified) {
+    if (localModified == null) return;
+    if (oldestNotPushed == null || localModified.isBefore(oldestNotPushed!)) {
+      oldestNotPushed = localModified;
+    }
+  }
+
+  // getAllNew*() selects each row with a time equal to or later than the
+  // watermark, thus the time of the row itself is the correct watermark.
+  DateTime nextWatermark(DateTime syncStartedAt) {
+    DateTime? oldest = oldestNotPushed;
+    if (oldest == null || oldest.isAfter(syncStartedAt)) return syncStartedAt;
+    return oldest;
   }
 }
 
@@ -313,12 +360,9 @@ Future<_FireflyCounterpartyIndex> _loadCounterparties(
   );
 }
 
-// ---------------------------------------------------------------------------
-// FireflySyncMap helpers
-// ---------------------------------------------------------------------------
-
 Future<List<FireflySyncMapEntry>> _syncMapEntriesForType(
-    FireflySyncEntityType type, {bool includeTombstones = false}) {
+    FireflySyncEntityType type,
+    {bool includeTombstones = false}) {
   return (database.select(database.fireflySyncMap)
         ..where((tbl) => includeTombstones
             ? tbl.entityType.equalsValue(type)
@@ -380,6 +424,31 @@ Future<void> _upsertSyncMap({
       );
 }
 
+// Removes the link between a local row and a Firefly record, but keeps the
+// local row. A tombstone is not correct here: a tombstone stops each later
+// push of that row, and the user can mark the row paid again, which must
+// create the Firefly record again.
+Future<void> _deleteSyncMapRow(FireflySyncMapEntry map) async {
+  await (database.delete(database.fireflySyncMap)
+        ..where((tbl) => tbl.syncMapPk.equals(map.syncMapPk)))
+      .go();
+}
+
+// Removes every link to the Firefly server, and the balance anchors that the
+// server balances gave. An id in the map is correct for one server only. If
+// the user gives a different host, the same id on that host points to a
+// different record, and a push then writes to the wrong record. The local
+// rows stay: the next sync links them again.
+Future<void> fireflyForgetSyncState() async {
+  await database.delete(database.fireflySyncMap).go();
+  await (database.delete(database.transactions)
+        ..where(
+            (tbl) => tbl.transactionPk.like("$kFireflyBalanceAnchorPkPrefix%")))
+      .go();
+  fireflyClearOnDemandCacheMemory();
+  await clearFireflyLastSyncedAt();
+}
+
 Future<void> _tombstoneMapRow(FireflySyncMapEntry map) async {
   await _upsertSyncMap(
     syncMapPk: map.syncMapPk,
@@ -395,10 +464,6 @@ Future<void> _tombstoneMapRow(FireflySyncMapEntry map) async {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Pull
-// ---------------------------------------------------------------------------
-
 Future<Set<int>> _pullCategories(
     FireflyApiClient client, FireflySyncReport report) async {
   List<FireflyCategory> remoteCategories = await client.getCategories();
@@ -407,7 +472,9 @@ Future<Set<int>> _pullCategories(
       (await database.getAllCategories()).toList();
   int nextOrder = localMainCategories.isEmpty
       ? 0
-      : localMainCategories.map((c) => c.order).reduce((a, b) => a > b ? a : b) +
+      : localMainCategories
+              .map((c) => c.order)
+              .reduce((a, b) => a > b ? a : b) +
           1;
 
   for (FireflyCategory remote in remoteCategories) {
@@ -444,8 +511,8 @@ Future<Set<int>> _pullCategories(
         );
         report.pulledCategories++;
       } else {
-        TransactionCategory newCategory = fireflyCategoryToCategory(remote,
-            order: nextOrder);
+        TransactionCategory newCategory =
+            fireflyCategoryToCategory(remote, order: nextOrder);
         nextOrder++;
         await database.createOrUpdateCategory(newCategory,
             insert: false, updateSharedEntry: false);
@@ -477,11 +544,10 @@ Future<Set<int>> _pullCategories(
       lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
     );
     if (direction == FireflySyncDirection.pull) {
-      // Merge onto the row already on disk rather than replacing it.
-      // createOrUpdateCategory persists with insertOrReplace, so a freshly
-      // built object would blank every column Firefly knows nothing about -
-      // colour, icon, emoji, the income flag and the subcategory link - each
-      // time the category is renamed on the server.
+      // Write onto the row that is on disk. createOrUpdateCategory saves
+      // with insertOrReplace, thus a new object blanks each column that
+      // Firefly does not know: the color, the icon, the emoji, the income
+      // flag and the link to the parent category.
       TransactionCategory updated = _mergeFireflyCategory(
         local,
         fireflyCategoryToCategory(
@@ -500,7 +566,8 @@ Future<Set<int>> _pullCategories(
         localPk: local.categoryPk,
         fireflyId: remote.id,
         fireflyUpdatedAt: remote.updatedAt,
-        lastSyncedLocalModified: saved?.dateTimeModified ?? updated.dateTimeModified,
+        lastSyncedLocalModified:
+            saved?.dateTimeModified ?? updated.dateTimeModified,
       );
       report.pulledCategories++;
     }
@@ -583,10 +650,10 @@ Future<Set<int>> _pullAccounts(
       lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
     );
     if (direction == FireflySyncDirection.pull) {
-      // Same reasoning as _mergeFireflyCategory: createOrUpdateWallet writes
-      // with insertOrReplace, so rebuilding the wallet from the Firefly
-      // account alone would reset its colour, icon, currency format, decimals
-      // and home-screen placement every time it is renamed remotely.
+      // The same reason as in _mergeFireflyCategory: createOrUpdateWallet
+      // saves with insertOrReplace. A wallet that is built from the Firefly
+      // account alone loses its color, icon, currency format, decimal count
+      // and home screen position at each remote rename.
       TransactionWallet updated = _mergeFireflyWallet(
         local,
         fireflyAccountToWallet(
@@ -604,7 +671,8 @@ Future<Set<int>> _pullAccounts(
         localPk: local.walletPk,
         fireflyId: remote.id,
         fireflyUpdatedAt: remote.updatedAt,
-        lastSyncedLocalModified: saved?.dateTimeModified ?? updated.dateTimeModified,
+        lastSyncedLocalModified:
+            saved?.dateTimeModified ?? updated.dateTimeModified,
       );
       report.pulledWallets++;
     }
@@ -612,12 +680,12 @@ Future<Set<int>> _pullAccounts(
   return remoteIds;
 }
 
-// Creates the two local categories the Firefly integration depends on, if
-// they are not there yet. Both are cheap no-ops once they exist.
+// Creates the two local categories that the Firefly integration needs. The
+// function does nothing if they are there.
 Future<void> _ensureFireflySystemCategories() async {
   await initializeBalanceCorrectionCategory();
-  if (await database.getCategoryInstanceOrNull(
-          kFireflyUncategorizedCategoryPk) !=
+  if (await database
+          .getCategoryInstanceOrNull(kFireflyUncategorizedCategoryPk) !=
       null) {
     return;
   }
@@ -642,15 +710,14 @@ Future<void> _ensureFireflySystemCategories() async {
 Future<Set<int>> _pullTransactions(
   FireflyApiClient client,
   FireflySyncReport report, {
-  // Lower bound on booking date. null pulls the whole history.
+  // The first booking date to read. null reads the full history.
   DateTime? windowStart,
-  // Already-fetched groups to apply instead of listing them. Used by the
-  // on-demand fetches so they share this exact apply logic rather than
-  // growing a second, subtly different copy of it.
+  // Groups that the caller read before, to apply in place of a new list. The
+  // on-demand fetches give them, thus they use this same apply code.
   List<FireflyTransactionGroup>? preFetchedGroups,
 }) async {
-  List<FireflyTransactionGroup> groups = preFetchedGroups ??
-      await client.getTransactions(start: windowStart);
+  List<FireflyTransactionGroup> groups =
+      preFetchedGroups ?? await client.getTransactions(start: windowStart);
   Set<int> remoteIds = {for (var group in groups) group.id};
 
   List<FireflySyncMapEntry> walletMaps =
@@ -667,50 +734,112 @@ Future<Set<int>> _pullTransactions(
 
   for (FireflyTransactionGroup group in groups) {
     if (group.splits.isEmpty) continue;
-
-    // Tombstones belong to a single split, not to the whole journal. Skipping
-    // the entire group when any one split was deleted locally froze all of its
-    // siblings: they kept their mappings but stopped receiving remote updates,
-    // permanently.
-    // Keyed by journal id where the tombstone has one, and by position for
-    // rows written before that column existed. Both sets are consulted: a
-    // tombstone still awaiting backfill can only be recognised by its index.
-    Set<int> tombstonedJournalIds = {};
-    Set<int> tombstonedSplitIndexes = {};
-    for (FireflySyncMapEntry m in await _syncMapsByFireflyId(
-        FireflySyncEntityType.transaction, group.id,
-        includeTombstones: true)) {
-      if (!m.isTombstone) continue;
-      if (m.fireflyJournalId != null) {
-        tombstonedJournalIds.add(m.fireflyJournalId!);
-      } else {
-        tombstonedSplitIndexes.add(m.fireflySplitIndex);
-      }
-    }
+    bool groupIsReported = false;
 
     for (int splitIndex = 0; splitIndex < group.splits.length; splitIndex++) {
       FireflyTransactionSplit split = group.splits[splitIndex];
-      if (tombstonedSplitIndexes.contains(splitIndex) ||
-          (split.transactionJournalId != null &&
-              tombstonedJournalIds.contains(split.transactionJournalId))) {
-        continue;
+      int? journalId = split.transactionJournalId;
+
+      // The rows are read for each split: this loop writes rows, thus a list
+      // that it reads one time for the group goes stale inside the loop.
+      List<FireflySyncMapEntry> liveMaps = [];
+      Set<int> liveJournalIds = {};
+      Set<int> tombstonedJournalIds = {};
+      Set<int> tombstonedPositions = {};
+      for (FireflySyncMapEntry map in await _syncMapsByFireflyId(
+          FireflySyncEntityType.transaction, group.id,
+          includeTombstones: true)) {
+        if (map.isTombstone) {
+          if (map.fireflyJournalId != null) {
+            tombstonedJournalIds.add(map.fireflyJournalId!);
+          } else {
+            tombstonedPositions.add(map.fireflySplitIndex);
+          }
+          continue;
+        }
+        liveMaps.add(map);
+        if (map.fireflyJournalId != null) {
+          liveJournalIds.add(map.fireflyJournalId!);
+        }
       }
+      bool positionMatchIsSafe =
+          fireflyPositionMatchIsSafe(groupMaps: liveMaps, splits: group.splits);
+
+      // A tombstone is for one split, not for the full group. To skip the
+      // group when one split has a tombstone stopped each other split of it:
+      // they kept their links but got no more remote changes.
+      //
+      // A tombstone that the app wrote before the journal-id column was there
+      // holds a position only, and Firefly moves the positions when it deletes
+      // a split. Such a tombstone thus counts only while no live row claims
+      // this split and while the positions are safe.
+      bool splitIsTombstoned;
+      if (journalId != null && tombstonedJournalIds.contains(journalId)) {
+        splitIsTombstoned = true;
+      } else if (journalId != null) {
+        // The split has an id, and no tombstone names that id. A tombstone
+        // that holds a position only is thus for a split that the app removed
+        // before, and Firefly moved a later split into that position. To let
+        // the position count here hides this split for ever: the app makes no
+        // record for it, and it gives no message.
+        splitIsTombstoned = false;
+      } else {
+        splitIsTombstoned =
+            positionMatchIsSafe && tombstonedPositions.contains(splitIndex);
+      }
+      if (splitIsTombstoned) continue;
+
+      List<FireflySyncMapEntry> splitMaps = matchSplitToSyncMaps(
+        groupMaps: liveMaps,
+        splitJournalId: journalId,
+        splitIndex: splitIndex,
+        matchByPosition: positionMatchIsSafe,
+      );
+
+      // Give the id to each matched row here, before a test below can end
+      // this split. A row that keeps a null id stays matched by position, and
+      // the next split that Firefly deletes then moves it onto a neighbour.
+      if (journalId != null) {
+        for (int i = 0; i < splitMaps.length; i++) {
+          if (splitMaps[i].fireflyJournalId != null) continue;
+          splitMaps[i] = await _writeSplitJournalId(splitMaps[i], journalId);
+        }
+      }
+
       FireflyPulledSplitKind kind = classifySplitType(split.type);
       if (kind == FireflyPulledSplitKind.skip) {
         report.skippedUnsupported++;
         continue;
       }
 
-      // Opening-balance and reconciliation journals are Firefly's own
-      // bookkeeping entries, tied to how an account was set up rather than to
-      // anything the user did. Importing them as ordinary transactions was
-      // actively harmful: nothing recorded that they were special, so the
-      // first local edit pushed them back as a plain withdrawal/deposit and
-      // corrupted the remote account's opening balance. Their monetary effect
-      // is already included in Firefly's current_balance, which is what the
-      // balance anchor is computed from, so skipping them here loses nothing.
+      // The opening balance and the reconciliation journals are bookkeeping
+      // entries of Firefly. They come from the setup of the account, not from
+      // an action of the user. To import them as usual transactions is unsafe:
+      // the first local change sends such a row back as a usual withdrawal or
+      // deposit and makes the opening balance of the remote account wrong.
+      // Their amounts are already in the current_balance value that gives the
+      // balance anchor, thus this skip loses nothing.
       if (splitKindIsBalanceCorrection(kind)) {
         report.skippedUnsupported++;
+        continue;
+      }
+
+      // The group holds a row that no id identifies, and the positions are
+      // not safe. To match by position can put the remote change on the wrong
+      // local row, and to make a new row makes a second copy of a row that is
+      // already here. The app does neither, and it names the group.
+      if (splitMaps.isEmpty &&
+          !positionMatchIsSafe &&
+          liveMaps.any((map) => map.fireflyJournalId == null)) {
+        if (!groupIsReported) {
+          groupIsReported = true;
+          report.warnings.add(
+              "A Firefly transaction with several splits changed, and this "
+              "app cannot say which of its records is which split. The "
+              "records stay as they are. To repair them, use \"Reset Firefly "
+              "links\" in the Firefly settings.");
+        }
+        report.skippedAmbiguousSplits++;
         continue;
       }
 
@@ -719,6 +848,7 @@ Future<Set<int>> _pullTransactions(
           group: group,
           split: split,
           splitIndex: splitIndex,
+          splitMaps: splitMaps,
           walletFireflyIdToLocalPk: walletFireflyIdToLocalPk,
           report: report,
         );
@@ -743,13 +873,8 @@ Future<Set<int>> _pullTransactions(
               kFireflyUncategorizedCategoryPk);
       int? counterpartyId = counterpartyFireflyIdForSplit(split, assetId);
 
-      List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
-          FireflySyncEntityType.transaction, group.id);
-      FireflySyncMapEntry? existingMap = matchSplitToSyncMap(
-        groupMaps: groupMaps,
-        splitJournalId: split.transactionJournalId,
-        splitIndex: splitIndex,
-      );
+      FireflySyncMapEntry? existingMap =
+          splitMaps.isEmpty ? null : splitMaps.first;
 
       if (existingMap == null) {
         Transaction newTransaction = fireflySplitToTransaction(
@@ -758,11 +883,10 @@ Future<Set<int>> _pullTransactions(
           categoryPk: categoryPk,
           isIncome: isIncome,
         );
-        // Inserting the row and recording its mapping have to commit or fail
-        // together. If the row landed but the map did not, the next pull would
-        // see no mapping and insert a second copy, and the push would see an
-        // unmapped local row and create a duplicate on Firefly too - one
-        // interrupted sync, duplicated on both sides, permanently.
+        // The new row and its map row must commit together. If the row
+        // commits and the map row does not, the next pull finds no link and
+        // inserts a second copy, and the push finds a local row with no link
+        // and creates a second remote record.
         bool inserted = await database.transaction(() async {
           await database.createOrUpdateTransaction(newTransaction,
               insert: false, updateSharedEntry: false, fireflySync: true);
@@ -784,25 +908,6 @@ Future<Set<int>> _pullTransactions(
         if (!inserted) continue;
         report.pulledTransactions++;
       } else {
-        // Backfill a row that was matched by position, so it is matched by
-        // identity from here on. Deliberately before the direction check: a
-        // row whose direction comes out "none" this cycle still needs the id,
-        // or it stays position-matched indefinitely and the next sibling
-        // deletion corrupts it anyway.
-        if (split.transactionJournalId != null &&
-            existingMap.fireflyJournalId == null) {
-          await _upsertSyncMap(
-            syncMapPk: existingMap.syncMapPk,
-            type: FireflySyncEntityType.transaction,
-            localPk: existingMap.localPk,
-            fireflyId: existingMap.fireflyId,
-            fireflyUpdatedAt: existingMap.fireflyUpdatedAt,
-            lastSyncedLocalModified: existingMap.lastSyncedLocalModified,
-            counterpartyFireflyId: existingMap.counterpartyFireflyId,
-            fireflySplitIndex: existingMap.fireflySplitIndex,
-            fireflyJournalId: split.transactionJournalId,
-          );
-        }
         Transaction? local =
             await database.tryGetTransactionFromPk(existingMap.localPk);
         if (local == null) continue;
@@ -841,14 +946,67 @@ Future<Set<int>> _pullTransactions(
         }
       }
     }
+
+    await _unlinkRowsOfRemovedSplits(group, report);
   }
   return remoteIds;
+}
+
+// Removes the local row of a split that Firefly no longer holds.
+//
+// _applyRemoteDeletes asks whether a GROUP is on the server. It thus cannot
+// see a split that Firefly removed from a group that stays. Such a split
+// leaves a local row that keeps its link for ever, and a remote change that
+// puts a new split in its place makes a second local row next to it.
+//
+// The group here comes from the server, thus it holds each split that is
+// there. A row that names a journal id that the group does not hold is for a
+// split that is gone.
+Future<void> _unlinkRowsOfRemovedSplits(
+    FireflyTransactionGroup group, FireflySyncReport report) async {
+  Set<int> liveJournalIds = {
+    for (FireflyTransactionSplit split in group.splits)
+      if (split.transactionJournalId != null) split.transactionJournalId!
+  };
+  // One split with no id makes the set too small, and each row would then look
+  // removed. Do nothing until the server names each split.
+  if (liveJournalIds.length != group.splits.length) return;
+
+  for (FireflySyncMapEntry map in await _syncMapsByFireflyId(
+      FireflySyncEntityType.transaction, group.id)) {
+    // A row with no journal id gives no proof: its position can point at
+    // another split. The quarantine in the pull loop names such a group.
+    if (map.fireflyJournalId == null) continue;
+    if (liveJournalIds.contains(map.fireflyJournalId)) continue;
+    await _deleteLocalTransactionFromRemote(map, report);
+  }
+}
+
+// Writes the journal id on a map row and gives the row with that id. The
+// upsert replaces the row, thus each other field must go with the write.
+Future<FireflySyncMapEntry> _writeSplitJournalId(
+    FireflySyncMapEntry map, int journalId) async {
+  await _upsertSyncMap(
+    syncMapPk: map.syncMapPk,
+    type: FireflySyncEntityType.transaction,
+    localPk: map.localPk,
+    fireflyId: map.fireflyId,
+    fireflyUpdatedAt: map.fireflyUpdatedAt,
+    lastSyncedLocalModified: map.lastSyncedLocalModified,
+    counterpartyFireflyId: map.counterpartyFireflyId,
+    fireflySplitIndex: map.fireflySplitIndex,
+    fireflyJournalId: journalId,
+  );
+  return map.copyWith(fireflyJournalId: Value(journalId));
 }
 
 Future<void> _pullTransferSplit({
   required FireflyTransactionGroup group,
   required FireflyTransactionSplit split,
   required int splitIndex,
+  // The rows that hold this split. The caller matched them and gave them the
+  // journal id of the split.
+  required List<FireflySyncMapEntry> splitMaps,
   required Map<int, String> walletFireflyIdToLocalPk,
   required FireflySyncReport report,
 }) async {
@@ -862,23 +1020,15 @@ Future<void> _pullTransferSplit({
     return;
   }
 
-  List<FireflySyncMapEntry> existingMaps = await _syncMapsByFireflyId(
-      FireflySyncEntityType.transaction, group.id);
-  List<FireflySyncMapEntry> thisSplitMaps = matchSplitToSyncMaps(
-    groupMaps: existingMaps,
-    splitJournalId: split.transactionJournalId,
-    splitIndex: splitIndex,
-  );
-
-  if (thisSplitMaps.isEmpty) {
+  if (splitMaps.isEmpty) {
     (Transaction, Transaction) pair = fireflySplitToTransferPair(
       split,
       sourceWalletPk: sourcePk,
       destWalletPk: destPk,
     );
-    // Both legs and both mappings commit together or not at all. A partial
-    // commit here would leave a half transfer, or an unmapped pair that the
-    // next cycle re-imports and also pushes back as a new remote transfer.
+    // The two legs and the two map rows commit together. A part commit
+    // leaves one half of a transfer, or a pair with no link that the next
+    // cycle imports again and also sends back as a new remote transfer.
     await database.transaction(() async {
       await database.createOrUpdateTransaction(pair.$1,
           insert: false, updateSharedEntry: false, fireflySync: true);
@@ -912,15 +1062,14 @@ Future<void> _pullTransferSplit({
   }
 
   Transaction? first =
-      await database.tryGetTransactionFromPk(thisSplitMaps.first.localPk);
+      await database.tryGetTransactionFromPk(splitMaps.first.localPk);
   if (first == null) return;
   DateTime? newestLocal = first.dateTimeModified;
-  DateTime? newestWatermark = thisSplitMaps.first.lastSyncedLocalModified;
-  for (FireflySyncMapEntry map in thisSplitMaps) {
+  DateTime? newestWatermark = splitMaps.first.lastSyncedLocalModified;
+  for (FireflySyncMapEntry map in splitMaps) {
     Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
-    // Hoisted into a local: Dart does not promote `local` to non-null from a
-    // `local?.field != null` test, so the field has to be captured once and
-    // tested directly.
+    // Kept in a local variable: Dart does not make `local` non-null from a
+    // test of `local?.field`, thus the field needs one read and one test.
     DateTime? localModified = local?.dateTimeModified;
     if (localModified != null &&
         (newestLocal == null || localModified.isAfter(newestLocal))) {
@@ -932,36 +1081,17 @@ Future<void> _pullTransferSplit({
       newestWatermark = map.lastSyncedLocalModified;
     }
   }
-  // Backfill before the direction gate below returns - a transfer that needs
-  // no pull this cycle still has to stop being position-matched.
-  if (split.transactionJournalId != null) {
-    for (FireflySyncMapEntry map in thisSplitMaps) {
-      if (map.fireflyJournalId != null) continue;
-      await _upsertSyncMap(
-        syncMapPk: map.syncMapPk,
-        type: FireflySyncEntityType.transaction,
-        localPk: map.localPk,
-        fireflyId: map.fireflyId,
-        fireflyUpdatedAt: map.fireflyUpdatedAt,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-        counterpartyFireflyId: map.counterpartyFireflyId,
-        fireflySplitIndex: map.fireflySplitIndex,
-        fireflyJournalId: split.transactionJournalId,
-      );
-    }
-  }
-
   FireflySyncDirection direction = decideSyncDirection(
     localModified: newestLocal,
     remoteUpdatedAt: group.updatedAt,
     lastSyncedLocalModified: newestWatermark,
-    lastSyncedRemoteUpdatedAt: thisSplitMaps.first.fireflyUpdatedAt,
+    lastSyncedRemoteUpdatedAt: splitMaps.first.fireflyUpdatedAt,
   );
   if (direction != FireflySyncDirection.pull) return;
 
   String? existingSourcePk;
   String? existingDestPk;
-  for (FireflySyncMapEntry map in thisSplitMaps) {
+  for (FireflySyncMapEntry map in splitMaps) {
     Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
     if (local == null) continue;
     if (local.amount < 0) {
@@ -977,10 +1107,10 @@ Future<void> _pullTransferSplit({
     existingSourceTransactionPk: existingSourcePk,
     existingDestTransactionPk: existingDestPk,
   );
-  // Merge onto the rows already on disk rather than replacing them outright -
-  // createOrUpdateTransaction persists with insertOrReplace, so any column not
-  // present in the companion would come back as its default and every
-  // Cashew-only field on the transfer would be lost on each remote edit.
+  // Write onto the rows that are on disk. createOrUpdateTransaction saves
+  // with insertOrReplace, thus each column that the companion does not hold
+  // gets its default value, and each local-only field of the transfer is lost
+  // at every remote change.
   (Transaction, Transaction) pair = (
     _mergeFireflyTransferSide(
         existingSourcePk == null
@@ -1001,12 +1131,14 @@ Future<void> _pullTransferSplit({
       await database.tryGetTransactionFromPk(pair.$1.transactionPk);
   Transaction? savedTo =
       await database.tryGetTransactionFromPk(pair.$2.transactionPk);
-  FireflySyncMapEntry? fromMap = thisSplitMaps.cast<FireflySyncMapEntry?>().firstWhere(
-      (m) => m?.localPk == pair.$1.transactionPk,
-      orElse: () => null);
-  FireflySyncMapEntry? toMap = thisSplitMaps.cast<FireflySyncMapEntry?>().firstWhere(
-      (m) => m?.localPk == pair.$2.transactionPk,
-      orElse: () => null);
+  FireflySyncMapEntry? fromMap = splitMaps
+      .cast<FireflySyncMapEntry?>()
+      .firstWhere((m) => m?.localPk == pair.$1.transactionPk,
+          orElse: () => null);
+  FireflySyncMapEntry? toMap = splitMaps
+      .cast<FireflySyncMapEntry?>()
+      .firstWhere((m) => m?.localPk == pair.$2.transactionPk,
+          orElse: () => null);
   await _upsertSyncMap(
     syncMapPk: fromMap?.syncMapPk,
     type: FireflySyncEntityType.transaction,
@@ -1015,8 +1147,7 @@ Future<void> _pullTransferSplit({
     fireflyUpdatedAt: group.updatedAt,
     lastSyncedLocalModified: savedFrom?.dateTimeModified,
     fireflySplitIndex: splitIndex,
-    fireflyJournalId:
-        split.transactionJournalId ?? fromMap?.fireflyJournalId,
+    fireflyJournalId: split.transactionJournalId ?? fromMap?.fireflyJournalId,
   );
   await _upsertSyncMap(
     syncMapPk: toMap?.syncMapPk,
@@ -1031,8 +1162,8 @@ Future<void> _pullTransferSplit({
   report.pulledTransactions += 2;
 }
 
-// Firefly only knows a category's name, so that is the only thing a pull is
-// allowed to carry onto an existing local category.
+// Firefly knows only the name of a category. Thus a pull writes only the name
+// onto a local category that is there.
 TransactionCategory _mergeFireflyCategory(
     TransactionCategory existing, TransactionCategory rebuilt) {
   return existing.copyWith(
@@ -1041,8 +1172,8 @@ TransactionCategory _mergeFireflyCategory(
   );
 }
 
-// Likewise for accounts: name and currency are Firefly's, everything else on
-// the wallet belongs to Cashew.
+// The same for accounts: the name and the currency are from Firefly. The
+// other fields of the wallet belong to this application.
 TransactionWallet _mergeFireflyWallet(
     TransactionWallet existing, TransactionWallet rebuilt) {
   return existing.copyWith(
@@ -1052,8 +1183,8 @@ TransactionWallet _mergeFireflyWallet(
   );
 }
 
-// Applies the Firefly-owned fields of a rebuilt transfer leg onto the row
-// that is already stored, preserving everything Cashew owns.
+// Writes the Firefly fields of a rebuilt transfer leg onto the stored row and
+// keeps each field that this application owns.
 Transaction _mergeFireflyTransferSide(
     Transaction? existing, Transaction rebuilt) {
   if (existing == null) return rebuilt;
@@ -1071,41 +1202,35 @@ Transaction _mergeFireflyTransferSide(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Remote deletes
-// ---------------------------------------------------------------------------
-
-// Removes local rows for records that no longer exist on Firefly.
+// Removes the local rows of records that are no longer on the Firefly server.
 //
-// This is the single most destructive thing the engine does, and its
-// correctness rests entirely on one premise: that the caller passed a
-// COMPLETE remote id set for the scope being reconciled. Two safeguards keep
-// that premise true:
+// This is the most destructive operation of the engine. It is correct only if
+// the caller gives a COMPLETE set of remote ids for the scope. Two rules keep
+// that true:
 //
-//  * The API client refuses to return a partially-paginated list, throwing
-//    instead - so a truncated fetch aborts the sync rather than being
-//    mistaken for "everything else was deleted".
-//  * Transactions are only reconciled inside the booking-date window that was
-//    actually pulled. Everything older was never requested, so its absence
-//    from remoteTransactionIds carries no information at all. Reconciling it
-//    would delete the user's entire history beyond the window on the first
-//    sync after this feature shipped.
+//  * The API client does not return a part of a paged list. It throws, thus a
+//    short read stops the sync and does not look like "each other record is
+//    deleted".
+//  * The code compares transactions only in the range of booking dates that
+//    the sync read. It did not ask for an older record, thus the absence of
+//    that record from remoteTransactionIds gives no information. To compare it
+//    deletes the full history of the user before the window.
 //
-// Accounts and categories have no window - they are fetched as complete lists
-// every cycle - so they are reconciled in full.
+// Accounts and categories have no window. Each cycle reads the complete
+// lists, thus the code compares all of them.
 Future<void> _applyRemoteDeletes({
   required FireflyApiClient client,
   required Set<int> remoteCategoryIds,
   required Set<int> remoteWalletIds,
   required Set<int> remoteTransactionIds,
-  // Lower bound of the booking-date window that produced remoteTransactionIds.
-  // null means the whole history was pulled and everything is in scope.
+  // The first booking date of the window that gave remoteTransactionIds. null
+  // means that the sync read the full history and each record is in scope.
   required DateTime? windowStart,
   required FireflySyncReport report,
 }) async {
-  // Firefly groups already checked one by one this pass: true = still on the
-  // server, false = confirmed gone. A journal can hold several mapped splits
-  // and there is no point asking about it more than once.
+  // The Firefly groups that this pass asked about: true = on the server,
+  // false = gone. A group can hold more than one mapped split, thus the code
+  // asks about each group one time only.
   Map<int, bool> stillOnFirefly = {};
 
   for (FireflySyncMapEntry map
@@ -1114,42 +1239,39 @@ Future<void> _applyRemoteDeletes({
 
     if (windowStart != null) {
       Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
-      // No local row left - nothing to delete, just retire the mapping.
+      // No local row. Nothing to delete, thus close the link only.
       if (local == null) {
         await _tombstoneMapRow(map);
         continue;
       }
-      // Booked before the window we pulled, so we simply did not ask Firefly
-      // about it. Leave it alone.
+      // The date is before the window, thus the sync did not ask Firefly
+      // about this record. Keep it.
       if (local.dateCreated.isBefore(windowStart)) continue;
 
-      // The local row sits inside the window we asked for, yet the record did
-      // not come back. That still is not proof of a deletion: re-dating a
-      // transaction on Firefly to before windowStart moves it out of the
-      // window while leaving it perfectly intact, and the local copy keeps its
-      // old (in-window) date, so this reconciliation is the only thing that
-      // would notice. Getting it wrong is unrecoverable - the row is deleted
-      // and its mapping tombstoned, and a tombstone stops even "Sync all
-      // history" from ever bringing it back. Ask the server about this one
-      // record before destroying anything.
+      // The local row is in the window, but the record did not come back.
+      // This is not proof of a delete: a new date before windowStart moves the
+      // remote record out of the window and keeps it complete, while the local
+      // copy keeps the old date. An error here is permanent, because the code
+      // deletes the row and writes a tombstone, and a tombstone stops even
+      // "Sync all history". Thus ask the server about this one record first.
       bool? known = stillOnFirefly[map.fireflyId];
       if (known == null) {
         try {
           FireflyTransactionGroup remote =
               await client.getTransaction(map.fireflyId);
           known = true;
-          // Re-apply it so the local copy follows whatever moved it out of the
-          // window. Once its dateCreated matches the remote booking date the
-          // check above skips it on every later cycle.
+          // Apply it again, thus the local copy gets the new date. When
+          // dateCreated agrees with the remote booking date, the test above
+          // skips this row in each later cycle.
           await _pullTransactions(client, report, preFetchedGroups: [remote]);
         } on FireflyNotFoundException {
           known = false;
         } catch (_) {
-          // A network or server failure is not evidence of a deletion either.
-          // Keep the row and retry on the next cycle.
-          report.warnings.add(
-              "Could not confirm with Firefly whether a transaction was "
-              "deleted, so it was kept locally.");
+          // A network error or a server error is not proof of a delete. Keep
+          // the row and try again in the next cycle.
+          report.warnings
+              .add("Could not confirm with Firefly whether a transaction was "
+                  "deleted, so it was kept locally.");
           continue;
         }
         stillOnFirefly[map.fireflyId] = known;
@@ -1198,11 +1320,12 @@ Future<void> _deleteLocalCategoryFromRemote(
         fireflySync: true,
       );
     }
-    await database.createDeleteLog(
-        DeleteLogType.TransactionCategory, local.categoryPk);
-    await (database.delete(database.categories)
-          ..where((c) => c.categoryPk.equals(local.categoryPk)))
-        .go();
+    // database.deleteCategory() also removes the subcategories, the
+    // associated titles and the budget limits of this category, and it writes
+    // the delete log. A plain delete of the row leaves a subcategory that
+    // points at a parent that is gone. The transactions above no longer point
+    // at this category, thus deleteCategory() does not delete a transaction.
+    await database.deleteCategory(local.categoryPk, local.order);
     report.deletedLocal++;
   }
   await _tombstoneMapRow(map);
@@ -1235,33 +1358,28 @@ Future<void> _deleteLocalWalletFromRemote(
   await _tombstoneMapRow(map);
 }
 
-// ---------------------------------------------------------------------------
-// Push
-// ---------------------------------------------------------------------------
-
 Future<void> _pushCategories(FireflyApiClient client, DateTime lastSynced,
-    FireflySyncReport report,
+    FireflySyncReport report, _FireflyPushBacklog backlog,
     {required bool includeUnmodifiedRows}) async {
   List<TransactionCategory> changed =
       await database.getAllNewCategories(lastSynced);
   for (TransactionCategory category in changed) {
-    // getAllNew*() also returns rows whose dateTimeModified is NULL. Those are
-    // not recent edits: they are legacy rows from before the dateTimeModified
-    // column existed, and anything restored from an old backup. Uploading them
-    // unasked is exactly what pushExistingLocalHistory exists to prevent, so
-    // they only go up when the user explicitly asked for their history.
+    // getAllNew*() also returns each row that has no dateTimeModified. Such a
+    // row is not a recent change: it is a row from a version before that
+    // column, or a row from an old backup. The app sends it only if the user
+    // asks for the local history.
     if (category.dateTimeModified == null && !includeUnmodifiedRows) continue;
-    // Local placeholder for "Firefly has no category here" - sending it would
-    // create a bogus category on the server and then start attaching real
-    // transactions to it.
+    // The local category for "Firefly has no category". Firefly must not get
+    // a category with this name.
     if (category.categoryPk == kFireflyUncategorizedCategoryPk) continue;
-    // Cashew's reserved balance-correction category. It holds the synthetic
-    // balance anchors and the user's own manual corrections - an artefact of
-    // how Cashew stores balances, not a category Firefly should grow. It needs
-    // its own guard because _ensureFireflySystemCategories creates it with a
-    // fresh dateTimeModified, so it looks freshly edited on the very first
-    // sync and would be pushed in that same cycle.
+    // The balance-correction category holds the balance anchors and the
+    // manual corrections of the user. It is local only.
+    // _ensureFireflySystemCategories writes it with a new dateTimeModified,
+    // thus the first cycle finds it as a changed row.
     if (category.categoryPk == kBalanceCorrectionCategoryPk) continue;
+    // A subcategory has no Firefly form, thus no later cycle can send it.
+    // recordNotPushed is for a row that a next cycle can still send: to hold
+    // the watermark at a row that never goes keeps it there for ever.
     if (category.mainCategoryPk != null) {
       report.skippedSubcategories++;
       continue;
@@ -1287,9 +1405,25 @@ Future<void> _pushCategories(FireflyApiClient client, DateTime lastSynced,
       );
       report.pushedCategories++;
     } else {
+      if (!fireflyLocalRowChanged(
+        localModified: category.dateTimeModified,
+        lastSyncedLocalModified: map.lastSyncedLocalModified,
+      )) {
+        continue;
+      }
+      // Read the live record. map.fireflyUpdatedAt holds the time that the
+      // last sync saw. If the two are compared with each other, a change made
+      // on Firefly after that sync is invisible and the push destroys it.
+      FireflyCategory remote;
+      try {
+        remote = await client.getCategory(map.fireflyId);
+      } on FireflyNotFoundException {
+        await _tombstoneMapRow(map);
+        continue;
+      }
       FireflySyncDirection direction = decideSyncDirection(
         localModified: category.dateTimeModified,
-        remoteUpdatedAt: map.fireflyUpdatedAt,
+        remoteUpdatedAt: remote.updatedAt,
         lastSyncedLocalModified: map.lastSyncedLocalModified,
         lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
       );
@@ -1311,15 +1445,14 @@ Future<void> _pushCategories(FireflyApiClient client, DateTime lastSynced,
 }
 
 Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
-    FireflySyncReport report,
+    FireflySyncReport report, _FireflyPushBacklog backlog,
     {required bool includeUnmodifiedRows}) async {
   List<TransactionWallet> changed = await database.getAllNewWallets(lastSynced);
   for (TransactionWallet wallet in changed) {
-    // getAllNew*() also returns rows whose dateTimeModified is NULL. Those are
-    // not recent edits: they are legacy rows from before the dateTimeModified
-    // column existed, and anything restored from an old backup. Uploading them
-    // unasked is exactly what pushExistingLocalHistory exists to prevent, so
-    // they only go up when the user explicitly asked for their history.
+    // getAllNew*() also returns each row that has no dateTimeModified. Such a
+    // row is not a recent change: it is a row from a version before that
+    // column, or a row from an old backup. The app sends it only if the user
+    // asks for the local history.
     if (wallet.dateTimeModified == null && !includeUnmodifiedRows) continue;
     FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
         FireflySyncEntityType.wallet, wallet.walletPk,
@@ -1340,24 +1473,34 @@ Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
       );
       report.pushedWallets++;
     } else {
+      if (!fireflyLocalRowChanged(
+        localModified: wallet.dateTimeModified,
+        lastSyncedLocalModified: map.lastSyncedLocalModified,
+      )) {
+        continue;
+      }
+      // Read the live record. It gives the time of the last remote change and
+      // the account role. The local database has no account role, thus an
+      // update that does not send the current role changes a savings account
+      // or a credit card into a plain asset account.
+      FireflyAccount remote;
+      try {
+        remote = await client.getAccount(map.fireflyId);
+      } on FireflyNotFoundException {
+        await _tombstoneMapRow(map);
+        continue;
+      }
       FireflySyncDirection direction = decideSyncDirection(
         localModified: wallet.dateTimeModified,
-        remoteUpdatedAt: map.fireflyUpdatedAt,
+        remoteUpdatedAt: remote.updatedAt,
         lastSyncedLocalModified: map.lastSyncedLocalModified,
         lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
       );
       if (direction == FireflySyncDirection.push) {
-        // Cashew has no account-role concept, so pushing a wallet would send
-        // the default role and demote a savings account or credit card back
-        // to a plain asset account. Carry the server's own role through the
-        // update instead of overwriting it.
-        String? existingRole;
-        try {
-          existingRole = (await client.getAccount(map.fireflyId)).accountRole;
-        } catch (_) {}
         FireflyAccount updated = await client.updateAccount(
           map.fireflyId,
-          walletToFireflyAccount(wallet, existingAccountRole: existingRole),
+          walletToFireflyAccount(wallet,
+              existingAccountRole: remote.accountRole),
         );
         await _upsertSyncMap(
           syncMapPk: map.syncMapPk,
@@ -1373,22 +1516,135 @@ Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
   }
 }
 
+// Builds the split list for a PUT that changes one split of a group.
+//
+// Firefly deletes each split that the request does not include, and it creates
+// a new split when a changed split has no transaction_journal_id. The request
+// therefore holds the changed split with its journal id, and the id alone for
+// each other split. Firefly finds a submitted id in this group only. A stale
+// id makes Firefly create a new split and delete the old one, thus this
+// function first looks for the id in the live group and returns null if it is
+// not there.
+//
+// A group with one split is different: Firefly updates that split and ignores
+// the submitted id.
+List<FireflyTransactionSplit>? _splitsForPartialGroupUpdate({
+  required FireflyTransactionGroup remoteGroup,
+  required FireflyTransactionSplit changedSplit,
+  required int? changedJournalId,
+}) {
+  if (remoteGroup.splits.length <= 1) return [changedSplit];
+  if (changedJournalId == null) return null;
+  if (remoteGroup.splits.any((split) => split.transactionJournalId == null)) {
+    return null;
+  }
+  if (!remoteGroup.splits
+      .any((split) => split.transactionJournalId == changedJournalId)) {
+    return null;
+  }
+  return [
+    for (FireflyTransactionSplit remote in remoteGroup.splits)
+      if (remote.transactionJournalId == changedJournalId)
+        changedSplit
+      else
+        FireflyTransactionSplit.unchangedSplit(remote.transactionJournalId!)
+  ];
+}
+
+// The journal id to store after an update. Firefly keeps the id of a split
+// that the request identifies, thus the stored id stays correct. A group with
+// one split has no submitted id, thus the response gives the id.
+int? _journalIdAfterUpdate(
+    FireflyTransactionGroup updated, int? storedJournalId) {
+  if (storedJournalId != null &&
+      updated.splits
+          .any((split) => split.transactionJournalId == storedJournalId)) {
+    return storedJournalId;
+  }
+  if (updated.splits.length == 1) {
+    return updated.splits.first.transactionJournalId ?? storedJournalId;
+  }
+  return storedJournalId;
+}
+
+// The position of a split in the group after an update. The answer of the
+// server holds each split in its order, thus the id gives the position. The
+// stored position stays if the answer does not name the split.
+int _splitIndexAfterUpdate(
+    FireflyTransactionGroup updated, int? journalId, int storedIndex) {
+  if (journalId == null) return storedIndex;
+  for (int i = 0; i < updated.splits.length; i++) {
+    if (updated.splits[i].transactionJournalId == journalId) return i;
+  }
+  return storedIndex;
+}
+
+// Deletes the Firefly record of a local row that the user marked as not paid,
+// and removes the link rows. Each map row must point at the same Firefly
+// group: a transfer has two local rows for one remote split.
+Future<void> _removeRemoteRowThatIsNotPaid({
+  required FireflyApiClient client,
+  required List<FireflySyncMapEntry> maps,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+  required DateTime? localModified,
+}) async {
+  if (maps.isEmpty) return;
+  FireflySyncMapEntry first = maps.first;
+  FireflyTransactionGroup remoteGroup;
+  try {
+    remoteGroup = await client.getTransaction(first.fireflyId);
+  } on FireflyNotFoundException {
+    for (FireflySyncMapEntry map in maps) {
+      await _deleteSyncMapRow(map);
+    }
+    return;
+  }
+  try {
+    if (remoteGroup.splits.length <= 1) {
+      await client.deleteTransaction(first.fireflyId);
+    } else if (first.fireflyJournalId != null &&
+        remoteGroup.splits.any(
+            (split) => split.transactionJournalId == first.fireflyJournalId)) {
+      await client.deleteTransactionJournal(first.fireflyJournalId!);
+    } else {
+      report.warnings.add(
+          "Did not remove a transaction from Firefly that is no longer paid: "
+          "it is one split of a transaction with "
+          "${remoteGroup.splits.length} splits, and the app does not know "
+          "which one.");
+      backlog.recordNotPushed(localModified);
+      return;
+    }
+  } catch (e) {
+    report.warnings.add(
+        "Could not remove a transaction from Firefly that is no longer paid: "
+        "$e");
+    backlog.recordNotPushed(localModified);
+    return;
+  }
+  report.deletedRemote++;
+  for (FireflySyncMapEntry map in maps) {
+    await _deleteSyncMapRow(map);
+  }
+}
+
 Future<void> _pushTransactions(
     FireflyApiClient client,
     DateTime lastSynced,
     _FireflyCounterpartyIndex counterparties,
     FireflySyncReport report,
+    _FireflyPushBacklog backlog,
     {required bool includeUnmodifiedRows}) async {
   List<Transaction> changed = await database.getAllNewTransactions(lastSynced);
   Set<String> handledThisPass = {};
 
   for (Transaction transaction in changed) {
     if (handledThisPass.contains(transaction.transactionPk)) continue;
-    // getAllNew*() also returns rows whose dateTimeModified is NULL. Those are
-    // not recent edits: they are legacy rows from before the dateTimeModified
-    // column existed, and anything restored from an old backup. Uploading them
-    // unasked is exactly what pushExistingLocalHistory exists to prevent, so
-    // they only go up when the user explicitly asked for their history.
+    // getAllNew*() also returns each row that has no dateTimeModified. Such a
+    // row is not a recent change: it is a row from a version before that
+    // column, or a row from an old backup. The app sends it only if the user
+    // asks for the local history.
     if (transaction.dateTimeModified == null && !includeUnmodifiedRows) {
       continue;
     }
@@ -1409,7 +1665,27 @@ Future<void> _pushTransactions(
         transaction: transaction,
         handledThisPass: handledThisPass,
         report: report,
+        backlog: backlog,
       );
+      continue;
+    }
+
+    // Firefly has no state for a transaction that is not yet paid. Each
+    // transaction that Firefly holds changes the balance of its account. A
+    // local row that is not paid is an expected payment, thus the app does not
+    // send it. If the user marks the row paid, the next cycle creates it.
+    if (transaction.paid == false) {
+      FireflySyncMapEntry? paidMap = await _syncMapByLocalPk(
+          FireflySyncEntityType.transaction, transaction.transactionPk);
+      if (paidMap != null) {
+        await _removeRemoteRowThatIsNotPaid(
+          client: client,
+          maps: [paidMap],
+          report: report,
+          backlog: backlog,
+          localModified: transaction.dateTimeModified,
+        );
+      }
       continue;
     }
 
@@ -1417,6 +1693,7 @@ Future<void> _pushTransactions(
         FireflySyncEntityType.wallet, transaction.walletFk);
     if (walletMap == null) {
       report.skippedUnmappedWallet++;
+      backlog.recordNotPushed(transaction.dateTimeModified);
       continue;
     }
 
@@ -1426,7 +1703,8 @@ Future<void> _pushTransactions(
     try {
       category = await database.getCategoryInstance(transaction.categoryFk);
     } catch (_) {}
-    // Round-trips as uncategorised rather than inventing a category remotely.
+    // The row goes back with no category. The app must not make a category on
+    // the server for it.
     if (transaction.categoryFk == kFireflyUncategorizedCategoryPk) {
       category = null;
     }
@@ -1445,15 +1723,17 @@ Future<void> _pushTransactions(
     );
 
     if (map != null) {
-      List<FireflySyncMapEntry> groupMaps =
-          await _syncMapsByFireflyId(FireflySyncEntityType.transaction, map.fireflyId);
-      bool multiSplit = groupMaps.any((m) => m.fireflySplitIndex != map.fireflySplitIndex);
+      List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
+          FireflySyncEntityType.transaction, map.fireflyId);
+      bool multiSplit =
+          groupMaps.any((m) => m.fireflySplitIndex != map.fireflySplitIndex);
       if (multiSplit) {
         await _pushExistingMultiSplitGroup(
           client: client,
           groupMaps: groupMaps,
           counterparties: counterparties,
           report: report,
+          backlog: backlog,
         );
         for (FireflySyncMapEntry groupMap in groupMaps) {
           handledThisPass.add(groupMap.localPk);
@@ -1469,6 +1749,7 @@ Future<void> _pushTransactions(
       categoryName: category?.name,
       counterpartyFireflyId: counterparty?.id,
       counterpartyName: counterparty?.name ?? transaction.name,
+      transactionJournalId: map?.fireflyJournalId,
     );
     FireflyTransactionGroup group =
         FireflyTransactionGroup(id: 0, splits: [split]);
@@ -1494,36 +1775,46 @@ Future<void> _pushTransactions(
       );
       report.pushedTransactions++;
     } else {
+      if (!fireflyLocalRowChanged(
+        localModified: transaction.dateTimeModified,
+        lastSyncedLocalModified: map.lastSyncedLocalModified,
+      )) {
+        continue;
+      }
+      // Read the live group. It gives the time of the last remote change, and
+      // it shows each split that Firefly holds. The multiSplit test above uses
+      // the sync map only, thus it does not know a split on an account that is
+      // not linked, or a split outside the window of the sync.
+      FireflyTransactionGroup remoteGroup;
+      try {
+        remoteGroup = await client.getTransaction(map.fireflyId);
+      } on FireflyNotFoundException {
+        await _tombstoneMapRow(map);
+        continue;
+      }
       FireflySyncDirection direction = decideSyncDirection(
         localModified: transaction.dateTimeModified,
-        remoteUpdatedAt: map.fireflyUpdatedAt,
+        remoteUpdatedAt: remoteGroup.updatedAt,
         lastSyncedLocalModified: map.lastSyncedLocalModified,
         lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
       );
       if (direction == FireflySyncDirection.push) {
-        // Firefly replaces a journal's ENTIRE split list on PUT, and the
-        // multiSplit test above is computed purely from the local sync map -
-        // it only knows about splits this install actually imported. A journal
-        // whose other splits sit on an unlinked account, a liability, or
-        // outside the sync window maps to exactly one local row and looks
-        // single-split from here. Sending that one split would delete the
-        // others on the server, so compare against the live journal first.
-        FireflyTransactionGroup remoteGroup;
-        try {
-          remoteGroup = await client.getTransaction(map.fireflyId);
-        } on FireflyNotFoundException {
-          await _tombstoneMapRow(map);
+        List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
+          remoteGroup: remoteGroup,
+          changedSplit: split,
+          changedJournalId: map.fireflyJournalId,
+        );
+        if (splits == null) {
+          report.warnings
+              .add("Did not push a change to a split transaction: it has "
+                  "${remoteGroup.splits.length} splits on Firefly, and the app "
+                  "does not know which one belongs to this record.");
+          backlog.recordNotPushed(transaction.dateTimeModified);
           continue;
         }
-        if (remoteGroup.splits.length > 1) {
-          report.warnings.add(
-              "Did not push a change to a split transaction: it has "
-              "${remoteGroup.splits.length} splits on Firefly but only one is "
-              "stored locally, so updating it would have deleted the rest.");
-          continue;
-        }
-        FireflyTransactionGroup updated =
-            await client.updateTransaction(map.fireflyId, group);
+        FireflyTransactionGroup updated = await client.updateTransaction(
+            map.fireflyId,
+            FireflyTransactionGroup(id: map.fireflyId, splits: splits));
         await _upsertSyncMap(
           syncMapPk: map.syncMapPk,
           type: FireflySyncEntityType.transaction,
@@ -1533,7 +1824,8 @@ Future<void> _pushTransactions(
           lastSyncedLocalModified: transaction.dateTimeModified,
           counterpartyFireflyId: counterparty?.id ?? map.counterpartyFireflyId,
           fireflySplitIndex: map.fireflySplitIndex,
-          fireflyJournalId: map.fireflyJournalId,
+          fireflyJournalId:
+              _journalIdAfterUpdate(updated, map.fireflyJournalId),
         );
         report.pushedTransactions++;
       }
@@ -1541,11 +1833,9 @@ Future<void> _pushTransactions(
   }
 }
 
-// Rebuilds the Firefly split for the local row a sync-map entry points at.
-//
-// Returns null when the row is gone or its wallet is not linked - callers must
-// read that as "this group cannot be safely rebuilt", never as "skip this
-// split", because Firefly replaces a journal's whole split list on PUT.
+// Rebuilds the Firefly split of the local row that a sync-map row points at.
+// It returns null if the local row is gone or if the wallet of that row is not
+// linked.
 Future<FireflyTransactionSplit?> _splitForMappedLocalRow({
   required FireflySyncMapEntry map,
   required _FireflyCounterpartyIndex counterparties,
@@ -1556,8 +1846,8 @@ Future<FireflyTransactionSplit?> _splitForMappedLocalRow({
   FireflySyncMapEntry? walletMap =
       await _syncMapByLocalPk(FireflySyncEntityType.wallet, local.walletFk);
   if (walletMap == null) return null;
-  FireflySyncMapEntry? categoryMap = await _syncMapByLocalPk(
-      FireflySyncEntityType.category, local.categoryFk);
+  FireflySyncMapEntry? categoryMap =
+      await _syncMapByLocalPk(FireflySyncEntityType.category, local.categoryFk);
   TransactionCategory? category;
   try {
     category = await database.getCategoryInstance(local.categoryFk);
@@ -1579,70 +1869,46 @@ Future<FireflyTransactionSplit?> _splitForMappedLocalRow({
     categoryName: category?.name,
     counterpartyFireflyId: counterparty?.id,
     counterpartyName: counterparty?.name ?? local.name,
+    transactionJournalId: map.fireflyJournalId,
   );
 }
 
+// Pushes the local changes of a group that holds more than one split.
+//
+// The request holds one entry for each split that Firefly has, in the order
+// that Firefly gives. A split with a local row gets the rebuilt content. Each
+// other split gets its id alone, which keeps it as it is. If a local row is
+// not known as a split of the live group, the app cannot say which split it
+// is, and this function makes no request.
 Future<void> _pushExistingMultiSplitGroup({
   required FireflyApiClient client,
   required List<FireflySyncMapEntry> groupMaps,
   required _FireflyCounterpartyIndex counterparties,
   required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
 }) async {
-  groupMaps.sort((a, b) => a.fireflySplitIndex.compareTo(b.fireflySplitIndex));
-  List<FireflyTransactionSplit> splits = [];
-  // Firefly replaces a journal's entire split list on PUT. If we rebuild fewer
-  // splits than the remote group actually has - because a local row was
-  // deleted, its wallet is not linked, or the split was never mapped locally
-  // in the first place - sending that list silently deletes the missing splits
-  // on the server. Track it and bail out instead.
-  bool droppedASplit = false;
   DateTime? newestLocal;
   DateTime? newestWatermark;
-  DateTime? remoteUpdatedAt = groupMaps.first.fireflyUpdatedAt;
   for (FireflySyncMapEntry map in groupMaps) {
     Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
-    if (local == null) {
-      droppedASplit = true;
-      continue;
-    }
-    if (newestLocal == null ||
-        (local.dateTimeModified != null &&
-            local.dateTimeModified!.isAfter(newestLocal))) {
-      newestLocal = local.dateTimeModified;
+    if (local?.dateTimeModified != null &&
+        (newestLocal == null ||
+            local!.dateTimeModified!.isAfter(newestLocal))) {
+      newestLocal = local!.dateTimeModified;
     }
     if (map.lastSyncedLocalModified != null &&
         (newestWatermark == null ||
             map.lastSyncedLocalModified!.isAfter(newestWatermark))) {
       newestWatermark = map.lastSyncedLocalModified;
     }
-    FireflyTransactionSplit? split = await _splitForMappedLocalRow(
-        map: map, counterparties: counterparties, local: local);
-    if (split == null) {
-      droppedASplit = true;
-      continue;
-    }
-    splits.add(split);
   }
-  if (splits.isEmpty) return;
-  FireflySyncDirection direction = decideSyncDirection(
+  if (!fireflyLocalRowChanged(
     localModified: newestLocal,
-    remoteUpdatedAt: remoteUpdatedAt,
     lastSyncedLocalModified: newestWatermark,
-    lastSyncedRemoteUpdatedAt: remoteUpdatedAt,
-  );
-  if (direction != FireflySyncDirection.push) return;
-
-  if (droppedASplit) {
-    report.warnings.add(
-        "Skipped updating a split transaction on Firefly because part of it "
-        "could not be rebuilt locally; sending it would have deleted the "
-        "missing splits on the server.");
+  )) {
     return;
   }
 
-  // Even with every mapping intact, the remote journal can hold splits this
-  // install never imported (they were outside the sync window, or their
-  // account is not linked). Compare against the live group before overwriting.
   FireflyTransactionGroup remoteGroup;
   try {
     remoteGroup = await client.getTransaction(groupMaps.first.fireflyId);
@@ -1652,13 +1918,70 @@ Future<void> _pushExistingMultiSplitGroup({
     }
     return;
   }
-  if (remoteGroup.splits.length != splits.length) {
+
+  FireflySyncDirection direction = decideSyncDirection(
+    localModified: newestLocal,
+    remoteUpdatedAt: remoteGroup.updatedAt,
+    lastSyncedLocalModified: newestWatermark,
+    lastSyncedRemoteUpdatedAt: groupMaps.first.fireflyUpdatedAt,
+  );
+  if (direction != FireflySyncDirection.push) return;
+
+  // A row that holds no journal id at all cannot go into the request: the
+  // app cannot say which split it is, and a request that does not name it
+  // makes Firefly delete that split. The group waits for the next pull, which
+  // gives the id.
+  if (groupMaps.any((map) => map.fireflyJournalId == null)) {
     report.warnings.add(
-        "Skipped updating a split transaction on Firefly: it has "
-        "${remoteGroup.splits.length} splits remotely but only "
-        "${splits.length} are stored locally, so the update would have "
-        "deleted the rest.");
+        "Did not push a change to a split transaction: the app cannot say "
+        "which of its ${remoteGroup.splits.length} splits each local record "
+        "belongs to.");
+    backlog.recordNotPushed(newestLocal);
     return;
+  }
+
+  // A row whose journal id is not in the live group points at a split that
+  // the server no longer holds. To stop the full group for that one row stops
+  // each other row of it, thus the app unlinks that row and pushes the rest.
+  List<FireflySyncMapEntry> mappedGroupMaps = [];
+  for (FireflySyncMapEntry map in groupMaps) {
+    if (remoteGroup.splits
+        .any((split) => split.transactionJournalId == map.fireflyJournalId)) {
+      mappedGroupMaps.add(map);
+      continue;
+    }
+    await _tombstoneMapRow(map);
+    report.warnings.add(
+        "A record of a split transaction is no longer on Firefly. This app "
+        "keeps the record and no longer syncs it.");
+  }
+  if (mappedGroupMaps.isEmpty) return;
+  groupMaps = mappedGroupMaps;
+
+  // A PUT must name each split by its id. A split that comes with no id thus
+  // stops the request. To read the id with `!` throws here and stops the full
+  // cycle, and each later cycle again.
+  if (remoteGroup.splits.any((split) => split.transactionJournalId == null)) {
+    report.warnings.add(
+        "Did not push a change to a split transaction: Firefly gave a split "
+        "with no journal id.");
+    backlog.recordNotPushed(newestLocal);
+    return;
+  }
+
+  List<FireflyTransactionSplit> splits = [];
+  Map<int, int> positionByJournalId = {};
+  for (int i = 0; i < remoteGroup.splits.length; i++) {
+    FireflyTransactionSplit remote = remoteGroup.splits[i];
+    int journalId = remote.transactionJournalId!;
+    positionByJournalId[journalId] = i;
+    Iterable<FireflySyncMapEntry> matches =
+        groupMaps.where((map) => map.fireflyJournalId == journalId);
+    FireflyTransactionSplit? rebuilt = matches.isEmpty
+        ? null
+        : await _splitForMappedLocalRow(
+            map: matches.first, counterparties: counterparties);
+    splits.add(rebuilt ?? FireflyTransactionSplit.unchangedSplit(journalId));
   }
 
   FireflyTransactionGroup updated = await client.updateTransaction(
@@ -1675,8 +1998,9 @@ Future<void> _pushExistingMultiSplitGroup({
       fireflyUpdatedAt: updated.updatedAt,
       lastSyncedLocalModified: local?.dateTimeModified,
       counterpartyFireflyId: map.counterpartyFireflyId,
-      fireflySplitIndex: map.fireflySplitIndex,
-      fireflyJournalId: map.fireflyJournalId,
+      fireflySplitIndex:
+          positionByJournalId[map.fireflyJournalId] ?? map.fireflySplitIndex,
+      fireflyJournalId: _journalIdAfterUpdate(updated, map.fireflyJournalId),
     );
   }
   report.pushedTransactions++;
@@ -1687,13 +2011,23 @@ Future<void> _pushTransfer({
   required Transaction transaction,
   required Set<String> handledThisPass,
   required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
 }) async {
   Transaction? paired =
       await database.tryGetTransactionFromPk(transaction.pairedTransactionFk!);
-  if (paired == null) return;
+  if (paired == null) {
+    // Firefly holds a transfer as one split with two accounts, thus the app
+    // cannot send one side alone. Keep the change for a later cycle: the row
+    // is behind the watermark after this cycle, and no other test finds it.
+    handledThisPass.add(transaction.transactionPk);
+    report.warnings.add(
+        "Did not push a change to a transfer: this app holds one of its two "
+        "sides only.");
+    backlog.recordNotPushed(transaction.dateTimeModified);
+    return;
+  }
 
-  Transaction fromTransaction =
-      transaction.amount < 0 ? transaction : paired;
+  Transaction fromTransaction = transaction.amount < 0 ? transaction : paired;
   Transaction toTransaction = transaction.amount < 0 ? paired : transaction;
 
   FireflySyncMapEntry? fromWalletMap = await _syncMapByLocalPk(
@@ -1704,15 +2038,58 @@ Future<void> _pushTransfer({
   handledThisPass.add(paired.transactionPk);
   if (fromWalletMap == null || toWalletMap == null) {
     report.skippedUnmappedWallet++;
+    backlog.recordNotPushed(transaction.dateTimeModified);
     return;
   }
 
-  // Whichever leg the user touched last supplies the text for the single
-  // remote split.
+  FireflySyncMapEntry? fromMap = await _syncMapByLocalPk(
+      FireflySyncEntityType.transaction, fromTransaction.transactionPk);
+  FireflySyncMapEntry? toMap = await _syncMapByLocalPk(
+      FireflySyncEntityType.transaction, toTransaction.transactionPk);
+
+  // The two local rows of a transfer are one Firefly split, thus their rows
+  // must give the same group. Two different groups mean that the user made
+  // the pair from two records that each already had a Firefly record. To go
+  // on writes both rows onto one group and leaves the other group on the
+  // server with no local row, and the next pull then makes a second copy of
+  // it. The app makes no request and tells the user.
+  if (fromMap != null &&
+      toMap != null &&
+      fromMap.fireflyId != toMap.fireflyId) {
+    report.warnings.add(
+        "Did not push a change to a transfer: its two sides point at two "
+        "different Firefly transactions. Remove one side and make it again.");
+    backlog.recordNotPushed(transaction.dateTimeModified);
+    return;
+  }
+
+  // Firefly counts each transaction that it holds in the balance of its
+  // accounts, thus a transfer that is not yet paid stays local. Both sides
+  // must be paid.
+  if (fromTransaction.paid == false || toTransaction.paid == false) {
+    List<FireflySyncMapEntry> maps = [
+      if (fromMap != null) fromMap,
+      if (toMap != null) toMap,
+    ];
+    if (maps.isNotEmpty) {
+      await _removeRemoteRowThatIsNotPaid(
+        client: client,
+        maps: maps,
+        report: report,
+        backlog: backlog,
+        localModified: transaction.dateTimeModified,
+      );
+    }
+    return;
+  }
+
+  // The side that the user changed last gives the text of the one remote
+  // split.
   bool toSideIsNewer = toTransaction.dateTimeModified != null &&
       (fromTransaction.dateTimeModified == null ||
           toTransaction.dateTimeModified!
               .isAfter(fromTransaction.dateTimeModified!));
+  int? storedJournalId = fromMap?.fireflyJournalId ?? toMap?.fireflyJournalId;
   FireflyTransactionSplit split = transferPairToFireflySplit(
     fromTransaction: fromTransaction,
     toTransaction: toTransaction,
@@ -1720,21 +2097,13 @@ Future<void> _pushTransfer({
     toWalletFireflyId: toWalletMap.fireflyId,
     descriptionOverride: toSideIsNewer ? toTransaction.name : null,
     notesOverride: toSideIsNewer ? toTransaction.note : null,
+    transactionJournalId: storedJournalId,
   );
-  FireflyTransactionGroup group = FireflyTransactionGroup(
-    id: 0,
-    splits: [split],
-  );
-
-  FireflySyncMapEntry? fromMap = await _syncMapByLocalPk(
-      FireflySyncEntityType.transaction, fromTransaction.transactionPk);
-  FireflySyncMapEntry? toMap = await _syncMapByLocalPk(
-      FireflySyncEntityType.transaction, toTransaction.transactionPk);
 
   if (fromMap == null && toMap == null) {
-    FireflyTransactionGroup created = await client.createTransaction(group);
-    // Both legs of a transfer are one remote split, so they share its journal
-    // id - which is what identifies them on the next pull.
+    FireflyTransactionGroup created = await client
+        .createTransaction(FireflyTransactionGroup(id: 0, splits: [split]));
+    // The two local rows are one remote split, thus they share its journal id.
     int? createdJournalId = created.splits.isEmpty
         ? null
         : created.splits.first.transactionJournalId;
@@ -1744,6 +2113,7 @@ Future<void> _pushTransfer({
       fireflyId: created.id,
       fireflyUpdatedAt: created.updatedAt,
       lastSyncedLocalModified: fromTransaction.dateTimeModified,
+      fireflySplitIndex: 0,
       fireflyJournalId: createdJournalId,
     );
     await _upsertSyncMap(
@@ -1752,104 +2122,138 @@ Future<void> _pushTransfer({
       fireflyId: created.id,
       fireflyUpdatedAt: created.updatedAt,
       lastSyncedLocalModified: toTransaction.dateTimeModified,
+      fireflySplitIndex: 0,
       fireflyJournalId: createdJournalId,
     );
     report.pushedTransactions++;
-  } else {
-    FireflySyncMapEntry linkedMap = (fromMap ?? toMap)!;
-    // Decide per leg, against that leg's own watermark, and push if either one
-    // changed. Judging the transfer solely by the source row meant an edit to
-    // the destination row was never pushed - and because the sync watermark
-    // advances regardless, the next cycle would not see it either, so the edit
-    // was silently lost from Firefly for good.
-    FireflySyncDirection fromDirection = decideSyncDirection(
-      localModified: fromTransaction.dateTimeModified,
-      remoteUpdatedAt: linkedMap.fireflyUpdatedAt,
-      lastSyncedLocalModified: fromMap?.lastSyncedLocalModified,
-      lastSyncedRemoteUpdatedAt:
-          fromMap?.fireflyUpdatedAt ?? linkedMap.fireflyUpdatedAt,
-    );
-    FireflySyncDirection toDirection = decideSyncDirection(
-      localModified: toTransaction.dateTimeModified,
-      remoteUpdatedAt: linkedMap.fireflyUpdatedAt,
-      lastSyncedLocalModified: toMap?.lastSyncedLocalModified,
-      lastSyncedRemoteUpdatedAt:
-          toMap?.fireflyUpdatedAt ?? linkedMap.fireflyUpdatedAt,
-    );
-    FireflySyncDirection direction =
-        (fromDirection == FireflySyncDirection.push ||
-                toDirection == FireflySyncDirection.push)
-            ? FireflySyncDirection.push
-            : FireflySyncDirection.none;
-    if (direction == FireflySyncDirection.push) {
-      // Same hazard as in _pushTransactions: we rebuild the transfer as a
-      // single-split group, and a PUT replaces whatever else the remote
-      // journal holds.
-      FireflyTransactionGroup remoteGroup;
-      try {
-        remoteGroup = await client.getTransaction(linkedMap.fireflyId);
-      } on FireflyNotFoundException {
-        if (fromMap != null) await _tombstoneMapRow(fromMap);
-        if (toMap != null) await _tombstoneMapRow(toMap);
-        return;
-      }
-      if (remoteGroup.splits.length > 1) {
-        report.warnings.add(
-            "Did not push a change to a transfer: its Firefly transaction has "
-            "${remoteGroup.splits.length} splits but only one is stored "
-            "locally, so updating it would have deleted the rest.");
-        return;
-      }
-      FireflyTransactionGroup updated =
-          await client.updateTransaction(linkedMap.fireflyId, group);
-      // _upsertSyncMap writes with insertOrReplace, so anything not passed
-      // here comes back as its default - omitting the journal id would blank
-      // it on every transfer push and drop these rows back to position
-      // matching. Prefer what the PUT returned, and fall back to what is
-      // already stored so a response carrying no journal id cannot erase it.
-      int? transferJournalId = (updated.splits.isEmpty
-              ? null
-              : updated.splits.first.transactionJournalId) ??
-          fromMap?.fireflyJournalId ??
-          toMap?.fireflyJournalId ??
-          linkedMap.fireflyJournalId;
-      await _upsertSyncMap(
-        syncMapPk: fromMap?.syncMapPk,
-        type: FireflySyncEntityType.transaction,
-        localPk: fromTransaction.transactionPk,
-        fireflyId: linkedMap.fireflyId,
-        fireflyUpdatedAt: updated.updatedAt,
-        lastSyncedLocalModified: fromTransaction.dateTimeModified,
-        fireflyJournalId: transferJournalId,
-      );
-      await _upsertSyncMap(
-        syncMapPk: toMap?.syncMapPk,
-        type: FireflySyncEntityType.transaction,
-        localPk: toTransaction.transactionPk,
-        fireflyId: linkedMap.fireflyId,
-        fireflyUpdatedAt: updated.updatedAt,
-        lastSyncedLocalModified: toTransaction.dateTimeModified,
-        fireflyJournalId: transferJournalId,
-      );
-      report.pushedTransactions++;
-    }
+    return;
   }
+
+  FireflySyncMapEntry linkedMap = (fromMap ?? toMap)!;
+  // Each side has its own watermark, and the user can change either side. If
+  // the app looks at the source row only, a change to the destination row
+  // never goes to Firefly.
+  bool fromChanged = fireflyLocalRowChanged(
+    localModified: fromTransaction.dateTimeModified,
+    lastSyncedLocalModified: fromMap?.lastSyncedLocalModified,
+  );
+  bool toChanged = fireflyLocalRowChanged(
+    localModified: toTransaction.dateTimeModified,
+    lastSyncedLocalModified: toMap?.lastSyncedLocalModified,
+  );
+  if (!fromChanged && !toChanged) return;
+
+  FireflyTransactionGroup remoteGroup;
+  try {
+    remoteGroup = await client.getTransaction(linkedMap.fireflyId);
+  } on FireflyNotFoundException {
+    if (fromMap != null) await _tombstoneMapRow(fromMap);
+    if (toMap != null) await _tombstoneMapRow(toMap);
+    return;
+  }
+
+  DateTime? newestLocal = toSideIsNewer
+      ? toTransaction.dateTimeModified
+      : fromTransaction.dateTimeModified;
+  FireflySyncDirection direction = decideSyncDirection(
+    localModified: newestLocal,
+    remoteUpdatedAt: remoteGroup.updatedAt,
+    lastSyncedLocalModified: null,
+    lastSyncedRemoteUpdatedAt: linkedMap.fireflyUpdatedAt,
+  );
+  if (direction != FireflySyncDirection.push) return;
+
+  List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
+    remoteGroup: remoteGroup,
+    changedSplit: split,
+    changedJournalId: storedJournalId,
+  );
+  if (splits == null) {
+    report.warnings.add(
+        "Did not push a change to a transfer: its Firefly transaction has "
+        "${remoteGroup.splits.length} splits, and the app does not know which "
+        "one is the transfer.");
+    backlog.recordNotPushed(newestLocal);
+    return;
+  }
+
+  FireflyTransactionGroup updated = await client.updateTransaction(
+      linkedMap.fireflyId,
+      FireflyTransactionGroup(id: linkedMap.fireflyId, splits: splits));
+  // _upsertSyncMap writes with insertOrReplace, thus each field that this call
+  // does not give gets its default value. If the journal id is not given here,
+  // each transfer push erases it.
+  int? transferJournalId = _journalIdAfterUpdate(updated, storedJournalId);
+  // The position of the split in the group. The answer of the server gives it
+  // when it names the split, thus a group that moved its splits stays right.
+  int transferSplitIndex = _splitIndexAfterUpdate(
+    updated,
+    transferJournalId,
+    fromMap?.fireflySplitIndex ?? toMap?.fireflySplitIndex ?? 0,
+  );
+  await _upsertSyncMap(
+    syncMapPk: fromMap?.syncMapPk,
+    type: FireflySyncEntityType.transaction,
+    localPk: fromTransaction.transactionPk,
+    fireflyId: linkedMap.fireflyId,
+    fireflyUpdatedAt: updated.updatedAt,
+    lastSyncedLocalModified: fromTransaction.dateTimeModified,
+    fireflySplitIndex: transferSplitIndex,
+    fireflyJournalId: transferJournalId,
+  );
+  await _upsertSyncMap(
+    syncMapPk: toMap?.syncMapPk,
+    type: FireflySyncEntityType.transaction,
+    localPk: toTransaction.transactionPk,
+    fireflyId: linkedMap.fireflyId,
+    fireflyUpdatedAt: updated.updatedAt,
+    lastSyncedLocalModified: toTransaction.dateTimeModified,
+    fireflySplitIndex: transferSplitIndex,
+    fireflyJournalId: transferJournalId,
+  );
+  report.pushedTransactions++;
 }
 
-Future<void> _pushDeletes(
-    FireflyApiClient client,
-    DateTime lastSynced,
-    _FireflyCounterpartyIndex counterparties,
-    FireflySyncReport report) async {
+Future<void> _pushDeletes(FireflyApiClient client, DateTime lastSynced,
+    FireflySyncReport report, _FireflyPushBacklog backlog) async {
   List<DeleteLog> deleteLogs = await database.getAllNewDeleteLogs(lastSynced);
   Set<int> remoteDeletedTransactionIds = {};
+
+  // First pass: the wallets. A wallet that the user deletes in this app is
+  // unlinked from Firefly, and the Firefly account stays. DELETE on a Firefly
+  // account destroys each transaction of that account, and also each other
+  // split of the groups that hold them, which is history that the user did
+  // not delete.
+  //
+  // deleteWallet() deletes the transactions of the wallet before it writes the
+  // delete log of the wallet, thus the local rows are gone and the second pass
+  // cannot read the wallet of a deleted transaction. The Firefly ids that this
+  // pass collects tell the second pass which transaction to keep.
+  Set<int> unlinkedAccountIds = {};
+  for (DeleteLog log in deleteLogs) {
+    if (log.type != DeleteLogType.TransactionWallet) continue;
+    if (log.entryPk == "0") continue;
+    FireflySyncMapEntry? map = await _syncMapByLocalPk(
+        FireflySyncEntityType.wallet, log.entryPk,
+        includeTombstones: true);
+    if (map == null) continue;
+    // The id goes into the set on each cycle, also when a cycle before this
+    // one closed the link. The second pass uses the set to hold back a
+    // transaction of the removed account. An empty set on a retry cycle lets
+    // that transaction take the delete path and destroys the remote record.
+    unlinkedAccountIds.add(map.fireflyId);
+    if (map.isTombstone) continue;
+    await _tombstoneMapRow(map);
+    report.warnings
+        .add("An account was removed in this app. Its Firefly account and the "
+            "transactions of that account stay on the server, and this app no "
+            "longer syncs them.");
+  }
+
   for (DeleteLog log in deleteLogs) {
     FireflySyncEntityType? type;
     if (log.type == DeleteLogType.Transaction) {
       type = FireflySyncEntityType.transaction;
-    } else if (log.type == DeleteLogType.TransactionWallet) {
-      if (log.entryPk == "0") continue;
-      type = FireflySyncEntityType.wallet;
     } else if (log.type == DeleteLogType.TransactionCategory) {
       if (log.entryPk == "0") continue;
       type = FireflySyncEntityType.category;
@@ -1857,8 +2261,8 @@ Future<void> _pushDeletes(
       continue;
     }
 
-    FireflySyncMapEntry? map = await _syncMapByLocalPk(type, log.entryPk,
-        includeTombstones: true);
+    FireflySyncMapEntry? map =
+        await _syncMapByLocalPk(type, log.entryPk, includeTombstones: true);
     if (map == null) continue;
     if (map.isTombstone) continue;
 
@@ -1868,70 +2272,58 @@ Future<void> _pushDeletes(
           await _tombstoneMapRow(map);
           continue;
         }
+        if (unlinkedAccountIds.isNotEmpty &&
+            await _transactionIsOnUnlinkedAccount(
+                client: client,
+                fireflyId: map.fireflyId,
+                unlinkedAccountIds: unlinkedAccountIds)) {
+          // The user deleted the account, not this transaction.
+          await _tombstoneMapRow(map);
+          continue;
+        }
         List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
             FireflySyncEntityType.transaction, map.fireflyId);
-        // A Firefly journal can hold several splits, each one its own local
-        // row. Deleting one of those rows must remove only that split -
-        // deleting the whole journal would destroy the sibling splits on the
-        // server while their local rows live on, which is silent data loss on
-        // records the user never touched.
-        List<FireflySyncMapEntry> surviving = [];
+        // A transfer is two local rows that point at one remote split. Such a
+        // row is the other side of the transfer, not another split.
         bool pairedLegStillLocal = false;
         for (FireflySyncMapEntry sibling in groupMaps) {
           if (sibling.localPk == map.localPk) continue;
-          bool siblingExists =
-              await database.tryGetTransactionFromPk(sibling.localPk) != null;
-          // A transfer is two local rows mapped to the SAME remote split. A
-          // surviving sibling that shares this split is that other leg, not
-          // another split of the journal. Counting it as a survivor sent every
-          // transfer delete down the split-removal path below, where the
-          // completeness check could never pass (one remote split against two
-          // known local rows), so deleting a transfer in Cashew never reached
-          // Firefly and the warning repeated on every cycle.
-          //
-          // Both legs are one remote split, so they share a journal id as well
-          // as an index. Compare on the id when both rows have one; fall back
-          // to the index for rows not yet backfilled.
-          bool sameRemoteSplit = (sibling.fireflyJournalId != null &&
-                  map.fireflyJournalId != null)
-              ? sibling.fireflyJournalId == map.fireflyJournalId
-              : sibling.fireflySplitIndex == map.fireflySplitIndex;
-          if (sameRemoteSplit) {
-            if (siblingExists) pairedLegStillLocal = true;
-            continue;
+          bool sameRemoteSplit =
+              (sibling.fireflyJournalId != null && map.fireflyJournalId != null)
+                  ? sibling.fireflyJournalId == map.fireflyJournalId
+                  : sibling.fireflySplitIndex == map.fireflySplitIndex;
+          if (!sameRemoteSplit) continue;
+          if (await database.tryGetTransactionFromPk(sibling.localPk) != null) {
+            pairedLegStillLocal = true;
           }
-          if (siblingExists) surviving.add(sibling);
         }
-        if (surviving.isNotEmpty) {
-          await _removeSplitFromRemoteGroup(
-            client: client,
-            deletedMap: map,
-            survivingMaps: surviving,
-            counterparties: counterparties,
-            report: report,
-          );
-          continue;
-        }
-        await client.deleteTransaction(map.fireflyId);
+        // A Firefly group can hold several splits, and each split is one local
+        // row. The delete must remove that split only, because a delete of the
+        // group destroys each other split with it.
+        //
+        // The rows of this app do not say how many splits the group holds: a
+        // split that the app never imported, or that it skipped, has no local
+        // row. The live group must therefore be read before a delete, which is
+        // what _removeSplitFromRemoteGroup does.
+        bool groupWasDeleted = await _removeSplitFromRemoteGroup(
+          client: client,
+          deletedMap: map,
+          groupMaps: groupMaps,
+          report: report,
+          backlog: backlog,
+          deleteLoggedAt: log.dateTimeModified,
+        );
+        if (!groupWasDeleted) continue;
         remoteDeletedTransactionIds.add(map.fireflyId);
-        report.deletedRemote++;
-        for (FireflySyncMapEntry sibling in groupMaps) {
-          await _tombstoneMapRow(sibling);
-        }
         if (pairedLegStillLocal) {
-          // database.deleteTransaction does not follow pairedTransactionFk, so
-          // Cashew can be left holding half a transfer. Firefly has no way to
-          // represent that, and the whole journal is gone now; say so rather
-          // than leaving a row that silently stops syncing.
-          report.warnings.add(
-              "A transfer was removed from Firefly because one of its two "
-              "sides was deleted in Cashew. The other side is still stored "
-              "locally and is no longer synced.");
+          // database.deleteTransaction does not follow pairedTransactionFk,
+          // thus this app can hold one half of a transfer. Firefly cannot
+          // store that.
+          report.warnings
+              .add("A transfer was removed from Firefly because one of its two "
+                  "sides was deleted in Cashew. The other side is still stored "
+                  "locally and is no longer synced.");
         }
-      } else if (type == FireflySyncEntityType.wallet) {
-        await client.deleteAccount(map.fireflyId);
-        report.deletedRemote++;
-        await _tombstoneMapRow(map);
       } else if (type == FireflySyncEntityType.category) {
         await client.deleteCategory(map.fireflyId);
         report.deletedRemote++;
@@ -1949,111 +2341,104 @@ Future<void> _pushDeletes(
       }
     } catch (e) {
       report.warnings.add("Could not delete ${type.name} on Firefly: $e");
+      backlog.recordNotPushed(log.dateTimeModified);
       print("Firefly push-delete error (will retry): " + e.toString());
     }
   }
 }
 
-// Removes a single split from a remote journal whose other splits still exist
-// locally, by rewriting the group without it.
+// True if one side of the Firefly transaction is an account that the user
+// removed in this app during this cycle.
+Future<bool> _transactionIsOnUnlinkedAccount({
+  required FireflyApiClient client,
+  required int fireflyId,
+  required Set<int> unlinkedAccountIds,
+}) async {
+  FireflyTransactionGroup remoteGroup;
+  try {
+    remoteGroup = await client.getTransaction(fireflyId);
+  } on FireflyNotFoundException {
+    return false;
+  }
+  return remoteGroup.splits.any((split) =>
+      unlinkedAccountIds.contains(split.sourceId) ||
+      unlinkedAccountIds.contains(split.destinationId));
+}
+
+// Removes one split from a Firefly group and keeps the other splits.
 //
-// The rewrite is only attempted when every remote split is accounted for
-// locally (the removed one plus the survivors). If the remote group holds
-// splits this install never imported - outside the sync window, or on an
-// unlinked account - the PUT would delete them too, so we leave the whole
-// group alone and keep the map row untombstoned so the delete is retried on a
-// later cycle rather than forgotten.
-Future<void> _removeSplitFromRemoteGroup({
+// DELETE on a transaction-journal removes that split alone. A PUT that
+// rewrites the group would give each other split a new journal id and would
+// delete each split that this app does not know.
+//
+// Firefly answers a journal id of another group, or an id that is not there,
+// with a 401 error and not with a 404 error. The app therefore first reads the
+// live group and looks for the id in it.
+// Gives true when the full group went, and false when it stays.
+Future<bool> _removeSplitFromRemoteGroup({
   required FireflyApiClient client,
   required FireflySyncMapEntry deletedMap,
-  required List<FireflySyncMapEntry> survivingMaps,
-  required _FireflyCounterpartyIndex counterparties,
+  // Each row of this app that points at the group. The links of all of them
+  // close when the full group goes.
+  required List<FireflySyncMapEntry> groupMaps,
   required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+  required DateTime deleteLoggedAt,
 }) async {
   FireflyTransactionGroup remoteGroup;
   try {
     remoteGroup = await client.getTransaction(deletedMap.fireflyId);
   } on FireflyNotFoundException {
-    // Already gone remotely - nothing to remove, just stop tracking the row.
-    await _tombstoneMapRow(deletedMap);
-    return;
+    await _tombstoneGroupMaps(deletedMap, groupMaps);
+    return false;
   }
-  if (remoteGroup.splits.length != survivingMaps.length + 1) {
+  if (remoteGroup.splits.length <= 1) {
+    await client.deleteTransaction(deletedMap.fireflyId);
+    await _tombstoneGroupMaps(deletedMap, groupMaps);
+    report.deletedRemote++;
+    return true;
+  }
+  int? journalId = deletedMap.fireflyJournalId;
+  if (journalId == null ||
+      !remoteGroup.splits
+          .any((split) => split.transactionJournalId == journalId)) {
     report.warnings.add(
-        "Did not remove a deleted split from a Firefly transaction: the "
-        "remote transaction has ${remoteGroup.splits.length} splits but "
-        "${survivingMaps.length + 1} are known locally, so rewriting it "
-        "would have deleted the rest.");
-    return;
+        "Did not remove a deleted record from a Firefly split transaction: "
+        "the app cannot say which of its ${remoteGroup.splits.length} splits "
+        "the record is.");
+    backlog.recordNotPushed(deleteLoggedAt);
+    return false;
   }
-
-  survivingMaps
-      .sort((a, b) => a.fireflySplitIndex.compareTo(b.fireflySplitIndex));
-  List<FireflyTransactionSplit> splits = [];
-  for (FireflySyncMapEntry map in survivingMaps) {
-    FireflyTransactionSplit? split = await _splitForMappedLocalRow(
-        map: map, counterparties: counterparties);
-    if (split == null) {
-      report.warnings.add(
-          "Did not remove a deleted split from a Firefly transaction because "
-          "another of its splits could not be rebuilt locally.");
-      return;
-    }
-    splits.add(split);
-  }
-  if (splits.isEmpty) return;
-
-  FireflyTransactionGroup updated = await client.updateTransaction(
-    deletedMap.fireflyId,
-    FireflyTransactionGroup(id: deletedMap.fireflyId, splits: splits),
-  );
+  await client.deleteTransactionJournal(journalId);
   await _tombstoneMapRow(deletedMap);
-  // The surviving splits shift down by one position in the rewritten journal,
-  // so their stored indices have to move with them - the indices still drive
-  // ordering when the split list is rebuilt. The journal ids are carried
-  // through unchanged: they are what identifies these rows now, and Firefly
-  // keeps them across the rewrite.
-  for (int i = 0; i < survivingMaps.length; i++) {
-    Transaction? local =
-        await database.tryGetTransactionFromPk(survivingMaps[i].localPk);
-    await _upsertSyncMap(
-      syncMapPk: survivingMaps[i].syncMapPk,
-      type: FireflySyncEntityType.transaction,
-      localPk: survivingMaps[i].localPk,
-      fireflyId: deletedMap.fireflyId,
-      fireflyUpdatedAt: updated.updatedAt,
-      lastSyncedLocalModified: local?.dateTimeModified,
-      counterpartyFireflyId: survivingMaps[i].counterpartyFireflyId,
-      fireflySplitIndex: i,
-      fireflyJournalId: survivingMaps[i].fireflyJournalId,
-    );
-  }
   report.deletedRemote++;
+  return false;
 }
 
-// ---------------------------------------------------------------------------
-// Balance anchors
-// ---------------------------------------------------------------------------
-//
-// Only a recent window of Firefly's history is stored locally, so summing the
-// local rows of a wallet under-reports its balance by everything that was
-// never pulled. Each synced wallet therefore carries one synthetic row holding
-// exactly that difference:
-//
-//     anchor = firefly_current_balance - sum(the wallet's other local rows)
-//
-// so that local sum + anchor == the balance Firefly reports. Because the
-// anchor lives in the reserved balance-correction category "0", Cashew's
-// existing onlyShowIfNotBalanceCorrection() filter already includes it in net
-// totals and net worth while keeping it out of income/expense breakdowns and
-// spending graphs - no existing query had to change.
-//
-// The anchor self-corrects: as older transactions get cached on demand the
-// local sum grows and the anchor shrinks by the same amount, so the reported
-// balance stays put.
+Future<void> _tombstoneGroupMaps(
+    FireflySyncMapEntry deletedMap, List<FireflySyncMapEntry> groupMaps) async {
+  await _tombstoneMapRow(deletedMap);
+  for (FireflySyncMapEntry sibling in groupMaps) {
+    if (sibling.syncMapPk == deletedMap.syncMapPk) continue;
+    await _tombstoneMapRow(sibling);
+  }
+}
 
-// Anything below this is treated as no change, to avoid rewriting the anchor
-// (and so waking the auto-sync watcher) over floating-point noise.
+// The balance anchor of a wallet is one local row that holds the total of the
+// data before the window:
+//
+//     anchor = firefly_current_balance - sum(the other local rows)
+//
+// Thus the local sum plus the anchor is the balance that Firefly reports. The
+// anchor is in the reserved balance-correction category "0", thus the filter
+// onlyShowIfNotBalanceCorrection() keeps it in the net totals and net worth,
+// and out of the income and expense views. The anchor corrects itself: when
+// an on-demand fetch adds older rows, the local sum increases and the anchor
+// decreases by the same amount.
+
+// A difference that is less than this is no change. To write the anchor again
+// starts the auto-sync watcher, thus small floating-point noise must not do
+// it.
 const double _kAnchorEpsilon = 0.005;
 
 Future<void> _refreshBalanceAnchors(
@@ -2083,9 +2468,9 @@ Future<void> _refreshBalanceAnchorForWallet({
   Transaction? existing = await database.tryGetTransactionFromPk(anchorPk);
 
   if (remoteBalance == null) {
-    // Without an authoritative balance we cannot compute an anchor. Leave any
-    // existing one untouched rather than replacing it with a guess - a stale
-    // anchor is much closer to the truth than none at all.
+    // Without a balance from the server the code cannot calculate an anchor.
+    // Keep the anchor that is there: an old anchor is nearer to the truth
+    // than a guess.
     if (existing == null) {
       report.warnings.add(
           "Firefly did not report a balance for one account; its total may be "
@@ -2094,22 +2479,26 @@ Future<void> _refreshBalanceAnchorForWallet({
     return;
   }
 
+  // Firefly reports the balance of today and does not count a transaction
+  // with a date in the future. The local sum must use the same rule, or each
+  // such transaction makes the anchor wrong by its amount.
   double localSum = await database.getSumOfWalletExcludingTransaction(
-      walletPk, anchorPk);
+      walletPk, anchorPk,
+      notLaterThan: DateTime.now());
   double anchorAmount = remoteBalance - localSum;
 
-  // Nothing to carry, and nothing already stored - do not create a row.
+  // Nothing to hold, and no row on disk. Do not make a row.
   if (existing == null && anchorAmount.abs() < _kAnchorEpsilon) return;
-  // Unchanged. Skipping the write matters: rewriting it would bump
-  // dateTimeModified, which trips the auto-sync watcher and schedules another
-  // sync, every single cycle.
+  // No change. The write is not permitted here: it sets a new
+  // dateTimeModified, which starts the auto-sync watcher and one more sync in
+  // each cycle.
   if (existing != null &&
       (existing.amount - anchorAmount).abs() < _kAnchorEpsilon) {
     return;
   }
 
-  DateTime? earliest = await database.getEarliestTransactionDateOfWallet(
-      walletPk, anchorPk);
+  DateTime? earliest =
+      await database.getEarliestTransactionDateOfWallet(walletPk, anchorPk);
   DateTime anchorDate =
       (earliest ?? fireflySyncWindowStart()).subtract(const Duration(days: 1));
 
@@ -2126,18 +2515,14 @@ Future<void> _refreshBalanceAnchorForWallet({
   );
 }
 
-// ---------------------------------------------------------------------------
-// On-demand fetches
-// ---------------------------------------------------------------------------
+// The functions below read data from before the sync window, after an action
+// of the user: a search, a filter on a date, an open account, or a pull to
+// refresh a balance. They write each record into the local database, where it
+// is a usual local row.
 //
-// Everything below reaches past the rolling sync window, on an explicit user
-// action - searching, filtering by date, opening an account, or pulling to
-// refresh a balance. Records fetched here are cached into the local database
-// and are ordinary local rows from then on.
-//
-// None of these run delete reconciliation and none of them advance
-// fireflyLastSyncedAt. They fetch a deliberately partial view of the remote
-// data, and _applyRemoteDeletes must only ever be handed a complete one.
+// None of them compares deletes and none of them moves fireflyLastSyncedAt.
+// They read a part of the remote data on purpose, and _applyRemoteDeletes
+// accepts a complete set only.
 
 final ValueNotifier<bool> fireflyOnDemandBusyNotifier = ValueNotifier(false);
 
@@ -2152,10 +2537,10 @@ Future<T?> _withFireflyClient<T>(
       FireflyApiClient(baseUrl: hostUrl, personalAccessToken: pat);
   fireflyOnDemandBusyNotifier.value = true;
   try {
-    // Queued behind (and ahead of) the routine sync. These fetches run the
-    // same _pullTransactions code against overlapping data, so letting one
-    // interleave with a sync means both can look up the same Firefly group,
-    // both find no mapping, and both insert their own local copy of it.
+    // In the same queue as the routine sync. These fetches use the same
+    // _pullTransactions code on data that can be the same. If one runs during
+    // a sync, both can read the same Firefly group, both find no link, and
+    // each insert its own local copy.
     return await _withFireflyEngineLock(
         () => _withFireflyWrites(() => body(client)));
   } catch (e) {
@@ -2168,8 +2553,8 @@ Future<T?> _withFireflyClient<T>(
   }
 }
 
-// Caches a booking-date range that falls outside the rolling window, e.g.
-// when the user scrolls or filters back past it.
+// Reads and keeps a range of booking dates from before the window, for
+// example when the user scrolls or filters back past it.
 Future<FireflySyncReport?> fireflyFetchTransactionRange({
   required DateTime start,
   DateTime? end,
@@ -2186,8 +2571,8 @@ Future<FireflySyncReport?> fireflyFetchTransactionRange({
   });
 }
 
-// Caches everything Firefly holds for one wallet, optionally date-bounded.
-// Backs "show me this account's full history".
+// Reads each record that Firefly holds for one wallet, with an optional range
+// of dates. This gives the full history of an account.
 Future<FireflySyncReport?> fireflyFetchTransactionsForWallet(
   String walletPk, {
   DateTime? start,
@@ -2215,8 +2600,8 @@ Future<FireflySyncReport?> fireflyFetchTransactionsForWallet(
   });
 }
 
-// Runs a Firefly-side full-text search and caches whatever comes back, so
-// results from outside the window become available locally.
+// Sends a full-text search to Firefly and keeps each record that comes back,
+// thus a result from before the window becomes a local row.
 Future<FireflySyncReport?> fireflySearchAndCacheTransactions(
     String query) async {
   if (query.trim().isEmpty) return null;
@@ -2232,9 +2617,9 @@ Future<FireflySyncReport?> fireflySearchAndCacheTransactions(
   });
 }
 
-// Re-reads balances straight from Firefly and re-anchors every linked wallet.
-// Cheap compared with a sync (one account list, no transactions), so it is
-// suitable for a pull-to-refresh on a balance or net-worth view.
+// Reads the balances from Firefly again and writes the anchor of each linked
+// wallet. This costs one account list and no transactions, thus a pull to
+// refresh on a balance view or a net worth view can use it.
 Future<bool> fireflyRefreshBalances() async {
   FireflySyncReport? report = await _withFireflyClient((client) async {
     FireflySyncReport report = FireflySyncReport();
@@ -2245,41 +2630,35 @@ Future<bool> fireflyRefreshBalances() async {
   return report != null;
 }
 
-// Widens the window permanently and resyncs, for "my older transactions are
-// missing". Expensive on a populated instance, so only ever user-initiated.
+// Makes the window larger and syncs again, for "my older transactions are not
+// here". This is expensive on a full server, thus only the user starts it.
 Future<bool> fireflySyncAllHistory() async {
   return await fireflySyncNow(fullResync: true);
 }
 
-// ---------------------------------------------------------------------------
-// UI entry points
-// ---------------------------------------------------------------------------
-//
-// Thin wrappers the app's views call directly. Each one is a no-op when
-// Firefly is off, only reaches the network when the view is actually asking
-// for something the local window cannot answer, and remembers what it already
-// fetched so that toggling a filter back and forth does not re-download the
-// same data. Every one of them is fire-and-forget from the caller's point of
-// view: results land in the local database and the existing Drift streams
-// push them into the open view on their own.
+// The functions below are the ones that the views of the application call.
+// Each one does nothing if Firefly is off, uses the network only if the view
+// asks for data that the local window does not hold, and keeps a record of
+// what it read, thus a filter that the user sets two times reads the data one
+// time. The caller does not wait for a result: the data goes into the local
+// database, and the Drift streams put it into the open view.
 
-String _fireflyDayKey(DateTime date) =>
-    date.toIso8601String().substring(0, 10);
+String _fireflyDayKey(DateTime date) => date.toIso8601String().substring(0, 10);
 
 final Set<String> _fireflyFetchedRangeKeys = {};
 final Set<String> _fireflyFetchedSearchQueries = {};
 final Set<String> _fireflyFetchedWalletPks = {};
 
-// Clears the "already fetched" memory. Called when the link is reconfigured,
-// since a different server (or a widened window) invalidates all of it.
+// Clears the record of what the fetches read. A different server, or a larger
+// window, makes each entry of that record wrong.
 void fireflyClearOnDemandCacheMemory() {
   _fireflyFetchedRangeKeys.clear();
   _fireflyFetchedSearchQueries.clear();
   _fireflyFetchedWalletPks.clear();
 }
 
-// The user filtered or scrolled to a date range. Only ranges that reach back
-// past the rolling window need anything from the server.
+// The user set a filter or scrolled to a range of dates. Only a range that
+// starts before the window needs data from the server.
 Future<void> fireflyEnsureRangeCached(DateTime? start, DateTime? end) async {
   if (!fireflyEnabled) return;
   if (start == null) return;
@@ -2289,18 +2668,18 @@ Future<void> fireflyEnsureRangeCached(DateTime? start, DateTime? end) async {
   if (!_fireflyFetchedRangeKeys.add(key)) return;
   FireflySyncReport? report =
       await fireflyFetchTransactionRange(start: start, end: end);
-  // Failed fetches must not be remembered as done, or the range would stay
-  // permanently missing until the app restarts.
+  // A fetch that fails must not go into the record, or the range stays empty
+  // until the application starts again.
   if (report == null) _fireflyFetchedRangeKeys.remove(key);
 }
 
-// The user typed a search. Firefly searches its whole history, so this is the
-// path by which results older than the window become visible at all.
+// The user typed a search. Firefly searches its full history, thus this is
+// the only way to see a result from before the window.
 Future<void> fireflyEnsureSearchCached(String? query) async {
   if (!fireflyEnabled) return;
   String trimmed = (query ?? "").trim();
-  // Below three characters the query matches too much to be worth a round
-  // trip, and the local rows already answer it.
+  // A query of less than three characters matches too much data, and the
+  // local rows give an answer.
   if (trimmed.length < 3) return;
   String key = trimmed.toLowerCase();
   if (!_fireflyFetchedSearchQueries.add(key)) return;
@@ -2308,8 +2687,9 @@ Future<void> fireflyEnsureSearchCached(String? query) async {
   if (report == null) _fireflyFetchedSearchQueries.remove(key);
 }
 
-// The user opened one account. Pulls that account's full history once per app
-// run, so its transaction list and running balance are complete.
+// The user opened one account. This reads the full history of that account
+// one time in each run of the application, thus its list of transactions and
+// its balance are complete.
 Future<void> fireflyEnsureWalletHistoryCached(String walletPk) async {
   if (!fireflyEnabled) return;
   if (!_fireflyFetchedWalletPks.add(walletPk)) return;
@@ -2317,10 +2697,9 @@ Future<void> fireflyEnsureWalletHistoryCached(String walletPk) async {
   if (report == null) _fireflyFetchedWalletPks.remove(walletPk);
 }
 
-// Uploads local transactions that predate linking to Firefly. Explicitly
-// user-initiated: on a populated instance this creates a remote copy of every
-// local record, and there is no safe way to tell which of them Firefly
-// already has.
+// Sends the local transactions that are older than the link to Firefly. Only
+// the user starts this: on a server that holds data it makes a remote copy of
+// each local row, and there is no safe test for the rows that Firefly has.
 Future<bool> fireflyUploadExistingLocalHistory() async {
   return await fireflySyncNow(pushExistingLocalHistory: true);
 }

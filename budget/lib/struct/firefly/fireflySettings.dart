@@ -1,17 +1,16 @@
-// Settings access for the Firefly III integration.
+// The settings of the Firefly III integration.
 //
-// The Personal Access Token is deliberately kept OUT of appStateSettings/
-// sharedPreferences (lib/struct/settings.dart's updateSettings()) because
-// that JSON blob round-trips through database backup/restore and the
-// existing Google Drive sync - a PAT must never end up embedded in a
-// portable .sqlite backup or silently synced to another device. It lives in
-// flutter_secure_storage instead (OS keychain/keystore backed on
-// iOS/Android/macOS/Windows/Linux; reduced protection on web, a known,
-// accepted tradeoff - see FIREFLY_SYNC_FUTURE_SCOPE.md).
+// The Personal Access Token is not in appStateSettings or in sharedPreferences
+// (see updateSettings() in lib/struct/settings.dart). That JSON block goes
+// into the database backup and into the Google Drive sync, thus a token in it
+// goes into a portable .sqlite backup and to each other device. The token is
+// in flutter_secure_storage, which uses the key store of the operating system
+// on iOS, Android, macOS, Windows and Linux. The web gives less protection;
+// see FIREFLY_SYNC_FUTURE_SCOPE.md.
 //
-// Everything else (enabled flag, host url, last synced time) is not
-// sensitive and follows the app's normal settings pattern so it shows up
-// correctly after a restore (as "off", since the PAT won't have restored).
+// The other values (the enabled flag, the host URL, the time of the last sync)
+// are not secret and use the usual settings of the application. After a
+// restore the integration is off, because the token does not come back.
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:budget/struct/settings.dart';
@@ -44,17 +43,16 @@ Future<void> setFireflyHostUrl(String url) {
   return updateSettings("fireflyHostUrl", url, updateGlobalState: false);
 }
 
-// How far back the routine automatic sync reaches.
+// How far back the routine sync reads.
 //
-// Firefly is the system of record; Cashew keeps a rolling recent window of it
-// locally so that a routine sync stays cheap regardless of how many years of
-// history the server holds. Anything older is fetched on demand (searching,
-// filtering, or opening an account) and cached from then on, and each
-// account's true balance is carried by a balance anchor so that totals and
-// net worth stay correct even though most history is not stored locally.
+// Firefly is the system of record. This application keeps a recent window of
+// it, thus a routine sync stays cheap on a server that holds many years of
+// data. It reads an older record on demand (a search, a filter, or an open
+// account) and keeps it from then on. A balance anchor carries the balance of
+// each account, thus the totals and the net worth stay correct.
 const int kFireflyDefaultSyncWindowDays = 30;
 
-// Guard rails for the user-configurable value.
+// The limits of the value that the user sets.
 const int kFireflyMinSyncWindowDays = 7;
 const int kFireflyMaxSyncWindowDays = 3650;
 
@@ -72,10 +70,10 @@ Future<void> setFireflySyncWindowDays(int days) {
       updateGlobalState: false);
 }
 
-// Start of the routine sync window. Dates are truncated to midnight because
-// Firefly's start/end query parameters are date-only - keeping a time
-// component here would make the boundary ambiguous between the request we
-// send and the comparisons we make locally.
+// The first day of the routine sync window. The value goes to midnight
+// because the start and end parameters of Firefly hold a date only. A time in
+// this value makes the limit different in the request and in the local
+// tests.
 DateTime fireflySyncWindowStart({DateTime? now}) {
   DateTime reference = now ?? DateTime.now();
   DateTime start =
@@ -93,4 +91,8 @@ Future<void> setFireflyLastSyncedAt(DateTime dateTime) {
   return updateSettings(
       "fireflyLastSyncedAt", dateTime.toIso8601String(),
       updateGlobalState: false);
+}
+
+Future<void> clearFireflyLastSyncedAt() {
+  return updateSettings("fireflyLastSyncedAt", "", updateGlobalState: false);
 }

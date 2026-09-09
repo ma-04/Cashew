@@ -1,13 +1,17 @@
-// Thin REST client for a self-hosted Firefly III instance
-// (https://api-docs.firefly-iii.org/), authenticated with a Personal Access
-// Token (Firefly's "local_bearer_auth" scheme).
+// REST client for a self-hosted Firefly III instance. It uses a Personal
+// Access Token, which is Firefly's "local_bearer_auth" scheme.
 //
-// Pure Dart + package:http - no Flutter imports, so this is unit-testable
-// with package:http/testing.dart's MockClient without a widget harness.
+// This file has no Flutter imports. A test can therefore drive it with the
+// MockClient from package:http/testing.dart and no widget harness.
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:budget/struct/firefly/fireflyModels.dart';
+
+// The name that this client sends in the User-Agent header. Without it the
+// Firefly log shows only "Dart/3.3 (dart:io)", which does not tell the user
+// which application made the request.
+const String kFireflyUserAgent = "Cashew-FireflySync";
 
 class FireflyAuthException implements Exception {
   final String message;
@@ -40,11 +44,13 @@ class FireflyNotFoundException implements Exception {
 class FireflyApiClient {
   final String baseUrl;
   final String personalAccessToken;
+  final String userAgent;
   final http.Client _client;
 
   FireflyApiClient({
     required String baseUrl,
     required this.personalAccessToken,
+    this.userAgent = kFireflyUserAgent,
     http.Client? client,
   })  : baseUrl = _normalizeBaseUrl(baseUrl),
         _client = client ?? http.Client();
@@ -67,6 +73,7 @@ class FireflyApiClient {
         "Authorization": "Bearer $personalAccessToken",
         "Accept": "application/vnd.api+json",
         "Content-Type": "application/json",
+        "User-Agent": userAgent,
       };
 
   Uri _uri(String path, [Map<String, dynamic>? query]) {
@@ -137,13 +144,12 @@ class FireflyApiClient {
     }
   }
 
-  // Used for "Test Connection" - hits the lightest authenticated endpoint.
+  // The "Test Connection" button uses this. It is the smallest request
+  // that needs the token.
   Future<FireflyAbout> getAbout() async {
     Map<String, dynamic> json = await _get("/about");
     return FireflyAbout.fromJson(json);
   }
-
-  // ---- Accounts ----
 
   Future<List<FireflyAccount>> getAccounts({String? type}) async {
     Map<String, dynamic> query = {};
@@ -166,15 +172,11 @@ class FireflyApiClient {
 
   Future<void> deleteAccount(int id) => _delete("/accounts/$id");
 
-  // Single-account read, used to refresh a balance on demand without pulling
-  // the whole account list.
   Future<FireflyAccount> getAccount(int id) async {
     Map<String, dynamic> json = await _get("/accounts/$id");
     return FireflyAccount.fromJson(
         Map<String, dynamic>.from(json["data"]));
   }
-
-  // ---- Categories ----
 
   Future<List<FireflyCategory>> getCategories() async {
     List<Map<String, dynamic>> pages = await _getAllPages("/categories", {});
@@ -196,10 +198,13 @@ class FireflyApiClient {
 
   Future<void> deleteCategory(int id) => _delete("/categories/$id");
 
-  // ---- Transactions ----
+  Future<FireflyCategory> getCategory(int id) async {
+    Map<String, dynamic> json = await _get("/categories/$id");
+    return FireflyCategory.fromJson(Map<String, dynamic>.from(json["data"]));
+  }
 
-  // Firefly's list endpoint filters by date range (start/end), not by an
-  // "updated since" cursor - the sync engine windows this itself.
+  // Firefly filters this endpoint by booking date, not by an "updated since"
+  // cursor. The sync engine applies its own window.
   Future<List<FireflyTransactionGroup>> getTransactions({
     DateTime? start,
     DateTime? end,
@@ -228,9 +233,6 @@ class FireflyApiClient {
         Map<String, dynamic>.from(json["data"]));
   }
 
-  // Transactions belonging to one asset account, optionally date-bounded.
-  // Backs "load older transactions for this account" without widening the
-  // whole sync window.
   Future<List<FireflyTransactionGroup>> getTransactionsForAccount(
     int accountId, {
     DateTime? start,
@@ -244,8 +246,6 @@ class FireflyApiClient {
     return pages.map((json) => FireflyTransactionGroup.fromJson(json)).toList();
   }
 
-  // Full-text search across transactions, used to reach records that fall
-  // outside the locally cached window.
   Future<List<FireflyTransactionGroup>> searchTransactions(String query) async {
     List<Map<String, dynamic>> pages =
         await _getAllPages("/search/transactions", {"query": query});
@@ -260,26 +260,27 @@ class FireflyApiClient {
 
   Future<void> deleteTransaction(int id) => _delete("/transactions/$id");
 
+  // Deletes one split and keeps the other splits of its group. A PUT that
+  // rewrites the group would give the other splits new journal ids.
+  Future<void> deleteTransactionJournal(int journalId) =>
+      _delete("/transaction-journals/$journalId");
+
   String _formatDate(DateTime date) {
     String twoDigits(int n) => n.toString().padLeft(2, "0");
     return "${date.year}-${twoDigits(date.month)}-${twoDigits(date.day)}";
   }
 
-  // Follows Firefly's JSON:API pagination (meta.pagination.total_pages).
   static const int _kPageSize = 50;
 
-  // Hard stop so a server that keeps reporting "there is another page" cannot
-  // spin this loop forever. 2000 pages x 50 = 100k records.
+  // A stop limit. A server that always reports one more page cannot make this
+  // loop run forever. 2000 pages of 50 records is 100000 records.
   static const int _kMaxPages = 2000;
 
-  // Fetches every page of a list endpoint.
+  // Returns the complete result set, or throws.
   //
-  // This MUST either return the complete result set or throw. Callers
-  // (notably the sync engine's delete reconciliation) treat the returned list
-  // as the authoritative remote state and delete local rows that are missing
-  // from it - so silently returning a truncated list here would destroy user
-  // data. Every ambiguous response is therefore an exception, never an early
-  // `break`.
+  // The delete reconciliation in the sync engine reads this list as the full
+  // remote state and deletes local rows that are absent from it. A short list
+  // therefore destroys user data. Each unclear response throws.
   Future<List<Map<String, dynamic>>> _getAllPages(
       String path, Map<String, dynamic> query) async {
     List<Map<String, dynamic>> results = [];
@@ -300,10 +301,9 @@ class FireflyApiClient {
           : Map<String, dynamic>.from(meta!["pagination"]);
 
       if (pagination == null) {
-        // Firefly always sends meta.pagination on its list endpoints. Its
-        // absence means we are talking to something we do not understand, so
-        // we cannot know whether more pages exist. A short page is safe to
-        // treat as the end; a full page is not.
+        // Firefly sends meta.pagination on each list endpoint. If it is
+        // absent, this is not a server we know, and the number of pages is
+        // unknown. A short page is the end. A full page is not.
         if (data.length >= _kPageSize) {
           throw FireflyNetworkException(
               "Firefly returned a full page for $path with no pagination "
@@ -323,8 +323,7 @@ class FireflyApiClient {
       }
 
       if (page >= totalPages) break;
-      // A page that came back empty while the server still claims more pages
-      // follow would loop forever; treat it as a broken response.
+      // An empty page with more pages to come makes this loop run forever.
       if (data.isEmpty) {
         throw FireflyNetworkException(
             "Firefly returned an empty page $page of $totalPages for $path.");

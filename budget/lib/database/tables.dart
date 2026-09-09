@@ -26,7 +26,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 49;
+int schemaVersionGlobal = 50;
 
 // The highest schema version drift_schemas/ has a snapshot for, and therefore
 // the highest version the generated migrationSteps() in schema_versions.dart
@@ -750,11 +750,25 @@ class FinanceDatabase extends _$FinanceDatabase {
   @override
   int get schemaVersion => schemaVersionGlobal;
 
+  // Each pull reads the map rows of a Firefly id. The index makes that read a
+  // lookup and not a scan of the table. It is not unique: the two rows of a
+  // transfer point at one Firefly transaction.
+  //
+  // A statement and not a @TableIndex annotation, because an annotation needs
+  // a new generated schema file, and drift_schemas/ stops at v46.
+  static Future<void> _createFireflySyncMapFireflyIdIndex(
+      FinanceDatabase db) async {
+    await db.customStatement("CREATE INDEX IF NOT EXISTS "
+        "firefly_sync_map_entity_type_firefly_id "
+        "ON firefly_sync_map (entity_type, firefly_id)");
+  }
+
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
+        await _createFireflySyncMapFireflyIdIndex(this);
       },
       // import 'package:drift_dev/api/migrations.dart';
       // beforeOpen: (details) async {
@@ -1273,23 +1287,27 @@ class FinanceDatabase extends _$FinanceDatabase {
             print("Migration Error: Error adding FireflySyncMap columns " +
                 e.toString());
           }
-          // A v47 install created firefly_sync_map without the
-          // UNIQUE(entity_type, local_pk) constraint that the current
-          // CREATE TABLE carries, and SQLite cannot add a table constraint
-          // afterwards. _upsertSyncMap depends on that uniqueness: it writes
-          // with InsertMode.insertOrReplace and lets the conflict replace the
-          // previous mapping, so without it every sync appends another row for
-          // the same entity and the "one mapping per entity" lookups start
-          // returning whichever copy they happen to see first. A unique index
-          // makes REPLACE resolve identically.
-          //
-          // Its own try/catch on purpose: the addColumn block above throws as
-          // soon as one column already exists, which would otherwise skip this
-          // entirely on a half-migrated install.
+        }
+        // A v47 install made firefly_sync_map without the
+        // UNIQUE(entity_type, local_pk) key that the current CREATE TABLE
+        // carries, and SQLite cannot add a table key afterwards.
+        // _upsertSyncMap needs that key: it writes with
+        // InsertMode.insertOrReplace and lets the conflict replace the
+        // previous row. Without the key each sync adds one more row for the
+        // same entity, and the "one row for one entity" reads then give the
+        // copy that they find first. A unique index makes REPLACE do the same.
+        //
+        // Guarded at `>= 47`, not at `== 47`: a build that came before this
+        // block moved a v47 database to v48 or to v49 and left it with no
+        // unique key. The `from <= 46` branch above makes the table with the
+        // current definition, thus that path has the key. The statements are
+        // idempotent, and this block has its own try/catch, thus a throw in
+        // the addColumn block above cannot skip it.
+        if (from >= 47 && from <= 49) {
           try {
-            // Any duplicates a v47 build already accumulated have to go first,
-            // or the index cannot be created. Keep the most recently written
-            // row for each entity, which is the one the code would have used.
+            // Each duplicate that a v47 build collected must go first, or the
+            // index cannot be made. Keep the row that was written last, which
+            // is the row that the code would have used.
             await customStatement("DELETE FROM firefly_sync_map "
                 "WHERE rowid NOT IN (SELECT MAX(rowid) FROM firefly_sync_map "
                 "GROUP BY entity_type, local_pk)");
@@ -1317,6 +1335,15 @@ class FinanceDatabase extends _$FinanceDatabase {
           } catch (e) {
             print("Migration Error: Error adding column "
                     "FireflySyncMap.fireflyJournalId " +
+                e.toString());
+          }
+        }
+        if (from <= 49) {
+          try {
+            await _createFireflySyncMapFireflyIdIndex(this);
+          } catch (e) {
+            print("Migration Error: Error creating FireflySyncMap "
+                    "firefly_id index " +
                 e.toString());
           }
         }
@@ -6938,16 +6965,23 @@ class FinanceDatabase extends _$FinanceDatabase {
   // (paid rows only) so the anchor lands on the same basis the wallet totals
   // are computed on, but includes balance-correction rows because the anchor
   // is one and the total it must reconcile to contains them.
+  // notLaterThan keeps each transaction with a later date out of the sum. The
+  // Firefly balance anchor uses it, because the balance that Firefly reports
+  // does not count a transaction with a date in the future.
   Future<double> getSumOfWalletExcludingTransaction(
     String walletPk,
-    String excludeTransactionPk,
-  ) async {
+    String excludeTransactionPk, {
+    DateTime? notLaterThan,
+  }) async {
     final totalAmt =
         transactions.amount.sum(filter: transactions.paid.equals(true));
     final query = selectOnly(transactions)
       ..addColumns([totalAmt])
       ..where(transactions.walletFk.equals(walletPk) &
-          transactions.transactionPk.equals(excludeTransactionPk).not());
+          transactions.transactionPk.equals(excludeTransactionPk).not() &
+          (notLaterThan == null
+              ? Constant(true)
+              : transactions.dateCreated.isSmallerOrEqualValue(notLaterThan)));
     return (await query.map((row) => row.read(totalAmt)).getSingleOrNull()) ??
         0;
   }

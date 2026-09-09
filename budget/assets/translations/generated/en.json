@@ -1212,5 +1212,10 @@
   "firefly-sync-all-history-warning": "This downloads every transaction Firefly holds, ignoring the sync window. On a large instance this can take a while and use a lot of storage.",
   "firefly-upload-local-history": "Upload local history",
   "firefly-upload-local-history-warning": "This uploads every local transaction, including ones created before you linked Firefly. Anything Firefly already has will be duplicated. Only use this when Firefly is empty.",
-  "firefly-uncategorized": "Uncategorized"
+  "firefly-reset-links": "Reset Firefly links",
+  "firefly-reset-links-warning": "This removes the link between every local record and its Firefly record. The records stay. The next sync links them again, and a record that Firefly holds but this app can no longer identify is added a second time. Use this only to repair a split transaction that the sync reports as unclear.",
+  "firefly-reset-links-done": "Firefly links reset",
+  "firefly-uncategorized": "Uncategorized",
+  "firefly-host-changed": "Host changed",
+  "firefly-host-changed-description": "Cashew removed the saved token and the links to the previous server. Enter a Personal Access Token for the new host."
 }

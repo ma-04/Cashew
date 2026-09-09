@@ -16,14 +16,14 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:timer_builder/timer_builder.dart';
 
-// Self-hosted Firefly III integration settings: enable toggle, host URL,
-// PAT entry (write-only - never redisplayed after save, mirroring how the
-// app never redisplays other secrets), connection test, and manual sync.
+// The settings of the Firefly III integration: the enable switch, the host
+// URL, the token field (write only: the page does not show a saved token
+// again), the connection test and the manual sync.
 //
-// Enabling this while the existing Google Drive sync (appStateSettings
-// ["backupSync"]) is on shows a confirm dialog and turns Google Drive sync
-// off first - the two are mutually exclusive per install. See the symmetric
-// check in lib/widgets/accountAndBackup.dart's backupSync toggle.
+// To enable this while the Google Drive sync (appStateSettings["backupSync"])
+// is on opens a dialog and stops the Google Drive sync first. The two are
+// mutually exclusive on one installation. The backupSync switch in
+// lib/widgets/accountAndBackup.dart has the same test.
 class FireflySettingsPage extends StatefulWidget {
   const FireflySettingsPage({super.key});
 
@@ -41,8 +41,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   bool runningHistoryAction = false;
   late int syncWindowDays = fireflySyncWindowDays;
 
-  // Offered window lengths, in days. Kept as a fixed list rather than a free
-  // text field so the value always stays inside the clamp in fireflySettings.
+  // The window lengths in days. A fixed list, not a text field, thus the
+  // value stays in the limits that fireflySettings sets.
   static const List<int> _windowOptions = [7, 14, 30, 60, 90, 180, 365, 730];
 
   Future<bool> enableFirefly() async {
@@ -83,9 +83,28 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     return await _doEnableFirefly();
   }
 
+  // True if the host in the field is not the host that the saved links and
+  // the saved token belong to.
+  bool _hostChanged(String host) {
+    String previous = fireflyHostUrl.trim();
+    return previous.isNotEmpty && previous != host;
+  }
+
+  // Removes the token and the links of the previous host. The token is a
+  // secret of that server, thus the application must not send it to a
+  // different one, and each saved Firefly id is correct for that server only.
+  Future<void> _forgetPreviousHost() async {
+    await clearFireflyPat();
+    await fireflyForgetSyncState();
+  }
+
+  // A token that the user saved for a different host does not count: the
+  // application must get a token for the new host first.
   Future<bool> _hasCredentials() async {
-    if (hostController.text.trim().isEmpty) return false;
+    String host = hostController.text.trim();
+    if (host.isEmpty) return false;
     if (patController.text.trim().isNotEmpty) return true;
+    if (_hostChanged(host)) return false;
     String? stored = await getFireflyPat();
     return stored != null && stored.isNotEmpty;
   }
@@ -102,9 +121,12 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       );
       return false;
     }
-    await setFireflyHostUrl(hostController.text.trim());
-    if (patController.text.trim().isNotEmpty) {
-      await setFireflyPat(patController.text.trim());
+    String host = hostController.text.trim();
+    String token = patController.text.trim();
+    if (_hostChanged(host)) await _forgetPreviousHost();
+    await setFireflyHostUrl(host);
+    if (token.isNotEmpty) {
+      await setFireflyPat(token);
       patController.clear();
     }
     await setFireflyEnabled(true);
@@ -124,16 +146,35 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   }
 
   Future<void> saveHostAndToken() async {
-    await setFireflyHostUrl(hostController.text.trim());
-    if (patController.text.trim().isNotEmpty) {
-      await setFireflyPat(patController.text.trim());
-      patController.clear();
-      setState(() {});
+    String host = hostController.text.trim();
+    String token = patController.text.trim();
+    bool hostChanged = _hostChanged(host);
+    if (hostChanged) {
+      await _forgetPreviousHost();
+      // Without a token for the new host the application cannot sync. Stop
+      // the automatic cycles until the user gives one.
+      if (token.isEmpty) await setFireflyEnabled(false);
     }
-    // A different server invalidates everything the on-demand fetches think
-    // they have already cached.
+    await setFireflyHostUrl(host);
+    if (token.isNotEmpty) {
+      await setFireflyPat(token);
+      patController.clear();
+    }
+    // The cached ranges of the on-demand fetches are answers of the previous
+    // host, or of a smaller window.
     fireflyClearOnDemandCacheMemory();
-    openSnackbar(SnackbarMessage(title: "saved".tr()));
+    setState(() {
+      enabled = fireflyEnabled;
+    });
+    openSnackbar(SnackbarMessage(
+      title: hostChanged ? "firefly-host-changed".tr() : "saved".tr(),
+      description: hostChanged ? "firefly-host-changed-description".tr() : null,
+      icon: hostChanged
+          ? (appStateSettings["outlinedIcons"]
+              ? Icons.warning_amber_outlined
+              : Icons.warning_amber_rounded)
+          : null,
+    ));
   }
 
   Future<void> testConnection() async {
@@ -198,7 +239,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     String? description = success
         ? fireflySyncReportNotifier.value?.summary()
         : fireflySyncErrorNotifier.value;
-    if (success && (fireflySyncReportNotifier.value?.warnings.isNotEmpty ?? false)) {
+    if (success &&
+        (fireflySyncReportNotifier.value?.warnings.isNotEmpty ?? false)) {
       description = (description ?? "") +
           "\n" +
           fireflySyncReportNotifier.value!.warnings.join("\n");
@@ -287,6 +329,40 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     await _runHistoryAction(fireflyUploadExistingLocalHistory);
   }
 
+  // The links, not the records. To turn the sync off must not do this: the
+  // pull makes a new record for each remote split that no link names, thus a
+  // user who turns the sync off and on again would get each transaction two
+  // times. This action therefore asks first.
+  Future<void> resetFireflyLinks() async {
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-reset-links".tr(),
+      description: "firefly-reset-links-warning".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.link_off_outlined
+          : Icons.link_off_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    if (!confirmed) return;
+    await fireflyForgetSyncState();
+    if (mounted) setState(() {});
+    openSnackbar(SnackbarMessage(
+      title: "firefly-reset-links-done".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.link_off_outlined
+          : Icons.link_off_rounded,
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return PageFramework(
@@ -347,8 +423,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         ),
         SliverToBoxAdapter(
           child: Padding(
-            padding:
-                const EdgeInsetsDirectional.symmetric(horizontal: 17, vertical: 8),
+            padding: const EdgeInsetsDirectional.symmetric(
+                horizontal: 17, vertical: 8),
             child: Row(
               children: [
                 Expanded(
@@ -424,8 +500,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                       int? days = int.tryParse(value);
                       if (days == null) return;
                       await setFireflySyncWindowDays(days);
-                      // Ranges skipped as "inside the window" under the old
-                      // setting may now sit outside it.
+                      // A range that was in the window with the previous
+                      // setting can be outside of the window now.
                       fireflyClearOnDemandCacheMemory();
                       setState(() {
                         syncWindowDays = fireflySyncWindowDays;
@@ -451,6 +527,12 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                         ),
                       ),
                     ],
+                  ),
+                  SizedBox(height: 8),
+                  Button(
+                    label: "firefly-reset-links".tr(),
+                    disabled: runningHistoryAction || syncingNow,
+                    onTap: resetFireflyLinks,
                   ),
                   SizedBox(height: 12),
                   TextFont(

@@ -81,6 +81,19 @@ FireflySyncMapEntry _syncMap({
   );
 }
 
+List<FireflyTransactionSplit> _splits(List<int?> journalIds) {
+  return [
+    for (int? journalId in journalIds)
+      FireflyTransactionSplit(
+        type: "withdrawal",
+        date: DateTime(2024, 3, 15),
+        amount: -10,
+        description: "Split",
+        transactionJournalId: journalId,
+      )
+  ];
+}
+
 void main() {
   group('walletToFireflyAccount / fireflyAccountToWallet', () {
     test('round-trips name and currency', () {
@@ -138,7 +151,8 @@ void main() {
 
   group('classifySplitType', () {
     test('maps known Firefly types', () {
-      expect(classifySplitType("withdrawal"), FireflyPulledSplitKind.withdrawal);
+      expect(
+          classifySplitType("withdrawal"), FireflyPulledSplitKind.withdrawal);
       expect(classifySplitType("deposit"), FireflyPulledSplitKind.deposit);
       expect(classifySplitType("transfer"), FireflyPulledSplitKind.transfer);
     });
@@ -213,11 +227,12 @@ void main() {
   });
 
   group('transfer pairing', () {
-    test('transferPairToFireflySplit sets source/destination from the pair', () {
-      Transaction from = _transaction(
-          transactionPk: "from-1", amount: -100.0, income: false);
-      Transaction to = _transaction(
-          transactionPk: "to-1", amount: 100.0, income: true);
+    test('transferPairToFireflySplit sets source/destination from the pair',
+        () {
+      Transaction from =
+          _transaction(transactionPk: "from-1", amount: -100.0, income: false);
+      Transaction to =
+          _transaction(transactionPk: "to-1", amount: 100.0, income: true);
       FireflyTransactionSplit split = transferPairToFireflySplit(
         fromTransaction: from,
         toTransaction: to,
@@ -263,7 +278,11 @@ void main() {
           name: "source name",
           note: "source note");
       Transaction to = _transaction(
-          transactionPk: "to-1", amount: 100.0, income: true, name: "", note: "");
+          transactionPk: "to-1",
+          amount: 100.0,
+          income: true,
+          name: "",
+          note: "");
       FireflyTransactionSplit split = transferPairToFireflySplit(
         fromTransaction: from,
         toTransaction: to,
@@ -355,7 +374,6 @@ void main() {
     });
   });
 
-
   group('counterparty helpers', () {
     test('assetFireflyIdForSplit prefers a synced source, then dest', () {
       FireflyTransactionSplit split = FireflyTransactionSplit(
@@ -371,7 +389,8 @@ void main() {
       expect(assetFireflyIdForSplit(split, {1}), isNull);
     });
 
-    test('resolvePushCounterparty uses stored id, then name, then category', () {
+    test('resolvePushCounterparty uses stored id, then name, then category',
+        () {
       FireflyAccount aldi = FireflyAccount(
         id: 10,
         name: "Aldi",
@@ -420,7 +439,8 @@ void main() {
       );
     });
 
-    test('transactionToFireflySplit sends destination_name when no counterparty id',
+    test(
+        'transactionToFireflySplit sends destination_name when no counterparty id',
         () {
       Transaction expense = _transaction(amount: -50.0, name: "Coffee");
       FireflyTransactionSplit split = transactionToFireflySplit(
@@ -569,7 +589,8 @@ void main() {
         _syncMap(localPk: "LB", splitIndex: 1),
       ];
       expect(
-        matchSplitToSyncMap(groupMaps: maps, splitJournalId: null, splitIndex: 1)
+        matchSplitToSyncMap(
+                groupMaps: maps, splitJournalId: null, splitIndex: 1)
             ?.localPk,
         "LB",
       );
@@ -671,7 +692,9 @@ void main() {
       expect(split.transactionJournalId, isNull);
     });
 
-    test("is not sent back to Firefly on a write", () {
+    test("goes back to Firefly on a write", () {
+      // Firefly deletes a split that a PUT does not name, and it makes a new
+      // split from a changed split that has no id.
       FireflyTransactionSplit split = FireflyTransactionSplit(
         type: "withdrawal",
         date: DateTime(2024, 3, 1),
@@ -679,8 +702,229 @@ void main() {
         description: "Groceries",
         transactionJournalId: 1001,
       );
-      expect(split.toRequestJson().containsKey("transaction_journal_id"),
-          isFalse);
+      expect(split.toRequestJson()["transaction_journal_id"], 1001);
+    });
+
+    test("is absent from a write when the split has no id", () {
+      FireflyTransactionSplit split = FireflyTransactionSplit(
+        type: "withdrawal",
+        date: DateTime(2024, 3, 1),
+        amount: 40,
+        description: "Groceries",
+      );
+      expect(
+          split.toRequestJson().containsKey("transaction_journal_id"), isFalse);
+    });
+
+    test("transactionToFireflySplit carries the id that the caller gives", () {
+      FireflyTransactionSplit split = transactionToFireflySplit(
+        _transaction(amount: -50.0, income: false),
+        walletFireflyId: 7,
+        transactionJournalId: 1001,
+      );
+      expect(split.transactionJournalId, 1001);
+      expect(split.toRequestJson()["transaction_journal_id"], 1001);
+    });
+  });
+
+  group("FireflyTransactionSplit.unchangedSplit", () {
+    test("writes the id and nothing more", () {
+      // A split that keeps its content needs the id only. More fields make
+      // Firefly change the split.
+      Map<String, dynamic> json =
+          FireflyTransactionSplit.unchangedSplit(1001).toRequestJson();
+      expect(json, {"transaction_journal_id": 1001});
+    });
+  });
+
+  group("fireflyLocalRowChanged", () {
+    test("a row with no last sync time counts as changed", () {
+      expect(
+        fireflyLocalRowChanged(
+          localModified: DateTime(2024, 3, 1),
+          lastSyncedLocalModified: null,
+        ),
+        isTrue,
+      );
+    });
+
+    test("a row that changed after the last push counts as changed", () {
+      expect(
+        fireflyLocalRowChanged(
+          localModified: DateTime(2024, 3, 2),
+          lastSyncedLocalModified: DateTime(2024, 3, 1),
+        ),
+        isTrue,
+      );
+    });
+
+    test("a row that did not change since the last push counts as unchanged",
+        () {
+      expect(
+        fireflyLocalRowChanged(
+          localModified: DateTime(2024, 3, 1),
+          lastSyncedLocalModified: DateTime(2024, 3, 1),
+        ),
+        isFalse,
+      );
+    });
+
+    test("a row with no modification time counts as unchanged", () {
+      expect(
+        fireflyLocalRowChanged(
+          localModified: null,
+          lastSyncedLocalModified: DateTime(2024, 3, 1),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('fireflyPositionMatchIsSafe', () {
+    test('one row for each split is safe', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0),
+            _syncMap(localPk: "b", splitIndex: 1),
+          ],
+          splits: _splits([900, 901]),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a group that lost a split remotely is not safe', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0),
+            _syncMap(localPk: "b", splitIndex: 1),
+            _syncMap(localPk: "c", splitIndex: 2),
+          ],
+          splits: _splits([900, 901]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('the two rows of a transfer count as one split', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "from", splitIndex: 0, journalId: 900),
+            _syncMap(localPk: "to", splitIndex: 0, journalId: 900),
+          ],
+          splits: _splits([900]),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a row with an id and a row without count as two splits', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0, journalId: 900),
+            _syncMap(localPk: "b", splitIndex: 1),
+          ],
+          splits: _splits([900, 901]),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a split that a row names by id and that the group lost is not safe',
+        () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0, journalId: 900),
+            _syncMap(localPk: "b", splitIndex: 1),
+          ],
+          splits: _splits([902, 901]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('a split that a row names by id and that moved is not safe', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0, journalId: 900),
+            _syncMap(localPk: "b", splitIndex: 1),
+          ],
+          splits: _splits([901, 900]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('a row with no id that points at a split of another row is not safe',
+        () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 1, journalId: 901),
+            _syncMap(localPk: "b", splitIndex: 1),
+          ],
+          splits: _splits([900, 901]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('a position that the group does not hold is not safe', () {
+      expect(
+        fireflyPositionMatchIsSafe(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 0),
+            _syncMap(localPk: "b", splitIndex: 5),
+          ],
+          splits: _splits([900, 901]),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('matchSplitToSyncMaps with matchByPosition false', () {
+    test('a row that only the position matches is not returned', () {
+      List<FireflySyncMapEntry> groupMaps = [
+        _syncMap(localPk: "a", splitIndex: 0),
+      ];
+      expect(
+        matchSplitToSyncMaps(
+          groupMaps: groupMaps,
+          splitJournalId: 900,
+          splitIndex: 0,
+          matchByPosition: false,
+        ),
+        isEmpty,
+      );
+      expect(
+        matchSplitToSyncMaps(
+          groupMaps: groupMaps,
+          splitJournalId: 900,
+          splitIndex: 0,
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('a row that the id matches is still returned', () {
+      expect(
+        matchSplitToSyncMaps(
+          groupMaps: [
+            _syncMap(localPk: "a", splitIndex: 7, journalId: 900),
+          ],
+          splitJournalId: 900,
+          splitIndex: 0,
+          matchByPosition: false,
+        ),
+        hasLength(1),
+      );
     });
   });
 }

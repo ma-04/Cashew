@@ -1,9 +1,6 @@
-// Plain Dart data models for the subset of the Firefly III REST API
-// (https://api-docs.firefly-iii.org/) used by the sync engine.
-//
-// These intentionally mirror Firefly's JSON:API response shape rather than
-// Cashew's local Drift tables - the mapping between the two lives in
-// fireflyMapper.dart. No Flutter/DB imports here so this stays unit-testable.
+// Data models for the part of the Firefly III REST API that the sync engine
+// uses. They keep the shape of Firefly's JSON. fireflyMapper.dart maps them to
+// and from the local Drift rows.
 
 double? _parseDouble(dynamic value) {
   if (value == null) return null;
@@ -19,14 +16,13 @@ DateTime? _parseDate(dynamic value) {
 class FireflyAccount {
   final int id;
   final String name;
-  // Firefly account "type" e.g. "asset", "expense", "revenue", "cash",
-  // "loan", "debt", "mortgage". Only "asset" accounts are synced as Wallets.
+  // One of "asset", "expense", "revenue", "cash", "loan", "debt" or
+  // "mortgage". The sync engine keeps only "asset" accounts as wallets.
   final String type;
   final String? currencyCode;
   final double? currentBalance;
-  // Firefly rejects an asset-account create/update that has no account_role
-  // (422). It is meaningless for every other account type and must be omitted
-  // there, so it is nullable and only emitted for assets.
+  // Firefly rejects an asset account with no account_role and sends a 422
+  // error. The field is not permitted for the other account types.
   final String? accountRole;
   final bool active;
   final DateTime? createdAt;
@@ -65,9 +61,8 @@ class FireflyAccount {
       "name": name,
       "type": type,
       if (currencyCode != null) "currency_code": currencyCode,
-      // Required by Firefly for asset accounts, rejected for other types.
-      // Preserve whatever role the remote account already had so a round-trip
-      // update does not silently demote e.g. a savings account.
+      // Keep the role that the remote account has. If you do not, an update
+      // can change a savings account into a default account.
       if (type == "asset") "account_role": accountRole ?? "defaultAsset",
       "active": active,
     };
@@ -103,11 +98,9 @@ class FireflyCategory {
   }
 }
 
-// A single split within a Firefly transaction journal group.
-// Firefly supports multi-split journals - Cashew does not, so the mapper
-// only ever produces/consumes groups with exactly one split.
+// One split in a Firefly transaction group.
 class FireflyTransactionSplit {
-  // withdrawal | deposit | transfer | reconciliation | opening balance
+  // withdrawal, deposit, transfer, reconciliation or opening balance.
   final String type;
   final DateTime date;
   final double amount;
@@ -120,11 +113,16 @@ class FireflyTransactionSplit {
   final String? categoryName;
   final String? currencyCode;
   final String? notes;
-  // Firefly's stable identity for this split. Unlike the split's position in
-  // group.splits it survives a sibling being deleted, so it - not the position
-  // - is what the sync map matches on. Null for splits built locally for a
-  // create, which have no journal yet.
+  // The identity that Firefly gives to this split. It stays the same when a
+  // sibling split is deleted, but the position in group.splits does not. The
+  // sync map therefore matches on this value. It is null for a split that the
+  // app builds for a create, because that split has no journal yet.
   final int? transactionJournalId;
+
+  // True for a split that this request does not change. Firefly deletes a
+  // split that the request does not include, so a request must send the id of
+  // each unchanged split.
+  final bool unchanged;
 
   FireflyTransactionSplit({
     required this.type,
@@ -140,7 +138,21 @@ class FireflyTransactionSplit {
     this.currencyCode,
     this.notes,
     this.transactionJournalId,
+    this.unchanged = false,
   });
+
+  // Makes the entry that holds the id only. A PUT keeps a split that has
+  // such an entry, and deletes a split that the request does not name.
+  factory FireflyTransactionSplit.unchangedSplit(int transactionJournalId) {
+    return FireflyTransactionSplit(
+      type: "withdrawal",
+      date: DateTime(2000),
+      amount: 0,
+      description: "",
+      transactionJournalId: transactionJournalId,
+      unchanged: true,
+    );
+  }
 
   factory FireflyTransactionSplit.fromJson(Map<String, dynamic> json) {
     return FireflyTransactionSplit(
@@ -169,7 +181,12 @@ class FireflyTransactionSplit {
   }
 
   Map<String, dynamic> toRequestJson() {
+    if (unchanged) {
+      return {"transaction_journal_id": transactionJournalId};
+    }
     return {
+      if (transactionJournalId != null)
+        "transaction_journal_id": transactionJournalId,
       "type": type,
       "date": date.toIso8601String(),
       "amount": amount.abs().toStringAsFixed(2),
@@ -184,17 +201,10 @@ class FireflyTransactionSplit {
         "category_name": categoryName,
       if (currencyCode != null) "currency_code": currencyCode,
       if (notes != null) "notes": notes,
-      // transaction_journal_id is deliberately not sent. Whether Firefly's PUT
-      // uses it to decide which existing journal each submitted split updates
-      // is unverified; if it does, sending it would also stop PUTs destroying
-      // and recreating journal rows, which is worth having but is a separate
-      // change. Nothing here depends on it being sent - it is read-only state
-      // used purely to identify splits on the way in.
     };
   }
 }
 
-// A transaction journal group - Firefly's top level transaction resource.
 class FireflyTransactionGroup {
   final int id;
   final String? groupTitle;

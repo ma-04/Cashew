@@ -1,11 +1,6 @@
-// Pure, stateless mapping functions between Cashew's local Drift rows and
-// Firefly III's REST resources. No DB/HTTP/Flutter globals are touched here
-// on purpose - all foreign-key lookups (wallet/category Firefly ids <-> local
-// pks) are resolved by the caller (fireflySyncEngine.dart) so this file stays
-// trivially unit-testable. See test/firefly/firefly_mapper_test.dart.
-//
-// Phase 1 covers Accounts/Transactions/Categories. Subcategories are not
-// flattened (see skipped-subcategory reporting in the sync engine).
+// Functions that map local Drift rows to and from Firefly III resources.
+// They keep no state and touch no database, no network and no global. The
+// caller (fireflySyncEngine.dart) resolves each foreign key.
 
 import 'package:drift/drift.dart' show Value;
 import 'package:budget/database/tables.dart';
@@ -17,29 +12,23 @@ const String kFireflyExpenseAccountType = "expense";
 const String kFireflyRevenueAccountType = "revenue";
 const String kFireflyCashAccountType = "cash";
 
-// Cashew's reserved balance-correction category, created lazily by
-// initializeBalanceCorrectionCategory(). Rows in it are counted in net totals
-// and net worth but kept out of income/expense breakdowns and spending graphs
-// - which is exactly right for balance anchors and for both legs of a
-// transfer, and exactly wrong for ordinary spending.
+// The balance-correction category. onlyShowIfNotBalanceCorrection() in
+// tables.dart counts a row in this category in the net total and the net
+// worth, but keeps it out of the income and expense reports. That is correct
+// for a balance anchor and for the two legs of a transfer.
 const String kBalanceCorrectionCategoryPk = "0";
 
-// Firefly lets a transaction have no category at all; Cashew requires one.
-// Those rows go into a dedicated local bucket rather than into the
-// balance-correction category, so that real spending Firefly happens not to
-// have categorised still shows up in budgets, breakdowns and graphs. It is
-// never pushed to Firefly - see _pushCategories and _fireflyPushCategoryOf.
+// Firefly permits a transaction with no category, but the local database does
+// not. Such a transaction goes into this local category and not into the
+// balance-correction category, because it is real spending and must stay in
+// the budgets and the reports. The sync engine does not push this category.
 const String kFireflyUncategorizedCategoryPk = "firefly-uncategorized";
-
-// ---------------------------------------------------------------------------
-// Accounts <-> Wallets
-// ---------------------------------------------------------------------------
 
 FireflyAccount walletToFireflyAccount(
   TransactionWallet wallet, {
-  // The role the remote account already has, when we are updating one. Firefly
-  // requires account_role on every asset-account write, so omitting it on an
-  // update would silently reset a savings/credit-card account to a plain one.
+  // The role that the remote account has. Firefly needs account_role in each
+  // write to an asset account. If the update does not send the current role,
+  // Firefly changes a savings account or a credit card into a plain account.
   String? existingAccountRole,
 }) {
   return FireflyAccount(
@@ -68,10 +57,6 @@ TransactionWallet fireflyAccountToWallet(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Categories
-// ---------------------------------------------------------------------------
-
 FireflyCategory? categoryToFireflyCategory(TransactionCategory category) {
   if (category.mainCategoryPk != null) return null;
   return FireflyCategory(id: 0, name: category.name);
@@ -91,10 +76,6 @@ TransactionCategory fireflyCategoryToCategory(
     income: false,
   );
 }
-
-// ---------------------------------------------------------------------------
-// Transactions
-// ---------------------------------------------------------------------------
 
 enum FireflyPulledSplitKind {
   withdrawal,
@@ -128,7 +109,6 @@ bool splitKindIsBalanceCorrection(FireflyPulledSplitKind kind) {
       kind == FireflyPulledSplitKind.reconciliation;
 }
 
-// The asset-account side of a split, if either end is a synced wallet.
 int? assetFireflyIdForSplit(
   FireflyTransactionSplit split,
   Set<int> assetFireflyIds,
@@ -143,7 +123,6 @@ int? assetFireflyIdForSplit(
   return null;
 }
 
-// The non-wallet Firefly account on the other side of the asset (payee).
 int? counterpartyFireflyIdForSplit(
   FireflyTransactionSplit split,
   int walletFireflyId,
@@ -162,7 +141,6 @@ String? counterpartyNameForSplit(
   return split.destinationName ?? split.sourceName;
 }
 
-// Money into the asset account is income.
 bool splitIsIncomeForAsset(
   FireflyTransactionSplit split,
   int walletFireflyId,
@@ -203,11 +181,11 @@ FireflyTransactionSplit transactionToFireflySplit(
   String? categoryName,
   int? counterpartyFireflyId,
   String? counterpartyName,
+  int? transactionJournalId,
 }) {
   bool isIncome = transaction.amount > 0;
-  String fallbackName = transaction.name.trim().isEmpty
-      ? "(no description)"
-      : transaction.name;
+  String fallbackName =
+      transaction.name.trim().isEmpty ? "(no description)" : transaction.name;
   return FireflyTransactionSplit(
     type: isIncome ? "deposit" : "withdrawal",
     date: transaction.dateCreated,
@@ -225,6 +203,7 @@ FireflyTransactionSplit transactionToFireflySplit(
     categoryName: categoryFireflyId == null ? categoryName : null,
     currencyCode: walletCurrencyCode?.toUpperCase(),
     notes: transaction.note.trim().isEmpty ? null : transaction.note,
+    transactionJournalId: transactionJournalId,
   );
 }
 
@@ -234,12 +213,13 @@ FireflyTransactionSplit transferPairToFireflySplit({
   required int fromWalletFireflyId,
   required int toWalletFireflyId,
   String? currencyCode,
-  // A transfer is one Firefly split but two local rows, and the user may have
-  // edited either of them. The caller decides which side's text wins (the more
-  // recently modified one) and passes it here; without this the destination
-  // side's edits would never reach Firefly.
+  // A transfer is one Firefly split, but two local rows. The user can change
+  // either row. The caller selects the text of the row that changed last and
+  // sends it here. If it does not, the changes to the destination row do not
+  // go to Firefly.
   String? descriptionOverride,
   String? notesOverride,
+  int? transactionJournalId,
 }) {
   String description = (descriptionOverride ?? "").trim().isNotEmpty
       ? descriptionOverride!
@@ -260,6 +240,7 @@ FireflyTransactionSplit transferPairToFireflySplit({
     destinationId: toWalletFireflyId,
     currencyCode: currencyCode?.toUpperCase(),
     notes: notes.trim().isEmpty ? null : notes,
+    transactionJournalId: transactionJournalId,
   );
 }
 
@@ -287,15 +268,14 @@ Transaction fireflySplitToTransaction(
   );
 }
 
-// Applies the fields Firefly owns onto an existing local row.
+// Writes the fields that Firefly owns onto the local row.
 //
-// createOrUpdateTransaction persists with InsertMode.insertOrReplace, and
-// SQLite REPLACE deletes the old row before re-inserting it - so any column
-// missing from the companion comes back as its default rather than its former
-// value. Rebuilding a fresh Transaction here would therefore silently drop
-// every Cashew-only field (subcategory, objective, budget exclusions, loan
-// links, notes the user attached locally...) each time a remote edit is
-// pulled. Copying onto the row we already have keeps them.
+// createOrUpdateTransaction uses InsertMode.insertOrReplace. SQLite REPLACE
+// deletes the old row and writes a new one, thus each column that the
+// companion does not set gets its default value. A new Transaction object
+// would therefore erase each local-only field (the subcategory, the objective,
+// the budget exclusions and the loan links) at each pull. A copy of the
+// current row keeps these fields.
 Transaction fireflyApplySplitToExisting(
   Transaction local,
   FireflyTransactionSplit split, {
@@ -317,29 +297,16 @@ Transaction fireflyApplySplitToExisting(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Balance anchor
-// ---------------------------------------------------------------------------
+// The local database holds only a recent part of the Firefly history. The sum
+// of the local rows of a wallet is therefore too small by the amount of the
+// history that the app did not pull. Each synced wallet gets one anchor row
+// that holds this amount:
 //
-// Only a recent window of Firefly's history is kept locally, so summing the
-// local rows for a wallet would report a balance that is wrong by exactly the
-// history that was never pulled. To fix that without holding the full ledger,
-// each synced wallet gets one synthetic "anchor" row carrying everything that
-// happened before the window:
+//     anchor = firefly_current_balance - sum(the other local rows)
 //
-//     anchor = firefly_current_balance - sum(other local rows for the wallet)
-//
-// It is stored with categoryFk "0", Cashew's balance-correction category,
-// which is exactly the right vehicle: onlyShowIfNotBalanceCorrection() in
-// tables.dart includes category-"0" rows in net totals (isIncome == null) and
-// excludes them from income/expense breakdowns. So wallet balances and net
-// worth come out right with no change to any existing query, while spending
-// graphs and budgets are unaffected by it.
-//
-// The pk is derived from the wallet pk rather than random so the row can be
-// recomputed idempotently on every sync, and so the push side can recognise
-// and skip it - an anchor must never be sent to Firefly, it is a local
-// artefact of not storing the whole ledger.
+// The anchor is a local row only. The push side finds it by its primary key
+// and does not send it to Firefly. The key comes from the wallet key, thus
+// each sync writes the same row again.
 
 const String kFireflyBalanceAnchorPkPrefix = "firefly-balance-anchor-";
 
@@ -414,11 +381,18 @@ Transaction buildFireflyBalanceAnchor({
   return (sourceTransaction, destTransaction);
 }
 
-// ---------------------------------------------------------------------------
-// Conflict resolution
-// ---------------------------------------------------------------------------
-
 enum FireflySyncDirection { none, push, pull }
+
+// True if the local row changed after the last push or pull of that row. The
+// push side tests this first: if the row did not change, the cycle does not
+// read the remote record.
+bool fireflyLocalRowChanged({
+  required DateTime? localModified,
+  required DateTime? lastSyncedLocalModified,
+}) {
+  return lastSyncedLocalModified == null ||
+      (localModified != null && localModified.isAfter(lastSyncedLocalModified));
+}
 
 FireflySyncDirection decideSyncDirection({
   required DateTime? localModified,
@@ -427,8 +401,7 @@ FireflySyncDirection decideSyncDirection({
   required DateTime? lastSyncedRemoteUpdatedAt,
 }) {
   bool localChanged = lastSyncedLocalModified == null ||
-      (localModified != null &&
-          localModified.isAfter(lastSyncedLocalModified));
+      (localModified != null && localModified.isAfter(lastSyncedLocalModified));
   bool remoteChanged = lastSyncedRemoteUpdatedAt == null ||
       (remoteUpdatedAt != null &&
           remoteUpdatedAt.isAfter(lastSyncedRemoteUpdatedAt));
@@ -444,27 +417,12 @@ FireflySyncDirection decideSyncDirection({
       : FireflySyncDirection.pull;
 }
 
-// ---------------------------------------------------------------------------
-// Split identity
-// ---------------------------------------------------------------------------
-//
-// A Firefly journal group can hold several splits, and every local row mapped
-// to that group stores the same group id. What distinguishes one split from
-// another used to be fireflySplitIndex - the split's array position - which is
-// not a stable identity: deleting a split from the middle of a journal on the
-// Firefly side renumbers everything after it, so a stored index starts
-// pointing at its neighbour. One local row then gets overwritten from the
-// wrong split and the last one is re-imported as a duplicate, silently
-// skewing the account balance.
-//
-// Firefly gives each split a transaction_journal_id that survives its siblings
-// being deleted. These helpers match on that, and fall back to the position
-// only for rows written before the id was stored - which the caller then
-// backfills, so any given row takes the fallback path at most once.
-
-// Only rows with no journal id may be matched by position. A row that already
-// carries a *different* journal id belongs to a different split, and matching
-// it by position is exactly the corruption being fixed here.
+// Each local row that belongs to a Firefly group holds the same group id.
+// Firefly gives each split a transaction_journal_id that stays the same when a
+// sibling split is deleted, but the position of the split in the group does
+// not. These functions match on the journal id. They match on the position
+// only for a row that the app wrote before it stored the journal id. The
+// caller then writes the journal id into that row.
 bool _matchesSplit(
     FireflySyncMapEntry map, int? splitJournalId, int splitIndex) {
   if (splitJournalId != null && map.fireflyJournalId != null) {
@@ -473,37 +431,99 @@ bool _matchesSplit(
   return map.fireflyJournalId == null && map.fireflySplitIndex == splitIndex;
 }
 
-// The sync-map row for one split, or null if this split is not mapped yet.
+// The number of remote splits that the map rows of one group point at. A
+// transfer is two local rows on one split, thus a count of the rows is too
+// large. A row that has a journal id counts one time for that id, a row that
+// has none counts one time for its position.
+int fireflySplitSlotCount(List<FireflySyncMapEntry> groupMaps) {
+  Set<int> journalIds = {};
+  Set<int> positions = {};
+  for (FireflySyncMapEntry map in groupMaps) {
+    if (map.fireflyJournalId != null) {
+      journalIds.add(map.fireflyJournalId!);
+    } else {
+      positions.add(map.fireflySplitIndex);
+    }
+  }
+  return journalIds.length + positions.length;
+}
+
+// True if a map row that has no journal id can be matched to a split by its
+// position.
+//
+// Only a row that the app wrote before it stored journal ids has no id. The
+// first pull that reads such a group gives each row its id, thus this test
+// applies one time for each group.
+//
+// Firefly moves the splits of a group when it deletes one of them, thus a
+// stored position is correct only while the group has the same shape as when
+// the app wrote the row. Three tests together give that:
+//
+//  1. The number of splits agrees with the number of slots that the rows hold.
+//  2. The group still holds each split that a row names by id, and that split
+//     is at the position that the row holds. A move or a delete thus shows.
+//  3. A row that has no id points at a split that no other row names by id.
+//
+// A group that Firefly reshaped and kept at the same length, and that moved no
+// split that a row names, passes these tests. Such a group needs a change of
+// two splits between two syncs of one install that came from a build before
+// the journal-id column. The caller cannot see this from the group alone.
+bool fireflyPositionMatchIsSafe({
+  required List<FireflySyncMapEntry> groupMaps,
+  required List<FireflyTransactionSplit> splits,
+}) {
+  if (fireflySplitSlotCount(groupMaps) != splits.length) return false;
+
+  Set<int> mappedJournalIds = {
+    for (FireflySyncMapEntry map in groupMaps)
+      if (map.fireflyJournalId != null) map.fireflyJournalId!
+  };
+  for (FireflySyncMapEntry map in groupMaps) {
+    int position = map.fireflySplitIndex;
+    if (position < 0 || position >= splits.length) return false;
+    int? journalIdAtPosition = splits[position].transactionJournalId;
+    if (map.fireflyJournalId != null) {
+      if (journalIdAtPosition != map.fireflyJournalId) return false;
+    } else {
+      if (journalIdAtPosition != null &&
+          mappedJournalIds.contains(journalIdAtPosition)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 FireflySyncMapEntry? matchSplitToSyncMap({
   required List<FireflySyncMapEntry> groupMaps,
   required int? splitJournalId,
   required int splitIndex,
+  bool matchByPosition = true,
 }) {
   List<FireflySyncMapEntry> matches = matchSplitToSyncMaps(
     groupMaps: groupMaps,
     splitJournalId: splitJournalId,
     splitIndex: splitIndex,
+    matchByPosition: matchByPosition,
   );
   return matches.isEmpty ? null : matches.first;
 }
 
-// Every sync-map row belonging to one split. A transfer is two local rows
-// sharing a single remote split, so this can legitimately return two.
-//
-// Journal-id matches win outright: if any row carries this split's journal id,
-// rows still awaiting backfill are not considered, because a position match
-// against an already-identified split is what caused the mis-pairing.
+// A transfer is two local rows that share one remote split, thus this function
+// can return two rows. If one row holds the journal id of this split, the
+// function ignores the rows that have no journal id.
 List<FireflySyncMapEntry> matchSplitToSyncMaps({
   required List<FireflySyncMapEntry> groupMaps,
   required int? splitJournalId,
   required int splitIndex,
+  bool matchByPosition = true,
 }) {
   if (splitJournalId != null) {
-    List<FireflySyncMapEntry> byJournalId = groupMaps
-        .where((m) => m.fireflyJournalId == splitJournalId)
-        .toList();
+    List<FireflySyncMapEntry> byJournalId =
+        groupMaps.where((m) => m.fireflyJournalId == splitJournalId).toList();
     if (byJournalId.isNotEmpty) return byJournalId;
   }
+  if (!matchByPosition) return [];
   return groupMaps
       .where((m) => _matchesSplit(m, splitJournalId, splitIndex))
       .toList();
