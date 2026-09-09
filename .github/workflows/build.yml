@@ -135,7 +135,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cashew-apk-${{ github.sha }}
+          # github.sha is a synthetic merge commit on pull_request events and
+          # does not exist in the repo; head.sha is the branch tip that was
+          # actually built. Falls back to github.sha for push/workflow_dispatch,
+          # where it is already the real commit.
+          name: cashew-apk-${{ github.event.pull_request.head.sha || github.sha }}.apk
           path: budget/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
@@ -166,7 +170,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cashew-web-${{ github.sha }}
+          name: cashew-web-${{ github.event.pull_request.head.sha || github.sha }}
           path: budget/build/web
           if-no-files-found: error
           retention-days: 30
