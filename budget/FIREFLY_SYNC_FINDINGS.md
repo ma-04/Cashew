@@ -9,6 +9,63 @@ code and proposes the better fix. todo.md has since absorbed the verification
 results and carries the current status of every item, including a second round
 of findings (10-18) not covered here; where the two overlap, todo.md wins.
 
+## Status, 2026-09-10 (fourth)
+
+A five-agent review of the whole branch (API client, mapper, engine, database,
+settings page, tests) gave 4 high, 24 medium and 11 low findings. The high
+ones and eleven of the medium ones are closed here.
+
+- **The currency of a wallet cannot be sent.** `TransactionJournalFactory::
+  getCurrency` reads the currency preference of the asset account first, then
+  the submitted `currency_code`, then the default of the user group. A wallet
+  in BDT linked to an account in USD therefore books 1,200 BDT as 1,200 USD,
+  and no field of the request stops it. The push is held back instead:
+  `_pushBlockedByCurrencyMismatch` counts it in `skippedCurrencyMismatch`,
+  warns once per account, and holds the watermark at the row. The link picker
+  also warns before the link is made, so the user learns it there and not
+  after a cycle that pushed nothing.
+- **No request had a timeout.** `package:http` waits forever, thus one
+  request that never answers held the engine lock and no later cycle could
+  run. Each request now ends after `kFireflyRequestTimeout` (30 s) with a
+  network error, which ends that one cycle and releases the lock.
+- **A create whose answer is lost was imported a second time.** Firefly
+  writes the record, the answer does not arrive, the app has no id, and the
+  next pull reads the record as new. Each create and each update now carries
+  the local key as `external_id`, and the pull adopts a record whose external
+  id names a local row with no link: it writes the link and leaves the row.
+  The next push then sends the current content as an update. The counter is
+  `recoveredCreates`. This costs no extra request, which a search per created
+  row would.
+- **The fake server hid three contracts of the real one.** `PUT
+  /transactions/{id}` now deletes each split that the request does not name,
+  gives a new journal id to a split that comes with none, and answers 401 for
+  a journal id that the group does not hold. `DELETE
+  /transaction-journals/{id}` removes one split, removes an emptied group and
+  answers 404 for an unknown id. `GET` collections honour `limit` and `page`
+  and report the real `total_pages`, and `GET /transactions` filters by the
+  date window. Every test of the branch passed against the stricter fake,
+  which is itself the finding: those paths had no test. The new file
+  `test/firefly/firefly_sync_hardening_test.dart` covers them.
+
+Closed with the same round: a split with no type, date or amount is refused
+instead of filled in with a made-up value; a record that cannot be read is
+skipped with a warning in place of ending the cycle; a 429 with a short
+`Retry-After` waits once and tries again; a 404 on an update closes the link;
+the update path of a transfer pull runs in one transaction and keeps
+`counterpartyFireflyId`; `deleteWallet` runs in one transaction; a balance
+anchor whose Firefly account is not in the answer warns in place of holding
+the old total in silence; a missing token switches Firefly off and says why;
+a change of host asks before it forgets the links; and an empty currency is
+no currency in the account mapper as well.
+
+Left open on purpose: the `dateTimeModified` bump when the user reorders
+accounts (removing it breaks the device-to-device sync of this app; the safe
+variant is to skip the account PUT when the payload did not change), the
+same-second edit that the watermark cannot see (a `>=` there re-pushes for
+ever; the real fix is a column with more precision), the two shipped
+migrations (a migration that a build already ran must not be edited), and the
+shape items that need a design pass.
+
 ## Status, 2026-09-10 (third)
 
 An adversarial review of the fix above found that it closed the way into the

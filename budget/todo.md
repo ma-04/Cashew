@@ -2,6 +2,58 @@
 
 ## Done
 
+### Hold back a push that Firefly would book in another currency, and find a lost create again
+
+A five-agent review of the branch gave 4 high, 24 medium and 11 low findings.
+The high ones and eleven of the medium ones are closed.
+
+- Firefly reads the currency of the asset account before the `currency_code`
+  of the request (`TransactionJournalFactory::getCurrency`). A wallet in BDT
+  linked to an account in USD thus books 1,200 as 1,200 USD, and no field can
+  stop it. `_pushBlockedByCurrencyMismatch` holds such a row back, counts it
+  in `skippedCurrencyMismatch`, warns once per account and keeps the
+  watermark at the row. The link picker warns before the link is made.
+- Each request ends after 30 seconds. `package:http` waits for ever, thus one
+  request that never answered held the engine lock for the life of the app.
+- Each create and each update carries the local key as `external_id`. When
+  the answer to a create is lost, the pull finds the record by that id, links
+  it to the local row and leaves the row as it is; the next push sends the
+  content as an update. `recoveredCreates` counts it. Before this, the record
+  came back as a second local copy.
+- A split with no type, no readable date or no readable amount is refused in
+  place of filled in with the current time and 0. A record that cannot be
+  read is skipped with a warning, and the cycle goes on.
+- A 429 with a `Retry-After` of five seconds or less waits once and tries the
+  request again. A longer one ends the cycle as before.
+- A 404 on an update closes the link in place of ending the cycle.
+- The update path of a transfer pull runs in one transaction and keeps
+  `counterpartyFireflyId`; `deleteWallet` runs in one transaction.
+- A balance anchor whose Firefly account is not in the answer of the cycle
+  warns and holds the total of the last sync that found it, in place of doing
+  that in silence.
+- A missing token switches Firefly off and says that a backup does not carry
+  the token. A change of host asks before it forgets the links of the old
+  one, and the settings page no longer calls `setState` after it is gone.
+- The fake Firefly of the test suite now holds the three contracts that it
+  hid: a PUT deletes each split that the request does not name and answers
+  401 for a journal id that the group does not hold, a journal delete removes
+  one split and answers 404 for an unknown id, and each collection honours
+  `limit` and `page`. Every test passed against the stricter fake, thus those
+  paths had no test at all. `test/firefly/firefly_sync_hardening_test.dart`
+  covers them: a change to one split of a group of three keeps the other two
+  with their journal ids, a lost create is linked and not imported again, a
+  currency that does not agree holds the push back, a record that cannot be
+  read leaves the cycle running, a second page is read, a record removed on
+  Firefly is removed here, one record of a split group takes its own split
+  only, and an update of a group that is gone closes the link.
+
+Left open on purpose: the `dateTimeModified` bump when the user reorders
+accounts (to remove it breaks the device-to-device sync of this app; the safe
+variant is to skip the account PUT when the payload did not change), the
+same-second edit that the watermark cannot see (`>=` there re-pushes for
+ever; the real fix is a column with more precision), and the two migrations
+that a build already ran, which must not be edited.
+
 ### Never rewrite a Firefly row that belongs to another account
 
 An adversarial review of the entry below found that it closed the way into the
@@ -431,10 +483,13 @@ from <= 49`, and it has its own try/catch.
 ### 1. Engine-level tests: started, not complete
 
 `test/firefly/firefly_test_env.dart` gives an engine test a fake Firefly on
-the loopback interface and an in-memory database, and the two push test files
-use it. The pull path, the transfer path, the multi-split group and the delete
-paths have no engine test yet; the findings 1-4 of the review are still
-covered by the mapper suite only.
+the loopback interface and an in-memory database. The multi-split group, the
+two delete paths, the pull of a record that cannot be read, the second page
+of a collection, the lost create and the currency guard are covered by
+`firefly_sync_hardening_test.dart`. What has no engine test yet: the transfer
+pull and push as a pair, a request that runs into the timeout (the constant
+is 30 seconds, thus a test of it needs a way to set it), the 429 retry, and
+"Sync all history".
 
 The mapper suite covers `fireflyPositionMatchIsSafe`,
 `matchSplitToSyncMaps` with no position match, the journal id in
