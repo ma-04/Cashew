@@ -216,7 +216,12 @@ FireflyTransactionSplit transferPairToFireflySplit({
   required Transaction toTransaction,
   required int fromWalletFireflyId,
   required int toWalletFireflyId,
-  String? currencyCode,
+  // The currencies of the two wallets. The split is in the currency of the
+  // source wallet. If the destination wallet has another currency, the split
+  // also carries the amount of the destination row as the foreign amount, or
+  // Firefly counts the source amount on the destination account.
+  String? fromCurrency,
+  String? toCurrency,
   // A transfer is one Firefly split, but two local rows. The user can change
   // either row. The caller selects the text of the row that changed last and
   // sends it here. If it does not, the changes to the destination row do not
@@ -235,6 +240,9 @@ FireflyTransactionSplit transferPairToFireflySplit({
   String notes = (notesOverride ?? "").trim().isNotEmpty
       ? notesOverride!
       : fromTransaction.note;
+  String? from = fromCurrency?.trim().toUpperCase();
+  String? to = toCurrency?.trim().toUpperCase();
+  bool crossCurrency = from != null && to != null && from != to;
   return FireflyTransactionSplit(
     type: "transfer",
     date: fromTransaction.dateCreated,
@@ -242,7 +250,9 @@ FireflyTransactionSplit transferPairToFireflySplit({
     description: description,
     sourceId: fromWalletFireflyId,
     destinationId: toWalletFireflyId,
-    currencyCode: currencyCode?.toUpperCase(),
+    currencyCode: from == null || from.isEmpty ? null : from,
+    foreignAmount: crossCurrency ? toTransaction.amount.abs() : null,
+    foreignCurrencyCode: crossCurrency ? to : null,
     notes: notes.trim().isEmpty ? null : notes,
     transactionJournalId: transactionJournalId,
   );
@@ -346,12 +356,17 @@ Transaction buildFireflyBalanceAnchor({
   FireflyTransactionSplit split, {
   required String sourceWalletPk,
   required String destWalletPk,
+  // The currency of the destination wallet. When the split carries a foreign
+  // amount in that currency, the destination row gets it. Without this the
+  // destination row holds the source amount, which is in another currency.
+  String? destCurrency,
   String? existingSourceTransactionPk,
   String? existingDestTransactionPk,
 }) {
   String sourcePk = existingSourceTransactionPk ?? uuid.v4();
   String destPk = existingDestTransactionPk ?? uuid.v4();
   DateTime now = DateTime.now();
+  double destAmount = transferDestinationAmount(split, destCurrency);
   Transaction sourceTransaction = Transaction(
     transactionPk: sourcePk,
     pairedTransactionFk: destPk,
@@ -371,7 +386,7 @@ Transaction buildFireflyBalanceAnchor({
     transactionPk: destPk,
     pairedTransactionFk: sourcePk,
     name: split.description,
-    amount: split.amount.abs(),
+    amount: destAmount,
     note: split.notes ?? "",
     categoryFk: kBalanceCorrectionCategoryPk,
     walletFk: destWalletPk,
@@ -383,6 +398,23 @@ Transaction buildFireflyBalanceAnchor({
     methodAdded: MethodAdded.firefly,
   );
   return (sourceTransaction, destTransaction);
+}
+
+// The amount that the destination row of a transfer holds: the foreign
+// amount when the split has one in the currency of the destination wallet,
+// else the amount of the split.
+double transferDestinationAmount(
+    FireflyTransactionSplit split, String? destCurrency) {
+  String? foreign = split.foreignCurrencyCode?.trim().toUpperCase();
+  String? dest = destCurrency?.trim().toUpperCase();
+  if (split.foreignAmount != null &&
+      foreign != null &&
+      foreign.isNotEmpty &&
+      dest != null &&
+      foreign == dest) {
+    return split.foreignAmount!.abs();
+  }
+  return split.amount.abs();
 }
 
 enum FireflySyncDirection { none, push, pull }

@@ -9,6 +9,39 @@ code and proposes the better fix. todo.md has since absorbed the verification
 results and carries the current status of every item, including a second round
 of findings (10-18) not covered here; where the two overlap, todo.md wins.
 
+## Status, 2026-09-10 (second)
+
+The first push after the fix above moved 38 transactions of the "Cash wallet"
+into the account "Bank", which the user had deactivated and removed: the
+Firefly balance of "Cash wallet" fell from 1,700 to -28,290 BDT and "Bank"
+rose to 29,990. Nothing was created or duplicated on Firefly; every one of the
+38 groups was an update that named the other account. One transfer
+(1,200 BDT -> 9.68 USD) also lifted "EBL Credit USD" from -4.57 to 1,185.75,
+because the push sent no currency and no foreign amount, thus Firefly counted
+1,200 on the USD account.
+
+The cause was the removal of the primary wallet. Cashew cannot delete the pk
+`"0"`, thus `deleteWallet("0")` copies another wallet onto that key
+(`convertToPrimaryWallet`) and removes the old key. The Firefly link did not
+move with it: `"0"` kept the link of the removed wallet, and the delete log of
+the old key unlinked the account of the wallet that had just moved. Every row
+of the wallet was then pushed into the account of the removed wallet. Until
+the fix above, the 422 of the rename ("This account name is already in use.")
+stopped the cycle before the transactions, which is why this only appeared
+now.
+
+Closed with: the link follows the wallet in `convertToPrimaryWallet`
+(`swapFireflyWalletLinks`); the push never writes into an inactive Firefly
+account and says so once per account; a refused rename is one warning and the
+link stays; a refused split group is attempted once per cycle, not once per
+row of the group; a transfer sends `currency_code` and, between two
+currencies, `foreign_amount` and `foreign_currency_code`, and a pulled
+transfer puts the foreign amount on the destination row; and the settings page
+has "Linked accounts", where the user names the Firefly account of each local
+account by hand. The 38 groups and the transfer were repaired on the server
+with a one-off script. The write-up is in `todo.md`, "Follow the link when the
+primary wallet changes".
+
 ## Status, 2026-09-10
 
 One wallet stopped each sync. `_pushAccounts` had no catch around

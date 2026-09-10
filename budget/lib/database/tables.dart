@@ -5285,11 +5285,42 @@ class FinanceDatabase extends _$FinanceDatabase {
     // Update the primary wallet to match old, create an entirely new wallet copy under "0"
     await database
         .createOrUpdateWallet(sourceWallet.copyWith(walletPk: "0")); // "0"
+    // The Firefly link goes with the wallet. Without this, "0" keeps the
+    // link of the wallet that the user removed, and each row of the moved
+    // wallet is then pushed into the Firefly account of the removed wallet.
+    await database.swapFireflyWalletLinks(sourceWallet.walletPk, "0");
     // Force move transactions over from old to new "0"
     await database.transferTransactionsOnly(sourceWallet.walletPk, "0");
     // Delete the duplicate, the old
     await database.deleteWallet(sourceWallet.walletPk, sourceWallet.order);
     await database.fixOrderWallets();
+  }
+
+  // Moves the Firefly links of two wallets onto each other's key. Used when
+  // another wallet is copied onto pk "0": the link must follow the wallet,
+  // and the link of the removed wallet must go with its old key, thus the
+  // delete log of that key unlinks it on the next sync. Tombstones move too.
+  Future<void> swapFireflyWalletLinks(
+      String walletPkA, String walletPkB) async {
+    if (walletPkA == walletPkB) return;
+    await transaction(() async {
+      List<FireflySyncMapEntry> rows = await (select(fireflySyncMap)
+            ..where((tbl) =>
+                tbl.entityType.equalsValue(FireflySyncEntityType.wallet) &
+                tbl.localPk.isIn([walletPkA, walletPkB])))
+          .get();
+      if (rows.isEmpty) return;
+      await (delete(fireflySyncMap)
+            ..where((tbl) => tbl.syncMapPk
+                .isIn([for (FireflySyncMapEntry row in rows) row.syncMapPk])))
+          .go();
+      for (FireflySyncMapEntry row in rows) {
+        await into(fireflySyncMap).insert(
+          row.toCompanion(false).copyWith(
+              localPk: Value(row.localPk == walletPkA ? walletPkB : walletPkA)),
+        );
+      }
+    });
   }
 
   Future<bool> moveWalletTransactions(

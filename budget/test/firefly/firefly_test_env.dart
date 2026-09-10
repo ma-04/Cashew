@@ -456,6 +456,7 @@ class FireflyTestEnv {
     DateTime? lastSyncedLocalModified,
     DateTime? fireflyUpdatedAt,
     int? journalId,
+    int splitIndex = 0,
   }) async {
     await database.into(database.fireflySyncMap).insert(
         FireflySyncMapCompanion.insert(
@@ -464,6 +465,7 @@ class FireflyTestEnv {
             fireflyId: fireflyId,
             fireflyUpdatedAt: Value(fireflyUpdatedAt),
             lastSyncedLocalModified: Value(lastSyncedLocalModified),
+            fireflySplitIndex: Value(splitIndex),
             fireflyJournalId: Value(journalId)));
   }
 

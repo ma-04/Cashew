@@ -2,6 +2,70 @@
 
 ## Done
 
+### Follow the link when the primary wallet changes
+
+The report was: the first push after the fix below "created lots of duplicated
+changes and inflated 2 wallet balances". On the server nothing was created:
+38 transaction groups of the account "Cash wallet" (id 4) were *updated* to
+name the account "Bank" (id 358), which the user had deactivated and then
+removed in this app. "Cash wallet" fell from 1,700 to -28,290 BDT, "Bank" rose
+to 29,990.
+
+Cashew cannot delete the wallet with the pk `"0"`. `deleteWallet("0")` copies
+the first other wallet onto that key (`convertToPrimaryWallet`), moves its
+transactions there and deletes its old key. The Firefly link stayed where it
+was: `"0"` kept the link to the account of the removed wallet, and the delete
+log of the old key unlinked the account that the moved wallet belongs to. Each
+row of the wallet was then pushed into the account of the removed wallet. The
+rename of that account is refused ("This account name is already in use."),
+which before the fix below stopped the cycle in front of the transactions -
+the reason this appeared only after that fix.
+
+- `convertToPrimaryWallet` calls the new `swapFireflyWalletLinks(a, b)`
+  (`tables.dart`): both wallet rows of `fireflySyncMap`, tombstones included,
+  change places in one transaction. `"0"` gets the link of the wallet that
+  moved there, and the key that is about to be deleted gets the link of the
+  removed wallet, thus its delete log unlinks that account, as a wallet delete
+  always does.
+- The push never writes into a Firefly account that is inactive. Each cycle
+  holds the asset accounts in `_FireflyAssetIndex`; a row whose wallet is
+  linked to an inactive account is held back (the watermark stays at it, thus
+  the next cycle tries again), counted in `report.skippedInactiveAccount` and
+  named once per account: activate it on Firefly, or link the local account to
+  another Firefly account. Both sides of a transfer and every row of a split
+  group are tested.
+- A rename that Firefly refuses because another account holds the name is one
+  warning and one `failedWallets`; the link stays on the account it had. It
+  was the raw message of the generic catch before.
+- A split group that Firefly refuses is attempted once per cycle: the rows of
+  the group go into `handledThisPass` before the request, not after it. One
+  group gave six warnings and six requests in one cycle before.
+- A transfer sends `currency_code`, and between two currencies also
+  `foreign_amount` and `foreign_currency_code`; a pulled transfer puts the
+  foreign amount on the destination row when it is in that wallet's currency.
+  Without this a transfer of 1,200 BDT into a USD account counted 1,200 USD
+  there, which is what lifted "EBL Credit USD" from -4.57 to 1,185.75.
+- The Firefly settings page has "Linked accounts": one row per local account
+  with the Firefly account it syncs with, and a picker with every asset
+  account of the server (inactive ones marked) and "Not linked". Choosing one
+  moves the link only - no transaction is moved, here or on the server - and
+  then syncs, thus the pull attaches the transactions of the new account and
+  the balance anchor sets the total again. `fireflyLinkWalletToAccount` also
+  removes the tombstone of the account that is chosen, or the pull would keep
+  skipping it, and leaves a tombstone for the account that the wallet had, so
+  that it is unlinked and not deleted.
+- Tests: `test/firefly/firefly_wallet_link_test.dart` (the link follows the
+  new primary wallet and nothing goes into the account of the removed wallet;
+  an inactive account holds the push back and warns once; a refused rename
+  warns and the cycle goes on; the manual link moves the link, clears the
+  tombstone and the next pull attaches the rows; unlinking leaves a
+  tombstone), the refused split group in `firefly_push_resilience_test.dart`,
+  and the two currencies in `firefly_mapper_test.dart`. 91 tests pass.
+
+The 38 groups on the server were repaired with a one-off script that set the
+source or the destination of each back to the account 4 and re-sent the
+transfer with its currencies; nothing else of those records was touched.
+
 ### Keep the cycle alive when Firefly refuses one row
 
 The report was: a new local transaction never reached Firefly, nothing pushed
@@ -403,6 +467,24 @@ git push origin --delete fix/ci-flutter-version fix/disable-firebase-workflow
 It names the build artifacts after `github.event.pull_request.head.sha` in
 place of `github.sha`, which on a `pull_request` event is a merge commit that
 the repository does not hold.
+
+### 9. The Firefly account of a transfer is not read back
+
+`fireflySplitToTransferPair` puts the foreign amount on the destination row
+when the foreign currency is the currency of the destination wallet. The
+currency of the wallet is the local one; the engine does not compare it with
+the currency that Firefly holds for that account. Two accounts that hold the
+same currency in Firefly but not in the app therefore still put the source
+amount on the destination row. A pull that reads `currency_code` per account
+would close it.
+
+### 10. "Linked accounts" shows the local accounts only
+
+The picker in the Firefly settings lists each local account and lets the user
+name its Firefly account. It does not show a Firefly asset account that no
+local account holds, thus a user cannot make a local account from it there.
+The pull makes one by itself on the next cycle, which is why this is a comfort
+item and not a defect.
 
 ---
 

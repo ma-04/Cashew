@@ -321,6 +321,85 @@ void main() {
       expect(dest.pairedTransactionFk, source.transactionPk);
       expect(source.transactionPk, isNot(equals(dest.transactionPk)));
     });
+
+    test('a transfer between two currencies carries the foreign amount', () {
+      Transaction from = _transaction(
+          transactionPk: "from-1",
+          amount: -1200.0,
+          income: false,
+          walletFk: "wallet-bdt");
+      Transaction to = _transaction(
+          transactionPk: "to-1",
+          amount: 9.68,
+          income: true,
+          walletFk: "wallet-usd");
+      FireflyTransactionSplit split = transferPairToFireflySplit(
+        fromTransaction: from,
+        toTransaction: to,
+        fromWalletFireflyId: 1,
+        toWalletFireflyId: 2,
+        fromCurrency: "bdt",
+        toCurrency: "usd",
+      );
+      expect(split.amount, 1200.0);
+      expect(split.currencyCode, "BDT");
+      expect(split.foreignAmount, 9.68);
+      expect(split.foreignCurrencyCode, "USD");
+
+      Map<String, dynamic> json = split.toRequestJson();
+      expect(json["currency_code"], "BDT");
+      expect(json["foreign_amount"], "9.68");
+      expect(json["foreign_currency_code"], "USD");
+    });
+
+    test('a transfer within one currency sends no foreign amount', () {
+      Transaction from =
+          _transaction(transactionPk: "from-1", amount: -100.0, income: false);
+      Transaction to =
+          _transaction(transactionPk: "to-1", amount: 100.0, income: true);
+      FireflyTransactionSplit split = transferPairToFireflySplit(
+        fromTransaction: from,
+        toTransaction: to,
+        fromWalletFireflyId: 1,
+        toWalletFireflyId: 2,
+        fromCurrency: "usd",
+        toCurrency: "USD",
+      );
+      expect(split.foreignAmount, isNull);
+      expect(split.foreignCurrencyCode, isNull);
+      expect(split.toRequestJson().containsKey("foreign_amount"), isFalse);
+    });
+
+    test('the destination row of a pulled transfer gets the foreign amount',
+        () {
+      FireflyTransactionSplit split = FireflyTransactionSplit(
+        type: "transfer",
+        date: DateTime(2024, 3, 15),
+        amount: 1200.0,
+        description: "Move to the card",
+        currencyCode: "BDT",
+        foreignAmount: 9.68,
+        foreignCurrencyCode: "USD",
+      );
+      (Transaction, Transaction) pair = fireflySplitToTransferPair(
+        split,
+        sourceWalletPk: "wallet-bdt",
+        destWalletPk: "wallet-usd",
+        destCurrency: "usd",
+      );
+      expect(pair.$1.amount, -1200.0);
+      expect(pair.$2.amount, 9.68);
+
+      // Without the currency of the destination wallet the foreign amount
+      // does not belong to that wallet, thus the split amount stays.
+      (Transaction, Transaction) sameCurrency = fireflySplitToTransferPair(
+        split,
+        sourceWalletPk: "wallet-bdt",
+        destWalletPk: "wallet-other",
+        destCurrency: "eur",
+      );
+      expect(sameCurrency.$2.amount, 1200.0);
+    });
   });
 
   group('account active flag', () {
@@ -331,8 +410,8 @@ void main() {
 
     test('an update keeps a deactivated Firefly account deactivated', () {
       TransactionWallet wallet = _wallet(name: "Cash");
-      expect(
-          walletToFireflyAccount(wallet, existingActive: false).active, isFalse);
+      expect(walletToFireflyAccount(wallet, existingActive: false).active,
+          isFalse);
     });
   });
 

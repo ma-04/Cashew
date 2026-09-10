@@ -6,8 +6,11 @@ import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
+import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
+import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
+import 'package:budget/widgets/radioItems.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:budget/widgets/settingsContainers.dart';
 import 'package:budget/widgets/textInput.dart';
@@ -42,17 +45,26 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   late int syncWindowDays = fireflySyncWindowDays;
   // What "Push unsynced changes" would send. null until the first count.
   FireflyUnsyncedCounts? unsyncedCounts;
+  // The asset accounts of the server, for the "Linked accounts" list. null
+  // means that the application could not read them (no connection, no token).
+  List<FireflyAccount>? assetAccounts;
+  List<FireflyWalletLink> walletLinks = [];
+  bool loadingWalletLinks = false;
+  // The account id that stands for "Not linked" in the radio list. Firefly
+  // has no account with a negative id.
+  static const int _notLinkedId = -1;
 
   @override
   void initState() {
     super.initState();
-    fireflySyncReportNotifier.addListener(_refreshUnsyncedCounts);
+    fireflySyncReportNotifier.addListener(_onSyncReport);
     _refreshUnsyncedCounts();
+    _refreshWalletLinks();
   }
 
   @override
   void dispose() {
-    fireflySyncReportNotifier.removeListener(_refreshUnsyncedCounts);
+    fireflySyncReportNotifier.removeListener(_onSyncReport);
     hostController.dispose();
     patController.dispose();
     super.dispose();
@@ -65,6 +77,138 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     }
     FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
     if (mounted) setState(() => unsyncedCounts = counts);
+  }
+
+  void _onSyncReport() {
+    _refreshUnsyncedCounts();
+    _refreshWalletLinks();
+  }
+
+  // The accounts of the server and the link of each local account. A sync
+  // can change both, thus this runs again after each report.
+  Future<void> _refreshWalletLinks() async {
+    if (!fireflyEnabled) {
+      if (mounted) {
+        setState(() {
+          assetAccounts = null;
+          walletLinks = [];
+        });
+      }
+      return;
+    }
+    if (loadingWalletLinks) return;
+    if (mounted) setState(() => loadingWalletLinks = true);
+    List<FireflyAccount>? accounts = await fireflyListAssetAccounts();
+    List<FireflyWalletLink> links =
+        await fireflyWalletLinks(accounts: accounts);
+    if (!mounted) return;
+    setState(() {
+      assetAccounts = accounts;
+      walletLinks = links;
+      loadingWalletLinks = false;
+    });
+  }
+
+  // The line under the name of a local account in the "Linked accounts" list.
+  String _walletLinkDescription(FireflyWalletLink link) {
+    if (link.fireflyId == null) return "firefly-not-linked".tr();
+    FireflyAccount? account = link.account;
+    if (account == null) {
+      // The id has no account in the list of the server: it was removed
+      // there, or it is not an asset account any more.
+      return "firefly-linked-account-missing".tr();
+    }
+    return "\u2192 " +
+        account.name +
+        (account.active ? "" : " (" + "firefly-inactive".tr() + ")");
+  }
+
+  // Lets the user name the Firefly account of one local account. Only the
+  // link changes: no transaction is moved, here or on the server.
+  Future<void> _pickAccountForWallet(FireflyWalletLink link) async {
+    List<FireflyAccount>? accounts = assetAccounts;
+    if (accounts == null) {
+      openSnackbar(SnackbarMessage(
+        title: "firefly-linked-accounts-unavailable".tr(),
+        icon: appStateSettings["outlinedIcons"]
+            ? Icons.error_outlined
+            : Icons.error_rounded,
+      ));
+      return;
+    }
+    List<FireflyAccount> sorted = [...accounts]..sort((a, b) {
+        if (a.active != b.active) return a.active ? -1 : 1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    Map<int, FireflyAccount> byId = {
+      for (FireflyAccount account in sorted) account.id: account
+    };
+    await openBottomSheet(
+      context,
+      PopupFramework(
+        title: "firefly-link-account".tr(),
+        subtitle: link.wallet.name,
+        child: RadioItems<int>(
+          items: [
+            _notLinkedId,
+            for (FireflyAccount account in sorted) account.id
+          ],
+          initial: link.fireflyId ?? _notLinkedId,
+          displayFilter: (int id) =>
+              id == _notLinkedId ? "firefly-not-linked".tr() : byId[id]!.name,
+          getDescription: (int id) {
+            FireflyAccount? account = byId[id];
+            if (account == null) return "";
+            List<String> parts = [
+              if (account.currencyCode != null) account.currencyCode!,
+              if (!account.active) "firefly-inactive".tr(),
+            ];
+            return parts.join(" - ");
+          },
+          onChanged: (int id) async {
+            popRoute(context);
+            await _confirmLink(link, id == _notLinkedId ? null : byId[id]);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmLink(
+      FireflyWalletLink link, FireflyAccount? account) async {
+    if (account?.id == link.fireflyId) return;
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-link-account".tr(),
+      description: "firefly-link-account-confirm".tr(namedArgs: {
+        "wallet": link.wallet.name,
+        "account": account?.name ?? "firefly-not-linked".tr(),
+      }),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.link_outlined
+          : Icons.link_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    if (!confirmed) return;
+    await fireflyLinkWalletToAccount(link.wallet.walletPk, account);
+    openSnackbar(SnackbarMessage(
+      title: "firefly-link-account-done".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.link_outlined
+          : Icons.link_rounded,
+    ));
+    // The pull attaches the transactions of the new account and sets the
+    // total of the local account again.
+    await _runHistoryAction(fireflySyncNow);
   }
 
   // The window lengths in days. A fixed list, not a text field, thus the
@@ -628,6 +772,51 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                     disabled: runningHistoryAction || syncingNow,
                     onTap: resetFireflyLinks,
                   ),
+                  SizedBox(height: 12),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextFont(
+                      text: "firefly-linked-accounts".tr(),
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextFont(
+                      text: "firefly-linked-accounts-description".tr(),
+                      fontSize: 13,
+                      maxLines: 5,
+                      textColor: getColor(context, "textLight"),
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  for (FireflyWalletLink link in walletLinks)
+                    SettingsContainer(
+                      key: ValueKey(link.wallet.walletPk),
+                      enableBorderRadius: true,
+                      title: link.wallet.name,
+                      description: _walletLinkDescription(link),
+                      icon: appStateSettings["outlinedIcons"]
+                          ? Icons.account_balance_wallet_outlined
+                          : Icons.account_balance_wallet_rounded,
+                      onTap: runningHistoryAction ||
+                              syncingNow ||
+                              loadingWalletLinks
+                          ? null
+                          : () => _pickAccountForWallet(link),
+                    ),
+                  if (walletLinks.isNotEmpty && assetAccounts == null)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(top: 4),
+                      child: TextFont(
+                        text: "firefly-linked-accounts-unavailable".tr(),
+                        fontSize: 13,
+                        maxLines: 3,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                    ),
                   SizedBox(height: 12),
                   TextFont(
                     text: "firefly-scope-note".tr(),

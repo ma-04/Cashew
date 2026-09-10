@@ -50,7 +50,8 @@ class FireflyAccount {
       currencyCode: attributes["currency_code"]?.toString(),
       currentBalance: _parseDouble(attributes["current_balance"]),
       accountRole: attributes["account_role"]?.toString(),
-      active: attributes["active"] == null ? true : attributes["active"] == true,
+      active:
+          attributes["active"] == null ? true : attributes["active"] == true,
       createdAt: _parseDate(attributes["created_at"]),
       updatedAt: _parseDate(attributes["updated_at"]),
     );
@@ -112,6 +113,13 @@ class FireflyTransactionSplit {
   final int? categoryId;
   final String? categoryName;
   final String? currencyCode;
+  // The amount in the currency of the other account of a transfer between
+  // two accounts of different currencies. Firefly counts `amount` in the
+  // currency of the source account, and `foreignAmount` in the currency of
+  // the destination account. A transfer that does not send them makes
+  // Firefly count the source amount on the destination account.
+  final double? foreignAmount;
+  final String? foreignCurrencyCode;
   final String? notes;
   // The identity that Firefly gives to this split. It stays the same when a
   // sibling split is deleted, but the position in group.splits does not. The
@@ -136,6 +144,8 @@ class FireflyTransactionSplit {
     this.categoryId,
     this.categoryName,
     this.currencyCode,
+    this.foreignAmount,
+    this.foreignCurrencyCode,
     this.notes,
     this.transactionJournalId,
     this.unchanged = false,
@@ -173,6 +183,8 @@ class FireflyTransactionSplit {
           : int.tryParse(json["category_id"].toString()),
       categoryName: json["category_name"]?.toString(),
       currencyCode: json["currency_code"]?.toString(),
+      foreignAmount: _parseDouble(json["foreign_amount"]),
+      foreignCurrencyCode: json["foreign_currency_code"]?.toString(),
       notes: json["notes"]?.toString(),
       transactionJournalId: json["transaction_journal_id"] == null
           ? null
@@ -200,6 +212,10 @@ class FireflyTransactionSplit {
       if (categoryId == null && categoryName != null)
         "category_name": categoryName,
       if (currencyCode != null) "currency_code": currencyCode,
+      if (foreignAmount != null && foreignCurrencyCode != null)
+        "foreign_amount": foreignAmount!.abs().toStringAsFixed(2),
+      if (foreignAmount != null && foreignCurrencyCode != null)
+        "foreign_currency_code": foreignCurrencyCode,
       if (notes != null) "notes": notes,
     };
   }
@@ -231,8 +247,8 @@ class FireflyTransactionGroup {
       createdAt: _parseDate(attributes["created_at"]),
       updatedAt: _parseDate(attributes["updated_at"]),
       splits: transactionsJson
-          .map((split) =>
-              FireflyTransactionSplit.fromJson(Map<String, dynamic>.from(split)))
+          .map((split) => FireflyTransactionSplit.fromJson(
+              Map<String, dynamic>.from(split)))
           .toList(),
     );
   }

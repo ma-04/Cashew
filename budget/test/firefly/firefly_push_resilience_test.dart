@@ -183,6 +183,81 @@ void main() {
           isNotNull);
       expect(fireflyLastSyncedAt!.isAfter(alpha.dateTimeModified!), isTrue);
     });
+
+    // A split group is one Firefly record with several local rows. Firefly
+    // can refuse the whole group, for example when one of its splits names
+    // an account that the group may not use. Each local row of the group
+    // then reached the same PUT, thus one refusal gave as many warnings as
+    // the group has rows.
+    test('a refused split group is attempted once per cycle', () async {
+      var (wallet, category) = await linkedWalletAndCategory();
+      DateTime date = DateTime.now().subtract(const Duration(days: 2));
+      Map<String, dynamic> group = env.firefly.addTransaction(300, 301,
+          description: 'Groceries',
+          amount: '10.00',
+          sourceId: 5,
+          destinationId: 800,
+          date: date,
+          categoryId: '6',
+          updatedAt: old.toUtc().toIso8601String());
+      (group['attributes']['transactions'] as List<dynamic>).add({
+        'transaction_journal_id': 302,
+        'type': 'withdrawal',
+        'date': date.toUtc().toIso8601String(),
+        'amount': '5.00',
+        'description': 'Snacks',
+        'source_id': 5,
+        'destination_id': 800,
+        'currency_code': 'USD',
+        'category_id': '6',
+      });
+
+      Transaction first = await env.insertTransaction(
+          name: 'Groceries',
+          amount: -10,
+          wallet: wallet,
+          category: category,
+          date: date);
+      Transaction second = await env.insertTransaction(
+          name: 'Snacks',
+          amount: -5,
+          wallet: wallet,
+          category: category,
+          date: date);
+      await env.mapRow(
+          FireflySyncEntityType.transaction, first.transactionPk, 300,
+          lastSyncedLocalModified: old,
+          fireflyUpdatedAt: old,
+          journalId: 301,
+          splitIndex: 0);
+      await env.mapRow(
+          FireflySyncEntityType.transaction, second.transactionPk, 300,
+          lastSyncedLocalModified: old,
+          fireflyUpdatedAt: old,
+          journalId: 302,
+          splitIndex: 1);
+
+      env.firefly.intercept = (FakeRequest r) {
+        if (r.method == 'PUT' && r.path == '/api/v1/transactions/300') {
+          return FakeResponse(422, {
+            'message': 'The given data was invalid.',
+            'errors': {
+              'transactions.0.source_id': ['Invalid account.']
+            }
+          });
+        }
+        return null;
+      };
+
+      bool ok = await fireflySyncNow();
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+      expect(env.firefly.requestsTo('PUT', '/api/v1/transactions/300'),
+          hasLength(1),
+          reason: 'the group is attempted once, not once per local row');
+      FireflySyncReport report = fireflySyncReportNotifier.value!;
+      expect(report.failedTransactions, 1);
+    });
   });
 
   group('balance anchor', () {
