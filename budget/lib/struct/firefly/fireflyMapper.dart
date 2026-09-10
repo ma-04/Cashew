@@ -30,6 +30,10 @@ FireflyAccount walletToFireflyAccount(
   // write to an asset account. If the update does not send the current role,
   // Firefly changes a savings account or a credit card into a plain account.
   String? existingAccountRole,
+  // Whether the remote account is active. The local database has no such
+  // flag. An update that sends active: true switches on an account that the
+  // user deactivated on Firefly. A new account is active.
+  bool existingActive = true,
 }) {
   return FireflyAccount(
     id: 0,
@@ -37,7 +41,7 @@ FireflyAccount walletToFireflyAccount(
     type: kFireflyAssetAccountType,
     currencyCode: wallet.currency?.toUpperCase(),
     accountRole: existingAccountRole ?? "defaultAsset",
-    active: true,
+    active: existingActive,
   );
 }
 

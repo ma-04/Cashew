@@ -9,6 +9,22 @@ code and proposes the better fix. todo.md has since absorbed the verification
 results and carries the current status of every item, including a second round
 of findings (10-18) not covered here; where the two overlap, todo.md wins.
 
+## Status, 2026-09-10
+
+One wallet stopped each sync. `_pushAccounts` had no catch around
+`createAccount`, thus the HTTP 422 for a name that Firefly already holds went
+out of `fireflySyncNow` in front of the transactions, the deletes and the
+balance anchors, and the watermark stayed, thus the next cycle failed the same
+way. That is the report "new transactions are not pushed, nothing pushes by
+itself, and the balance differs". The push loops now isolate each row, a
+refused name links to the remote record, an edit during an on-demand fetch is
+pushed afterwards, the anchor counts each row dated today, an update keeps a
+deactivated Firefly account deactivated, and the settings page has "Push
+unsynced changes" for the rows that the failed cycles left behind. The
+write-up is in `todo.md`, "Keep the cycle alive when Firefly refuses one
+row". Item 7 of the table below is now half closed: the engine has tests for
+the push side.
+
 ## Status, 2026-09-09 (second revision)
 
 A second review ran on 2026-09-09, after the fixes below. Two agents read the
@@ -34,7 +50,7 @@ this list names:
 | 4 backfill behind exits | Fixed. The write is in front of each exit. |
 | 5 PUT contract | Answered, and the code follows it. |
 | 6 count-mismatch refusal | Now unlink-and-push, for a row that has an id. |
-| 7 test gaps | Open. The suite is still mapper-level. |
+| 7 test gaps | Half closed, 2026-09-10. The push side has engine tests; the pull side is still mapper-level. |
 | 8, 9 branches and PR #5 | Open. Both need a hand. |
 
 Two deviations from what section 2 asks for:

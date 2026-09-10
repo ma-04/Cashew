@@ -66,7 +66,14 @@ class FireflySyncReport {
   int skippedSubcategories = 0;
   int skippedUnmappedWallet = 0;
   int skippedAmbiguousSplits = 0;
+  // Rows that a push tried and that Firefly or the network refused. Each one
+  // has a warning, and the next cycle tries it again.
+  int failedCategories = 0;
+  int failedWallets = 0;
+  int failedTransactions = 0;
   final List<String> warnings = [];
+
+  int get failedTotal => failedCategories + failedWallets + failedTransactions;
 
   String summary() {
     List<String> parts = [];
@@ -93,6 +100,9 @@ class FireflySyncReport {
     }
     if (skippedAmbiguousSplits > 0) {
       parts.add("$skippedAmbiguousSplits splits skipped (record not known)");
+    }
+    if (failedTotal > 0) {
+      parts.add("$failedTotal not pushed (see warnings)");
     }
     if (warnings.isNotEmpty) {
       parts.add("${warnings.length} warning(s)");
@@ -134,6 +144,19 @@ Future<T> _withFireflyEngineLock<T>(Future<T> Function() body) {
   // result still gets the error.
   _fireflyEngineQueue = result.then<void>((_) {}, onError: (Object _) {});
   return result;
+}
+
+// An edit that arrives while the engine works sets _userEditDuringSync (see
+// scheduleFireflyPush). Each piece of engine work calls this at its end, thus
+// the edit gets its push. A cycle that is still running consumes the flag in
+// its own finally block: _canSyncFirefly is false until then.
+void _reschedulePushIfEditedDuringWork() {
+  if (!_userEditDuringSync) return;
+  if (!_canSyncFirefly) return;
+  _userEditDuringSync = false;
+  fireflyPushDebouncer.run(() {
+    fireflySyncNow(pushOnly: true);
+  });
 }
 
 void scheduleFireflyPush() {
@@ -195,11 +218,16 @@ Future<bool> fireflySyncNow({
   // record the pull just brought down. Firefly is the system of record: local
   // history stays local unless the user explicitly asks to upload it.
   bool pushExistingLocalHistory = false,
+  // Push each local change since the link that Firefly does not hold yet,
+  // and do not pull. The user starts this from the settings page after the
+  // routine cycles failed for a while. The push loops skip each row that is
+  // linked and unchanged, thus the only difference to a routine push is the
+  // lower limit: the link moment instead of the watermark.
+  bool pushUnsynced = false,
 }) async {
   if (!fireflyEnabled) return false;
   if (!_canSyncFirefly) return false;
   _canSyncFirefly = false;
-  _userEditDuringSync = false;
   fireflySyncStatusNotifier.value = FireflySyncStatus.syncing;
   fireflySyncErrorNotifier.value = null;
   FireflySyncReport report = FireflySyncReport();
@@ -215,12 +243,22 @@ Future<bool> fireflySyncNow({
 
     DateTime syncStartedAt = DateTime.now();
 
+    // The link moment, for "Push unsynced changes". An installation that
+    // linked before this setting existed gets its watermark: no row from
+    // before the watermark waits for a push.
+    if (fireflyLinkedAt == null) {
+      await setFireflyLinkedAt(fireflyLastSyncedAt ?? syncStartedAt);
+    }
+
     // The push watermark. On a first link this is the link moment rather than
     // the epoch, so pre-existing local rows are not treated as "changed since
     // last sync" and mass-uploaded - see pushExistingLocalHistory above.
     DateTime lastSynced = pushExistingLocalHistory
         ? DateTime(2000)
-        : (fireflyLastSyncedAt ?? syncStartedAt);
+        : pushUnsynced
+            ? fireflyUnsyncedSince()
+            : (fireflyLastSyncedAt ?? syncStartedAt);
+    bool skipPull = pushOnly || pushUnsynced;
 
     // Booking-date window for the pull. null means "no lower bound".
     DateTime? windowStart =
@@ -241,7 +279,7 @@ Future<bool> fireflySyncNow({
           // variable, thus Dart does not keep the result of the null test.
           FireflyApiClient api = client!;
           _FireflyCounterpartyIndex counterparties;
-          if (pushOnly) {
+          if (skipPull) {
             counterparties = await _loadCounterparties(api);
           } else {
             Set<int> remoteCategoryIds = await _pullCategories(api, report);
@@ -269,7 +307,7 @@ Future<bool> fireflySyncNow({
           // Last, because the push changes the remote balances that this
           // reads. A balance from before the push would make each wallet that
           // the cycle pushed to wrong by the amount that it pushed.
-          if (!pushOnly ||
+          if (!skipPull ||
               report.pushedTransactions > 0 ||
               report.pushedWallets > 0 ||
               report.deletedRemote > 0) {
@@ -290,12 +328,7 @@ Future<bool> fireflySyncNow({
   } finally {
     client?.close();
     _canSyncFirefly = true;
-    if (_userEditDuringSync) {
-      _userEditDuringSync = false;
-      fireflyPushDebouncer.run(() {
-        fireflySyncNow(pushOnly: true);
-      });
-    }
+    _reschedulePushIfEditedDuringWork();
   }
 }
 
@@ -1364,82 +1397,120 @@ Future<void> _pushCategories(FireflyApiClient client, DateTime lastSynced,
   List<TransactionCategory> changed =
       await database.getAllNewCategories(lastSynced);
   for (TransactionCategory category in changed) {
-    // getAllNew*() also returns each row that has no dateTimeModified. Such a
-    // row is not a recent change: it is a row from a version before that
-    // column, or a row from an old backup. The app sends it only if the user
-    // asks for the local history.
-    if (category.dateTimeModified == null && !includeUnmodifiedRows) continue;
-    // The local category for "Firefly has no category". Firefly must not get
-    // a category with this name.
-    if (category.categoryPk == kFireflyUncategorizedCategoryPk) continue;
-    // The balance-correction category holds the balance anchors and the
-    // manual corrections of the user. It is local only.
-    // _ensureFireflySystemCategories writes it with a new dateTimeModified,
-    // thus the first cycle finds it as a changed row.
-    if (category.categoryPk == kBalanceCorrectionCategoryPk) continue;
-    // A subcategory has no Firefly form, thus no later cycle can send it.
-    // recordNotPushed is for a row that a next cycle can still send: to hold
-    // the watermark at a row that never goes keeps it there for ever.
-    if (category.mainCategoryPk != null) {
-      report.skippedSubcategories++;
-      continue;
+    try {
+      await _pushOneCategory(
+        client: client,
+        category: category,
+        report: report,
+        backlog: backlog,
+        includeUnmodifiedRows: includeUnmodifiedRows,
+      );
+    } on FireflyAuthException {
+      rethrow;
+    } on FireflyRateLimitException {
+      rethrow;
+    } catch (e) {
+      report.failedCategories++;
+      report.warnings
+          .add("The category \"${category.name}\" was not pushed: $e");
+      backlog.recordNotPushed(category.dateTimeModified);
+      print("Firefly push-category error (will retry): " + e.toString());
     }
-    FireflyCategory? remoteShape = categoryToFireflyCategory(category);
-    if (remoteShape == null) continue;
+  }
+}
 
-    FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
-        FireflySyncEntityType.category, category.categoryPk,
-        includeTombstones: true);
-    if (tombstone != null && tombstone.isTombstone) continue;
+// One category of the push. A return leaves this category and goes on to
+// the next one. The loop in _pushCategories keeps a failure of this function
+// as a warning, thus one category cannot stop the cycle.
+Future<void> _pushOneCategory({
+  required FireflyApiClient client,
+  required TransactionCategory category,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+  required bool includeUnmodifiedRows,
+}) async {
+  // getAllNew*() also returns each row that has no dateTimeModified. Such a
+  // row is not a recent change: it is a row from a version before that
+  // column, or a row from an old backup. The app sends it only if the user
+  // asks for the local history.
+  if (category.dateTimeModified == null && !includeUnmodifiedRows) return;
+  // The local category for "Firefly has no category". Firefly must not get
+  // a category with this name.
+  if (category.categoryPk == kFireflyUncategorizedCategoryPk) return;
+  // The balance-correction category holds the balance anchors and the
+  // manual corrections of the user. It is local only.
+  // _ensureFireflySystemCategories writes it with a new dateTimeModified,
+  // thus the first cycle finds it as a changed row.
+  if (category.categoryPk == kBalanceCorrectionCategoryPk) return;
+  // A subcategory has no Firefly form, thus no later cycle can send it.
+  // recordNotPushed is for a row that a next cycle can still send: to hold
+  // the watermark at a row that never goes keeps it there for ever.
+  if (category.mainCategoryPk != null) {
+    report.skippedSubcategories++;
+    return;
+  }
+  FireflyCategory? remoteShape = categoryToFireflyCategory(category);
+  if (remoteShape == null) return;
 
-    FireflySyncMapEntry? map = await _syncMapByLocalPk(
-        FireflySyncEntityType.category, category.categoryPk);
-    if (map == null) {
-      FireflyCategory created = await client.createCategory(remoteShape);
+  FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
+      FireflySyncEntityType.category, category.categoryPk,
+      includeTombstones: true);
+  if (tombstone != null && tombstone.isTombstone) return;
+
+  FireflySyncMapEntry? map = await _syncMapByLocalPk(
+      FireflySyncEntityType.category, category.categoryPk);
+  if (map == null) {
+    FireflyCategory created;
+    try {
+      created = await client.createCategory(remoteShape);
+    } on FireflyValidationException catch (e) {
+      if (!e.isNameInUse) rethrow;
+      await _linkCategoryToExistingRemote(client, category, report);
+      return;
+    }
+    await _upsertSyncMap(
+      type: FireflySyncEntityType.category,
+      localPk: category.categoryPk,
+      fireflyId: created.id,
+      fireflyUpdatedAt: created.updatedAt,
+      lastSyncedLocalModified: category.dateTimeModified,
+    );
+    report.pushedCategories++;
+  } else {
+    if (!fireflyLocalRowChanged(
+      localModified: category.dateTimeModified,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+    )) {
+      return;
+    }
+    // Read the live record. map.fireflyUpdatedAt holds the time that the
+    // last sync saw. If the two are compared with each other, a change made
+    // on Firefly after that sync is invisible and the push destroys it.
+    FireflyCategory remote;
+    try {
+      remote = await client.getCategory(map.fireflyId);
+    } on FireflyNotFoundException {
+      await _tombstoneMapRow(map);
+      return;
+    }
+    FireflySyncDirection direction = decideSyncDirection(
+      localModified: category.dateTimeModified,
+      remoteUpdatedAt: remote.updatedAt,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+      lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
+    );
+    if (direction == FireflySyncDirection.push) {
+      FireflyCategory updated =
+          await client.updateCategory(map.fireflyId, remoteShape);
       await _upsertSyncMap(
+        syncMapPk: map.syncMapPk,
         type: FireflySyncEntityType.category,
         localPk: category.categoryPk,
-        fireflyId: created.id,
-        fireflyUpdatedAt: created.updatedAt,
+        fireflyId: map.fireflyId,
+        fireflyUpdatedAt: updated.updatedAt,
         lastSyncedLocalModified: category.dateTimeModified,
       );
       report.pushedCategories++;
-    } else {
-      if (!fireflyLocalRowChanged(
-        localModified: category.dateTimeModified,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-      )) {
-        continue;
-      }
-      // Read the live record. map.fireflyUpdatedAt holds the time that the
-      // last sync saw. If the two are compared with each other, a change made
-      // on Firefly after that sync is invisible and the push destroys it.
-      FireflyCategory remote;
-      try {
-        remote = await client.getCategory(map.fireflyId);
-      } on FireflyNotFoundException {
-        await _tombstoneMapRow(map);
-        continue;
-      }
-      FireflySyncDirection direction = decideSyncDirection(
-        localModified: category.dateTimeModified,
-        remoteUpdatedAt: remote.updatedAt,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-        lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
-      );
-      if (direction == FireflySyncDirection.push) {
-        FireflyCategory updated =
-            await client.updateCategory(map.fireflyId, remoteShape);
-        await _upsertSyncMap(
-          syncMapPk: map.syncMapPk,
-          type: FireflySyncEntityType.category,
-          localPk: category.categoryPk,
-          fireflyId: map.fireflyId,
-          fireflyUpdatedAt: updated.updatedAt,
-          lastSyncedLocalModified: category.dateTimeModified,
-        );
-        report.pushedCategories++;
-      }
     }
   }
 }
@@ -1449,71 +1520,206 @@ Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
     {required bool includeUnmodifiedRows}) async {
   List<TransactionWallet> changed = await database.getAllNewWallets(lastSynced);
   for (TransactionWallet wallet in changed) {
-    // getAllNew*() also returns each row that has no dateTimeModified. Such a
-    // row is not a recent change: it is a row from a version before that
-    // column, or a row from an old backup. The app sends it only if the user
-    // asks for the local history.
-    if (wallet.dateTimeModified == null && !includeUnmodifiedRows) continue;
-    FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
-        FireflySyncEntityType.wallet, wallet.walletPk,
-        includeTombstones: true);
-    if (tombstone != null && tombstone.isTombstone) continue;
+    try {
+      await _pushOneAccount(
+        client: client,
+        wallet: wallet,
+        report: report,
+        backlog: backlog,
+        includeUnmodifiedRows: includeUnmodifiedRows,
+      );
+    } on FireflyAuthException {
+      rethrow;
+    } on FireflyRateLimitException {
+      rethrow;
+    } catch (e) {
+      report.failedWallets++;
+      report.warnings.add("The account \"${wallet.name}\" was not pushed: $e");
+      backlog.recordNotPushed(wallet.dateTimeModified);
+      print("Firefly push-account error (will retry): " + e.toString());
+    }
+  }
+}
 
-    FireflySyncMapEntry? map =
-        await _syncMapByLocalPk(FireflySyncEntityType.wallet, wallet.walletPk);
-    if (map == null) {
-      FireflyAccount created =
-          await client.createAccount(walletToFireflyAccount(wallet));
+// One account of the push. See _pushOneCategory.
+Future<void> _pushOneAccount({
+  required FireflyApiClient client,
+  required TransactionWallet wallet,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+  required bool includeUnmodifiedRows,
+}) async {
+  // getAllNew*() also returns each row that has no dateTimeModified. Such a
+  // row is not a recent change: it is a row from a version before that
+  // column, or a row from an old backup. The app sends it only if the user
+  // asks for the local history.
+  if (wallet.dateTimeModified == null && !includeUnmodifiedRows) return;
+  FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
+      FireflySyncEntityType.wallet, wallet.walletPk,
+      includeTombstones: true);
+  if (tombstone != null && tombstone.isTombstone) return;
+
+  FireflySyncMapEntry? map =
+      await _syncMapByLocalPk(FireflySyncEntityType.wallet, wallet.walletPk);
+  if (map == null) {
+    FireflyAccount created;
+    try {
+      created = await client.createAccount(walletToFireflyAccount(wallet));
+    } on FireflyValidationException catch (e) {
+      if (!e.isNameInUse) rethrow;
+      await _linkWalletToExistingRemote(client, wallet, report);
+      return;
+    }
+    await _upsertSyncMap(
+      type: FireflySyncEntityType.wallet,
+      localPk: wallet.walletPk,
+      fireflyId: created.id,
+      fireflyUpdatedAt: created.updatedAt,
+      lastSyncedLocalModified: wallet.dateTimeModified,
+    );
+    report.pushedWallets++;
+  } else {
+    if (!fireflyLocalRowChanged(
+      localModified: wallet.dateTimeModified,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+    )) {
+      return;
+    }
+    // Read the live record. It gives the time of the last remote change and
+    // the account role. The local database has no account role, thus an
+    // update that does not send the current role changes a savings account
+    // or a credit card into a plain asset account.
+    FireflyAccount remote;
+    try {
+      remote = await client.getAccount(map.fireflyId);
+    } on FireflyNotFoundException {
+      await _tombstoneMapRow(map);
+      return;
+    }
+    FireflySyncDirection direction = decideSyncDirection(
+      localModified: wallet.dateTimeModified,
+      remoteUpdatedAt: remote.updatedAt,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+      lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
+    );
+    if (direction == FireflySyncDirection.push) {
+      // The local database has no active flag either. An update that sends
+      // active: true switches on an account that the user deactivated on
+      // Firefly.
+      FireflyAccount updated = await client.updateAccount(
+        map.fireflyId,
+        walletToFireflyAccount(wallet,
+            existingAccountRole: remote.accountRole,
+            existingActive: remote.active),
+      );
       await _upsertSyncMap(
+        syncMapPk: map.syncMapPk,
         type: FireflySyncEntityType.wallet,
         localPk: wallet.walletPk,
-        fireflyId: created.id,
-        fireflyUpdatedAt: created.updatedAt,
+        fireflyId: map.fireflyId,
+        fireflyUpdatedAt: updated.updatedAt,
         lastSyncedLocalModified: wallet.dateTimeModified,
       );
       report.pushedWallets++;
-    } else {
-      if (!fireflyLocalRowChanged(
-        localModified: wallet.dateTimeModified,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-      )) {
-        continue;
-      }
-      // Read the live record. It gives the time of the last remote change and
-      // the account role. The local database has no account role, thus an
-      // update that does not send the current role changes a savings account
-      // or a credit card into a plain asset account.
-      FireflyAccount remote;
-      try {
-        remote = await client.getAccount(map.fireflyId);
-      } on FireflyNotFoundException {
-        await _tombstoneMapRow(map);
-        continue;
-      }
-      FireflySyncDirection direction = decideSyncDirection(
-        localModified: wallet.dateTimeModified,
-        remoteUpdatedAt: remote.updatedAt,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-        lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
-      );
-      if (direction == FireflySyncDirection.push) {
-        FireflyAccount updated = await client.updateAccount(
-          map.fireflyId,
-          walletToFireflyAccount(wallet,
-              existingAccountRole: remote.accountRole),
-        );
-        await _upsertSyncMap(
-          syncMapPk: map.syncMapPk,
-          type: FireflySyncEntityType.wallet,
-          localPk: wallet.walletPk,
-          fireflyId: map.fireflyId,
-          fireflyUpdatedAt: updated.updatedAt,
-          lastSyncedLocalModified: wallet.dateTimeModified,
-        );
-        report.pushedWallets++;
-      }
     }
   }
+}
+
+// Firefly refused a new asset account because one with that name is there.
+// _pullAccounts links each Firefly asset account to one local account by
+// name. A second local account with the same name gets no link, and a push
+// of it cannot create a second Firefly account with that name. This function
+// links the local account to the Firefly account when no other local account
+// holds that link; otherwise it tells the user what to rename.
+//
+// The 422 answer means that the whole cycle used to stop here, before the
+// transactions, thus nothing reached Firefly and the balances drifted.
+Future<void> _linkWalletToExistingRemote(FireflyApiClient client,
+    TransactionWallet wallet, FireflySyncReport report) async {
+  String wanted = wallet.name.trim().toLowerCase();
+  // The list holds the inactive accounts too. An account that the user
+  // deactivated on Firefly keeps its name, and it stays inactive: a link
+  // does not write to it, and a later update keeps its active flag.
+  List<FireflyAccount> assets =
+      await client.getAccounts(type: kFireflyAssetAccountType);
+  FireflyAccount? existing;
+  for (FireflyAccount candidate in assets) {
+    if (candidate.name.trim().toLowerCase() == wanted) {
+      existing = candidate;
+      break;
+    }
+  }
+  if (existing == null) {
+    report.failedWallets++;
+    report.warnings.add(
+        "Firefly already uses the name \"${wallet.name}\" for an account that "
+        "is not an asset account. Rename the account in this app; the next "
+        "sync then creates it on Firefly.");
+    return;
+  }
+  List<FireflySyncMapEntry> linked =
+      await _syncMapsByFireflyId(FireflySyncEntityType.wallet, existing.id);
+  if (linked.isNotEmpty) {
+    report.failedWallets++;
+    report.warnings.add(
+        "Two accounts in this app are named \"${wallet.name}\", and Firefly "
+        "allows one asset account with that name. It is linked to the other "
+        "one. Rename this account; the next sync then creates it on Firefly, "
+        "and its transactions go with it.");
+    return;
+  }
+  await _upsertSyncMap(
+    type: FireflySyncEntityType.wallet,
+    localPk: wallet.walletPk,
+    fireflyId: existing.id,
+    fireflyUpdatedAt: existing.updatedAt,
+    lastSyncedLocalModified: wallet.dateTimeModified,
+  );
+  report.warnings.add(
+      "The account \"${wallet.name}\" was linked to the Firefly account with "
+      "that name instead of a new one.");
+}
+
+// The same for a category. See _linkWalletToExistingRemote.
+Future<void> _linkCategoryToExistingRemote(FireflyApiClient client,
+    TransactionCategory category, FireflySyncReport report) async {
+  String wanted = category.name.trim().toLowerCase();
+  List<FireflyCategory> remoteCategories = await client.getCategories();
+  FireflyCategory? existing;
+  for (FireflyCategory candidate in remoteCategories) {
+    if (candidate.name.trim().toLowerCase() == wanted) {
+      existing = candidate;
+      break;
+    }
+  }
+  if (existing == null) {
+    report.failedCategories++;
+    report.warnings.add(
+        "Firefly refused the category \"${category.name}\" because the name "
+        "is in use, but no category with that name came back. Rename the "
+        "category in this app.");
+    return;
+  }
+  List<FireflySyncMapEntry> linked =
+      await _syncMapsByFireflyId(FireflySyncEntityType.category, existing.id);
+  if (linked.isNotEmpty) {
+    report.failedCategories++;
+    report.warnings.add(
+        "Two categories in this app are named \"${category.name}\", and "
+        "Firefly allows one category with that name. It is linked to the other "
+        "one. Rename this category; the next sync then creates it on Firefly.");
+    return;
+  }
+  await _upsertSyncMap(
+    type: FireflySyncEntityType.category,
+    localPk: category.categoryPk,
+    fireflyId: existing.id,
+    fireflyUpdatedAt: existing.updatedAt,
+    lastSyncedLocalModified: category.dateTimeModified,
+  );
+  report.warnings.add(
+      "The category \"${category.name}\" was linked to the Firefly category "
+      "with that name instead of a new one.");
 }
 
 // Builds the split list for a PUT that changes one split of a group.
@@ -1641,194 +1847,232 @@ Future<void> _pushTransactions(
 
   for (Transaction transaction in changed) {
     if (handledThisPass.contains(transaction.transactionPk)) continue;
-    // getAllNew*() also returns each row that has no dateTimeModified. Such a
-    // row is not a recent change: it is a row from a version before that
-    // column, or a row from an old backup. The app sends it only if the user
-    // asks for the local history.
-    if (transaction.dateTimeModified == null && !includeUnmodifiedRows) {
-      continue;
-    }
-
-    // Balance anchors exist only because the local database holds a window
-    // rather than the whole ledger. Firefly already knows the balance they
-    // stand in for, so pushing one would double-count it on the remote side.
-    if (isFireflyBalanceAnchorPk(transaction.transactionPk)) continue;
-
-    FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
-        FireflySyncEntityType.transaction, transaction.transactionPk,
-        includeTombstones: true);
-    if (tombstone != null && tombstone.isTombstone) continue;
-
-    if (transaction.pairedTransactionFk != null) {
-      await _pushTransfer(
+    try {
+      await _pushOneTransaction(
         client: client,
         transaction: transaction,
         handledThisPass: handledThisPass,
+        counterparties: counterparties,
+        report: report,
+        backlog: backlog,
+        includeUnmodifiedRows: includeUnmodifiedRows,
+      );
+    } on FireflyAuthException {
+      rethrow;
+    } on FireflyRateLimitException {
+      rethrow;
+    } catch (e) {
+      report.failedTransactions++;
+      report.warnings
+          .add("The transaction \"${transaction.name}\" was not pushed: $e");
+      backlog.recordNotPushed(transaction.dateTimeModified);
+      // The other side of a transfer is the same remote record. A second
+      // attempt in this pass fails the same way and gives one more warning.
+      handledThisPass.add(transaction.transactionPk);
+      if (transaction.pairedTransactionFk != null) {
+        handledThisPass.add(transaction.pairedTransactionFk!);
+      }
+      print("Firefly push-transaction error (will retry): " + e.toString());
+    }
+  }
+}
+
+// One transaction of the push. See _pushOneCategory.
+Future<void> _pushOneTransaction({
+  required FireflyApiClient client,
+  required Transaction transaction,
+  required Set<String> handledThisPass,
+  required _FireflyCounterpartyIndex counterparties,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+  required bool includeUnmodifiedRows,
+}) async {
+  // getAllNew*() also returns each row that has no dateTimeModified. Such a
+  // row is not a recent change: it is a row from a version before that
+  // column, or a row from an old backup. The app sends it only if the user
+  // asks for the local history.
+  if (transaction.dateTimeModified == null && !includeUnmodifiedRows) {
+    return;
+  }
+
+  // Balance anchors exist only because the local database holds a window
+  // rather than the whole ledger. Firefly already knows the balance they
+  // stand in for, so pushing one would double-count it on the remote side.
+  if (isFireflyBalanceAnchorPk(transaction.transactionPk)) return;
+
+  FireflySyncMapEntry? tombstone = await _syncMapByLocalPk(
+      FireflySyncEntityType.transaction, transaction.transactionPk,
+      includeTombstones: true);
+  if (tombstone != null && tombstone.isTombstone) return;
+
+  if (transaction.pairedTransactionFk != null) {
+    await _pushTransfer(
+      client: client,
+      transaction: transaction,
+      handledThisPass: handledThisPass,
+      report: report,
+      backlog: backlog,
+    );
+    return;
+  }
+
+  // Firefly has no state for a transaction that is not yet paid. Each
+  // transaction that Firefly holds changes the balance of its account. A
+  // local row that is not paid is an expected payment, thus the app does not
+  // send it. If the user marks the row paid, the next cycle creates it.
+  if (transaction.paid == false) {
+    FireflySyncMapEntry? paidMap = await _syncMapByLocalPk(
+        FireflySyncEntityType.transaction, transaction.transactionPk);
+    if (paidMap != null) {
+      await _removeRemoteRowThatIsNotPaid(
+        client: client,
+        maps: [paidMap],
+        report: report,
+        backlog: backlog,
+        localModified: transaction.dateTimeModified,
+      );
+    }
+    return;
+  }
+
+  FireflySyncMapEntry? walletMap = await _syncMapByLocalPk(
+      FireflySyncEntityType.wallet, transaction.walletFk);
+  if (walletMap == null) {
+    report.skippedUnmappedWallet++;
+    backlog.recordNotPushed(transaction.dateTimeModified);
+    return;
+  }
+
+  FireflySyncMapEntry? categoryMap = await _syncMapByLocalPk(
+      FireflySyncEntityType.category, transaction.categoryFk);
+  TransactionCategory? category;
+  try {
+    category = await database.getCategoryInstance(transaction.categoryFk);
+  } catch (_) {}
+  // The row goes back with no category. The app must not make a category on
+  // the server for it.
+  if (transaction.categoryFk == kFireflyUncategorizedCategoryPk) {
+    category = null;
+  }
+
+  FireflySyncMapEntry? map = await _syncMapByLocalPk(
+      FireflySyncEntityType.transaction, transaction.transactionPk);
+
+  FireflyAccount? counterparty = resolvePushCounterparty(
+    isIncome: transaction.amount > 0,
+    transactionName: transaction.name,
+    categoryName: category?.name,
+    storedCounterpartyId: map?.counterpartyFireflyId,
+    counterpartiesById: counterparties.byId,
+    expenseByName: counterparties.expenseByName,
+    revenueByName: counterparties.revenueByName,
+  );
+
+  if (map != null) {
+    List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
+        FireflySyncEntityType.transaction, map.fireflyId);
+    bool multiSplit =
+        groupMaps.any((m) => m.fireflySplitIndex != map.fireflySplitIndex);
+    if (multiSplit) {
+      await _pushExistingMultiSplitGroup(
+        client: client,
+        groupMaps: groupMaps,
+        counterparties: counterparties,
         report: report,
         backlog: backlog,
       );
-      continue;
-    }
-
-    // Firefly has no state for a transaction that is not yet paid. Each
-    // transaction that Firefly holds changes the balance of its account. A
-    // local row that is not paid is an expected payment, thus the app does not
-    // send it. If the user marks the row paid, the next cycle creates it.
-    if (transaction.paid == false) {
-      FireflySyncMapEntry? paidMap = await _syncMapByLocalPk(
-          FireflySyncEntityType.transaction, transaction.transactionPk);
-      if (paidMap != null) {
-        await _removeRemoteRowThatIsNotPaid(
-          client: client,
-          maps: [paidMap],
-          report: report,
-          backlog: backlog,
-          localModified: transaction.dateTimeModified,
-        );
+      for (FireflySyncMapEntry groupMap in groupMaps) {
+        handledThisPass.add(groupMap.localPk);
       }
-      continue;
+      return;
     }
+  }
 
-    FireflySyncMapEntry? walletMap = await _syncMapByLocalPk(
-        FireflySyncEntityType.wallet, transaction.walletFk);
-    if (walletMap == null) {
-      report.skippedUnmappedWallet++;
-      backlog.recordNotPushed(transaction.dateTimeModified);
-      continue;
+  FireflyTransactionSplit split = transactionToFireflySplit(
+    transaction,
+    walletFireflyId: walletMap.fireflyId,
+    categoryFireflyId: categoryMap?.fireflyId,
+    categoryName: category?.name,
+    counterpartyFireflyId: counterparty?.id,
+    counterpartyName: counterparty?.name ?? transaction.name,
+    transactionJournalId: map?.fireflyJournalId,
+  );
+  FireflyTransactionGroup group =
+      FireflyTransactionGroup(id: 0, splits: [split]);
+
+  if (map == null) {
+    FireflyTransactionGroup created = await client.createTransaction(group);
+    int? createdCounterpartyId = counterparty?.id;
+    if (createdCounterpartyId == null && created.splits.isNotEmpty) {
+      createdCounterpartyId = transaction.amount > 0
+          ? created.splits.first.sourceId
+          : created.splits.first.destinationId;
     }
-
-    FireflySyncMapEntry? categoryMap = await _syncMapByLocalPk(
-        FireflySyncEntityType.category, transaction.categoryFk);
-    TransactionCategory? category;
+    await _upsertSyncMap(
+      type: FireflySyncEntityType.transaction,
+      localPk: transaction.transactionPk,
+      fireflyId: created.id,
+      fireflyUpdatedAt: created.updatedAt,
+      lastSyncedLocalModified: transaction.dateTimeModified,
+      counterpartyFireflyId: createdCounterpartyId,
+      fireflyJournalId: created.splits.isEmpty
+          ? null
+          : created.splits.first.transactionJournalId,
+    );
+    report.pushedTransactions++;
+  } else {
+    if (!fireflyLocalRowChanged(
+      localModified: transaction.dateTimeModified,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+    )) {
+      return;
+    }
+    // Read the live group. It gives the time of the last remote change, and
+    // it shows each split that Firefly holds. The multiSplit test above uses
+    // the sync map only, thus it does not know a split on an account that is
+    // not linked, or a split outside the window of the sync.
+    FireflyTransactionGroup remoteGroup;
     try {
-      category = await database.getCategoryInstance(transaction.categoryFk);
-    } catch (_) {}
-    // The row goes back with no category. The app must not make a category on
-    // the server for it.
-    if (transaction.categoryFk == kFireflyUncategorizedCategoryPk) {
-      category = null;
+      remoteGroup = await client.getTransaction(map.fireflyId);
+    } on FireflyNotFoundException {
+      await _tombstoneMapRow(map);
+      return;
     }
-
-    FireflySyncMapEntry? map = await _syncMapByLocalPk(
-        FireflySyncEntityType.transaction, transaction.transactionPk);
-
-    FireflyAccount? counterparty = resolvePushCounterparty(
-      isIncome: transaction.amount > 0,
-      transactionName: transaction.name,
-      categoryName: category?.name,
-      storedCounterpartyId: map?.counterpartyFireflyId,
-      counterpartiesById: counterparties.byId,
-      expenseByName: counterparties.expenseByName,
-      revenueByName: counterparties.revenueByName,
+    FireflySyncDirection direction = decideSyncDirection(
+      localModified: transaction.dateTimeModified,
+      remoteUpdatedAt: remoteGroup.updatedAt,
+      lastSyncedLocalModified: map.lastSyncedLocalModified,
+      lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
     );
-
-    if (map != null) {
-      List<FireflySyncMapEntry> groupMaps = await _syncMapsByFireflyId(
-          FireflySyncEntityType.transaction, map.fireflyId);
-      bool multiSplit =
-          groupMaps.any((m) => m.fireflySplitIndex != map.fireflySplitIndex);
-      if (multiSplit) {
-        await _pushExistingMultiSplitGroup(
-          client: client,
-          groupMaps: groupMaps,
-          counterparties: counterparties,
-          report: report,
-          backlog: backlog,
-        );
-        for (FireflySyncMapEntry groupMap in groupMaps) {
-          handledThisPass.add(groupMap.localPk);
-        }
-        continue;
+    if (direction == FireflySyncDirection.push) {
+      List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
+        remoteGroup: remoteGroup,
+        changedSplit: split,
+        changedJournalId: map.fireflyJournalId,
+      );
+      if (splits == null) {
+        report.warnings
+            .add("Did not push a change to a split transaction: it has "
+                "${remoteGroup.splits.length} splits on Firefly, and the app "
+                "does not know which one belongs to this record.");
+        backlog.recordNotPushed(transaction.dateTimeModified);
+        return;
       }
-    }
-
-    FireflyTransactionSplit split = transactionToFireflySplit(
-      transaction,
-      walletFireflyId: walletMap.fireflyId,
-      categoryFireflyId: categoryMap?.fireflyId,
-      categoryName: category?.name,
-      counterpartyFireflyId: counterparty?.id,
-      counterpartyName: counterparty?.name ?? transaction.name,
-      transactionJournalId: map?.fireflyJournalId,
-    );
-    FireflyTransactionGroup group =
-        FireflyTransactionGroup(id: 0, splits: [split]);
-
-    if (map == null) {
-      FireflyTransactionGroup created = await client.createTransaction(group);
-      int? createdCounterpartyId = counterparty?.id;
-      if (createdCounterpartyId == null && created.splits.isNotEmpty) {
-        createdCounterpartyId = transaction.amount > 0
-            ? created.splits.first.sourceId
-            : created.splits.first.destinationId;
-      }
+      FireflyTransactionGroup updated = await client.updateTransaction(
+          map.fireflyId,
+          FireflyTransactionGroup(id: map.fireflyId, splits: splits));
       await _upsertSyncMap(
+        syncMapPk: map.syncMapPk,
         type: FireflySyncEntityType.transaction,
         localPk: transaction.transactionPk,
-        fireflyId: created.id,
-        fireflyUpdatedAt: created.updatedAt,
+        fireflyId: map.fireflyId,
+        fireflyUpdatedAt: updated.updatedAt,
         lastSyncedLocalModified: transaction.dateTimeModified,
-        counterpartyFireflyId: createdCounterpartyId,
-        fireflyJournalId: created.splits.isEmpty
-            ? null
-            : created.splits.first.transactionJournalId,
+        counterpartyFireflyId: counterparty?.id ?? map.counterpartyFireflyId,
+        fireflySplitIndex: map.fireflySplitIndex,
+        fireflyJournalId: _journalIdAfterUpdate(updated, map.fireflyJournalId),
       );
       report.pushedTransactions++;
-    } else {
-      if (!fireflyLocalRowChanged(
-        localModified: transaction.dateTimeModified,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-      )) {
-        continue;
-      }
-      // Read the live group. It gives the time of the last remote change, and
-      // it shows each split that Firefly holds. The multiSplit test above uses
-      // the sync map only, thus it does not know a split on an account that is
-      // not linked, or a split outside the window of the sync.
-      FireflyTransactionGroup remoteGroup;
-      try {
-        remoteGroup = await client.getTransaction(map.fireflyId);
-      } on FireflyNotFoundException {
-        await _tombstoneMapRow(map);
-        continue;
-      }
-      FireflySyncDirection direction = decideSyncDirection(
-        localModified: transaction.dateTimeModified,
-        remoteUpdatedAt: remoteGroup.updatedAt,
-        lastSyncedLocalModified: map.lastSyncedLocalModified,
-        lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
-      );
-      if (direction == FireflySyncDirection.push) {
-        List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
-          remoteGroup: remoteGroup,
-          changedSplit: split,
-          changedJournalId: map.fireflyJournalId,
-        );
-        if (splits == null) {
-          report.warnings
-              .add("Did not push a change to a split transaction: it has "
-                  "${remoteGroup.splits.length} splits on Firefly, and the app "
-                  "does not know which one belongs to this record.");
-          backlog.recordNotPushed(transaction.dateTimeModified);
-          continue;
-        }
-        FireflyTransactionGroup updated = await client.updateTransaction(
-            map.fireflyId,
-            FireflyTransactionGroup(id: map.fireflyId, splits: splits));
-        await _upsertSyncMap(
-          syncMapPk: map.syncMapPk,
-          type: FireflySyncEntityType.transaction,
-          localPk: transaction.transactionPk,
-          fireflyId: map.fireflyId,
-          fireflyUpdatedAt: updated.updatedAt,
-          lastSyncedLocalModified: transaction.dateTimeModified,
-          counterpartyFireflyId: counterparty?.id ?? map.counterpartyFireflyId,
-          fireflySplitIndex: map.fireflySplitIndex,
-          fireflyJournalId:
-              _journalIdAfterUpdate(updated, map.fireflyJournalId),
-        );
-        report.pushedTransactions++;
-      }
     }
   }
 }
@@ -2481,10 +2725,14 @@ Future<void> _refreshBalanceAnchorForWallet({
 
   // Firefly reports the balance of today and does not count a transaction
   // with a date in the future. The local sum must use the same rule, or each
-  // such transaction makes the anchor wrong by its amount.
+  // such transaction makes the anchor wrong by its amount. Firefly counts each
+  // transaction that is dated today, also one with a time later than now,
+  // thus the limit is the end of today and not the present moment.
+  DateTime now = DateTime.now();
+  DateTime endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
   double localSum = await database.getSumOfWalletExcludingTransaction(
       walletPk, anchorPk,
-      notLaterThan: DateTime.now());
+      notLaterThan: endOfToday);
   double anchorAmount = remoteBalance - localSum;
 
   // Nothing to hold, and no row on disk. Do not make a row.
@@ -2550,6 +2798,9 @@ Future<T?> _withFireflyClient<T>(
   } finally {
     fireflyOnDemandBusyNotifier.value = false;
     client.close();
+    // An edit during this fetch is not in a queue anywhere else. Without this
+    // the flag stays set until the next cycle, which then only clears it.
+    _reschedulePushIfEditedDuringWork();
   }
 }
 
@@ -2702,4 +2953,128 @@ Future<void> fireflyEnsureWalletHistoryCached(String walletPk) async {
 // each local row, and there is no safe test for the rows that Firefly has.
 Future<bool> fireflyUploadExistingLocalHistory() async {
   return await fireflySyncNow(pushExistingLocalHistory: true);
+}
+
+// Pushes each local change since the link that Firefly does not hold yet.
+// See pushUnsynced in fireflySyncNow.
+Future<bool> fireflyPushUnsyncedChanges() async {
+  return await fireflySyncNow(pushUnsynced: true);
+}
+
+// What "Push unsynced changes" would send. The settings page shows it next
+// to the button. The count uses the local database only and applies the
+// cheap rules of the push loops; a rule that needs the server (a conflict, a
+// split that the app does not know) is not in it, thus the report after the
+// push holds the exact numbers.
+class FireflyUnsyncedCounts {
+  final int wallets;
+  final int categories;
+  final int transactions;
+  final int deletes;
+
+  const FireflyUnsyncedCounts({
+    this.wallets = 0,
+    this.categories = 0,
+    this.transactions = 0,
+    this.deletes = 0,
+  });
+
+  static const FireflyUnsyncedCounts zero = FireflyUnsyncedCounts();
+
+  int get total => wallets + categories + transactions + deletes;
+  bool get isEmpty => total == 0;
+
+  String describe() {
+    List<String> parts = [];
+    if (transactions > 0) parts.add("$transactions transactions");
+    if (wallets > 0) parts.add("$wallets accounts");
+    if (categories > 0) parts.add("$categories categories");
+    if (deletes > 0) parts.add("$deletes deletions");
+    return parts.join(", ");
+  }
+}
+
+Future<FireflyUnsyncedCounts> fireflyCountUnsyncedChanges() async {
+  if (!fireflyEnabled) return FireflyUnsyncedCounts.zero;
+  DateTime since = fireflyUnsyncedSince();
+
+  Future<bool> isUnsynced(FireflySyncEntityType type, String localPk,
+      DateTime? localModified) async {
+    FireflySyncMapEntry? map =
+        await _syncMapByLocalPk(type, localPk, includeTombstones: true);
+    if (map != null && map.isTombstone) return false;
+    return map == null ||
+        fireflyLocalRowChanged(
+          localModified: localModified,
+          lastSyncedLocalModified: map.lastSyncedLocalModified,
+        );
+  }
+
+  int wallets = 0;
+  for (TransactionWallet wallet in await database.getAllNewWallets(since)) {
+    if (wallet.dateTimeModified == null) continue;
+    if (await isUnsynced(FireflySyncEntityType.wallet, wallet.walletPk,
+        wallet.dateTimeModified)) {
+      wallets++;
+    }
+  }
+
+  int categories = 0;
+  for (TransactionCategory category
+      in await database.getAllNewCategories(since)) {
+    if (category.dateTimeModified == null) continue;
+    if (category.categoryPk == kFireflyUncategorizedCategoryPk) continue;
+    if (category.categoryPk == kBalanceCorrectionCategoryPk) continue;
+    if (category.mainCategoryPk != null) continue;
+    if (await isUnsynced(FireflySyncEntityType.category, category.categoryPk,
+        category.dateTimeModified)) {
+      categories++;
+    }
+  }
+
+  int transactions = 0;
+  for (Transaction transaction in await database.getAllNewTransactions(since)) {
+    if (transaction.dateTimeModified == null) continue;
+    if (isFireflyBalanceAnchorPk(transaction.transactionPk)) continue;
+    FireflySyncMapEntry? map = await _syncMapByLocalPk(
+        FireflySyncEntityType.transaction, transaction.transactionPk,
+        includeTombstones: true);
+    if (map != null && map.isTombstone) continue;
+    // A row that is not paid has no Firefly form. It counts only when
+    // Firefly still holds it: the push then removes the remote record.
+    if (transaction.paid == false) {
+      if (map != null) transactions++;
+      continue;
+    }
+    if (map == null ||
+        fireflyLocalRowChanged(
+          localModified: transaction.dateTimeModified,
+          lastSyncedLocalModified: map.lastSyncedLocalModified,
+        )) {
+      transactions++;
+    }
+  }
+
+  int deletes = 0;
+  for (DeleteLog log in await database.getAllNewDeleteLogs(since)) {
+    if (log.entryPk == "0") continue;
+    FireflySyncEntityType type;
+    if (log.type == DeleteLogType.Transaction) {
+      type = FireflySyncEntityType.transaction;
+    } else if (log.type == DeleteLogType.TransactionCategory) {
+      type = FireflySyncEntityType.category;
+    } else if (log.type == DeleteLogType.TransactionWallet) {
+      type = FireflySyncEntityType.wallet;
+    } else {
+      continue;
+    }
+    if (await _syncMapByLocalPk(type, log.entryPk) != null) deletes++;
+  }
+
+  return FireflyUnsyncedCounts(
+    wallets: wallets,
+    categories: categories,
+    transactions: transactions,
+    deletes: deletes,
+  );
 }

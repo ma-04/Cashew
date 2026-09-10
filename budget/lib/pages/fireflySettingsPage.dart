@@ -40,6 +40,32 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   bool syncingNow = false;
   bool runningHistoryAction = false;
   late int syncWindowDays = fireflySyncWindowDays;
+  // What "Push unsynced changes" would send. null until the first count.
+  FireflyUnsyncedCounts? unsyncedCounts;
+
+  @override
+  void initState() {
+    super.initState();
+    fireflySyncReportNotifier.addListener(_refreshUnsyncedCounts);
+    _refreshUnsyncedCounts();
+  }
+
+  @override
+  void dispose() {
+    fireflySyncReportNotifier.removeListener(_refreshUnsyncedCounts);
+    hostController.dispose();
+    patController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refreshUnsyncedCounts() async {
+    if (!fireflyEnabled) {
+      if (mounted) setState(() => unsyncedCounts = null);
+      return;
+    }
+    FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
+    if (mounted) setState(() => unsyncedCounts = counts);
+  }
 
   // The window lengths in days. A fixed list, not a text field, thus the
   // value stays in the limits that fireflySettings sets.
@@ -96,6 +122,9 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   Future<void> _forgetPreviousHost() async {
     await clearFireflyPat();
     await fireflyForgetSyncState();
+    // The link moment belongs to the previous host. The first sync with the
+    // new host sets a new one.
+    await clearFireflyLinkedAt();
   }
 
   // A token that the user saved for a different host does not count: the
@@ -236,6 +265,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         syncingNow = false;
       });
     }
+    await _refreshUnsyncedCounts();
     String? description = success
         ? fireflySyncReportNotifier.value?.summary()
         : fireflySyncErrorNotifier.value;
@@ -268,6 +298,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         runningHistoryAction = false;
       });
     }
+    await _refreshUnsyncedCounts();
     openSnackbar(
       SnackbarMessage(
         title: success
@@ -304,6 +335,47 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     );
     if (!confirmed) return;
     await _runHistoryAction(fireflySyncAllHistory);
+  }
+
+  // Sends each local change since the link that Firefly does not hold yet.
+  // The routine cycles do the same for each change since the last cycle; this
+  // is for the case that those cycles failed for a while.
+  Future<void> pushUnsyncedChanges() async {
+    FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
+    if (!context.mounted) return;
+    setState(() => unsyncedCounts = counts);
+    if (counts.isEmpty) {
+      openSnackbar(
+        SnackbarMessage(
+          title: "firefly-unsynced-none".tr(),
+          icon: appStateSettings["outlinedIcons"]
+              ? Icons.check_circle_outlined
+              : Icons.check_circle_rounded,
+        ),
+      );
+      return;
+    }
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-push-unsynced".tr(),
+      description:
+          "firefly-push-unsynced-description".tr() + "\n\n" + counts.describe(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.cloud_upload_outlined
+          : Icons.cloud_upload_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    if (!confirmed) return;
+    await _runHistoryAction(fireflyPushUnsyncedChanges);
   }
 
   Future<void> uploadExistingLocalHistory() async {
@@ -482,6 +554,28 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                     label: syncingNow ? "syncing".tr() : "sync-now".tr(),
                     disabled: syncingNow,
                     onTap: syncNow,
+                  ),
+                  SizedBox(height: 8),
+                  TextFont(
+                    textAlign: TextAlign.center,
+                    fontSize: 13,
+                    maxLines: 3,
+                    textColor: getColor(context, "textLight"),
+                    text: unsyncedCounts == null
+                        ? ""
+                        : unsyncedCounts!.isEmpty
+                            ? "firefly-unsynced-none".tr()
+                            : "firefly-unsynced-count".tr(namedArgs: {
+                                "count": unsyncedCounts!.total.toString()
+                              }),
+                  ),
+                  SizedBox(height: 8),
+                  Button(
+                    label: "firefly-push-unsynced".tr(),
+                    disabled: runningHistoryAction ||
+                        syncingNow ||
+                        (unsyncedCounts?.isEmpty ?? true),
+                    onTap: pushUnsyncedChanges,
                   ),
                   SizedBox(height: 12),
                   SettingsContainerDropdown(

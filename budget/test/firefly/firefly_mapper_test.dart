@@ -323,6 +323,19 @@ void main() {
     });
   });
 
+  group('account active flag', () {
+    test('a new account is active', () {
+      TransactionWallet wallet = _wallet(name: "Cash");
+      expect(walletToFireflyAccount(wallet).active, isTrue);
+    });
+
+    test('an update keeps a deactivated Firefly account deactivated', () {
+      TransactionWallet wallet = _wallet(name: "Cash");
+      expect(
+          walletToFireflyAccount(wallet, existingActive: false).active, isFalse);
+    });
+  });
+
   group('account role', () {
     test('a new account gets the default role', () {
       expect(walletToFireflyAccount(_wallet()).accountRole, "defaultAsset");

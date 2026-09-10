@@ -96,3 +96,31 @@ Future<void> setFireflyLastSyncedAt(DateTime dateTime) {
 Future<void> clearFireflyLastSyncedAt() {
   return updateSettings("fireflyLastSyncedAt", "", updateGlobalState: false);
 }
+
+// The moment of the link to the Firefly host. The routine push sends each
+// row that changed after the push watermark. "Push unsynced changes" sends
+// each row that changed after this moment and that Firefly does not hold
+// yet, thus it does not depend on the watermark. A row from before the link
+// is local history, which the user uploads on purpose only (see
+// pushExistingLocalHistory in fireflySyncNow).
+DateTime? get fireflyLinkedAt {
+  String? iso = appStateSettings["fireflyLinkedAt"]?.toString();
+  if (iso == null || iso.isEmpty) return null;
+  return DateTime.tryParse(iso);
+}
+
+Future<void> setFireflyLinkedAt(DateTime dateTime) {
+  return updateSettings("fireflyLinkedAt", dateTime.toIso8601String(),
+      updateGlobalState: false);
+}
+
+Future<void> clearFireflyLinkedAt() {
+  return updateSettings("fireflyLinkedAt", "", updateGlobalState: false);
+}
+
+// The lower limit of "Push unsynced changes". An installation from before
+// the fireflyLinkedAt setting has a watermark only; that watermark never
+// moves past a row that a cycle did not push, thus it is a safe limit.
+DateTime fireflyUnsyncedSince() {
+  return fireflyLinkedAt ?? fireflyLastSyncedAt ?? DateTime(2000);
+}

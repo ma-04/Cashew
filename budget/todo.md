@@ -2,6 +2,53 @@
 
 ## Done
 
+### Keep the cycle alive when Firefly refuses one row
+
+The report was: a new local transaction never reached Firefly, nothing pushed
+by itself, and the Cashew balance was below the Firefly balance. The manual
+sync showed `HTTP 422: This account name is already in use.` from
+`createAccount`. Nothing in `_pushAccounts` caught it, thus the one wallet
+stopped the cycle in front of `_pushTransactions`, `_pushDeletes` and
+`_refreshBalanceAnchors`, and the watermark did not move: each later cycle,
+automatic or manual, failed on the same wallet. The wallet was a second local
+account with the name of an account that Firefly holds (Firefly allows one
+asset account per name, inactive ones included), and `_pullAccounts` links
+one local wallet per remote account only.
+
+- `_pushOneCategory`, `_pushOneAccount` and `_pushOneTransaction` hold the
+  body of each push loop. A failure of one row is a warning, a count
+  (`failedCategories`, `failedWallets`, `failedTransactions` on the report)
+  and a backlog entry, and the loop goes on. An auth error and a rate limit
+  still stop the cycle: no row can pass them.
+- A create that Firefly refuses for the name (`FireflyValidationException`,
+  HTTP 422) links the local row to the remote record with that name
+  (`_linkWalletToExistingRemote`, `_linkCategoryToExistingRemote`), and says
+  so in a warning. A name that a second local wallet already holds, or that
+  a non-asset account holds, gives a warning that asks for a rename; the row
+  is not in the backlog, because a rename gives it a new modification time.
+- A user edit during an on-demand fetch is pushed afterwards.
+  `_reschedulePushIfEditedDuringWork` runs at the end of `fireflySyncNow` and
+  of `_withFireflyClient`; before, only the first one read the flag, and
+  `fireflySyncNow` cleared it at its start.
+- The balance anchor sums the local rows up to the end of today, not up to
+  the present moment. Firefly counts each transaction dated today.
+- An update of an account keeps the `active` flag that Firefly holds
+  (`existingActive` on `walletToFireflyAccount`). Before, each push sent
+  `active: true`, and re-enabled an account that the user had deactivated on
+  Firefly.
+- "Push unsynced changes" on the settings page sends each local change since
+  the link that Firefly does not hold, and skips the pull. It reads from
+  `fireflyLinkedAt` (set on the first cycle; an older installation gets its
+  watermark) and not from the watermark, thus it works after the cycles
+  failed for a while. `fireflyCountUnsyncedChanges` gives the count that the
+  page shows next to the button; the count uses the local database only.
+- `test/firefly/firefly_test_env.dart` holds a small Firefly server on the
+  loopback interface and an in-memory database, and
+  `firefly_push_resilience_test.dart` and `firefly_push_test.dart` run the
+  engine against it: the collision, the per-row failure with the watermark,
+  the deactivated account, the anchor, the unsynced push and the auto-push
+  after a fetch.
+
 ### Match Firefly splits by `transaction_journal_id`, not by position
 
 Fixed in `367105fe`. A Firefly transaction group shares one id across all its
@@ -158,8 +205,9 @@ the Google Drive exclusion changes anything.
 ### Take the future rows out of the balance anchor
 
 Item 16. `getSumOfWalletExcludingTransaction` takes `notLaterThan`, and the
-anchor uses the current time. Firefly reports a balance that holds no journal
-with a later date, thus the local sum must hold none either.
+anchor uses the end of today. Firefly reports a balance that holds no journal
+with a later date, thus the local sum must hold none either; a journal dated
+later today is in the Firefly balance, thus it is in the local sum too.
 
 ### Smaller items
 
@@ -265,15 +313,15 @@ from <= 49`, and it has its own try/catch.
 
 ## Outstanding
 
-### 1. No engine-level tests
+### 1. Engine-level tests: started, not complete
 
-`test/firefly/firefly_mapper_test.dart` covers the pure helpers only, thus the
-pull path and the push path have no test. The findings 1-4 were unreachable by
-that suite, and the fixes for them are equally unreachable. An engine test needs
-a fake `FireflyApiClient` and an in-memory database; the migration test shows
-how to make the second one.
+`test/firefly/firefly_test_env.dart` gives an engine test a fake Firefly on
+the loopback interface and an in-memory database, and the two push test files
+use it. The pull path, the transfer path, the multi-split group and the delete
+paths have no engine test yet; the findings 1-4 of the review are still
+covered by the mapper suite only.
 
-The mapper suite now covers `fireflyPositionMatchIsSafe`,
+The mapper suite covers `fireflyPositionMatchIsSafe`,
 `matchSplitToSyncMaps` with no position match, the journal id in
 `toRequestJson`, `FireflyTransactionSplit.unchangedSplit` and
 `fireflyLocalRowChanged`.
@@ -325,15 +373,17 @@ request. Run the manual plan of `FIREFLY_SYNC_FUTURE_SCOPE.md` against a pinned
 
 ### 6. The tests now run, on the toolchain that CI pins
 
-The remote build box (`fly@139.180.190.215`) does not answer on port 22, and
-the local Flutter is 3.47.2, which cannot resolve `intl ^0.18.1` against
-`easy_localization`. Flutter 3.19.6, the version that CI pins, is now cloned
-next to the branch, and a copy of the branch under it gives:
+The local Flutter is 3.47.2, which cannot resolve `intl ^0.18.1` against
+`easy_localization`. Flutter 3.19.6, the version that CI pins, is a git
+checkout on the test box `fly@167.235.51.86` (`~/flutter3196`, on PATH), and a
+copy of the branch in `~/firefly-review` there gives:
 
-- `flutter test`: 71 tests, all pass. This holds the migration tests from v46,
-  v47, v48 and v49, and the mapper suite.
+- `flutter test`: 81 tests, all pass. This holds the migration tests
+  from v46, v47, v48 and v49, the mapper suite and the engine tests.
 - `flutter analyze --no-fatal-infos --no-fatal-warnings`: 0 errors and 0
   warnings outside the vendored `packages/sliding_sheet` copy.
+- The box has `libsqlite3.so.0` and no sudo, thus the test environment opens
+  that name when `libsqlite3.so` is not there.
 
 A live round trip against a Firefly server is still not done; that is item 5.
 

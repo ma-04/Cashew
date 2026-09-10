@@ -34,6 +34,17 @@ class FireflyNetworkException implements Exception {
   String toString() => "FireflyNetworkException: $message";
 }
 
+// A 422 answer: Firefly refused the record. The body names the field, for
+// example a name that another record of the same type holds.
+class FireflyValidationException extends FireflyNetworkException {
+  FireflyValidationException(String message) : super(message);
+
+  bool get isNameInUse => message.contains("already in use");
+
+  @override
+  String toString() => "FireflyValidationException: $message";
+}
+
 class FireflyNotFoundException implements Exception {
   final String message;
   FireflyNotFoundException([this.message = "Resource not found on Firefly"]);
@@ -94,6 +105,10 @@ class FireflyApiClient {
     }
     if (response.statusCode == 429) {
       throw FireflyRateLimitException();
+    }
+    if (response.statusCode == 422) {
+      throw FireflyValidationException(
+          "HTTP ${response.statusCode}: ${response.body}");
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw FireflyNetworkException(

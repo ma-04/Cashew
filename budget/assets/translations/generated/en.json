@@ -1215,6 +1215,10 @@
   "firefly-reset-links": "Reset Firefly links",
   "firefly-reset-links-warning": "This removes the link between every local record and its Firefly record. The records stay. The next sync links them again, and a record that Firefly holds but this app can no longer identify is added a second time. Use this only to repair a split transaction that the sync reports as unclear.",
   "firefly-reset-links-done": "Firefly links reset",
+  "firefly-push-unsynced": "Push unsynced changes",
+  "firefly-push-unsynced-description": "This sends every change made since you linked Firefly that Firefly does not have yet. Use it after syncs failed for a while. Nothing is downloaded, and nothing that Firefly already has is sent again.",
+  "firefly-unsynced-count": "{count} unsynced changes",
+  "firefly-unsynced-none": "Everything is synced to Firefly",
   "firefly-uncategorized": "Uncategorized",
   "firefly-host-changed": "Host changed",
   "firefly-host-changed-description": "Cashew removed the saved token and the links to the previous server. Enter a Personal Access Token for the new host."
