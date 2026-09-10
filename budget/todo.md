@@ -2,6 +2,57 @@
 
 ## Done
 
+### Never rewrite a Firefly row that belongs to another account
+
+An adversarial review of the entry below found that it closed the way into the
+incident, not the mechanism of it. `_pushOneTransaction` builds the split from
+the link that the wallet holds now (`walletFireflyId: walletMap.fireflyId`)
+and sends it to the group that the map row of the transaction names. A map row
+that names a group on another Firefly account therefore still moves that group
+onto the account of the wallet. The manual link picker makes such rows by
+design: it points the wallet at another account and leaves the rows of the old
+account mapped.
+
+- New guard `_pushBlockedByMovedRemoteRow`. Before a push writes to a group it
+  reads the asset accounts of the split. An account that is not the account of
+  the wallet, and that no local account is linked to, holds the write back:
+  the change stays in front of the watermark, `report.skippedMovedRemoteRow`
+  counts it and one warning per group names the account. The discriminator is
+  the link, not the account: a relink always leaves the old account linked to
+  no wallet, and a transaction that the user moved to another wallet by hand
+  leaves the account it came from linked to the wallet it came from, thus that
+  transaction still moves on Firefly. The guard is on the update path of
+  `_pushOneTransaction`, on `_pushExistingMultiSplitGroup`, on `_pushTransfer`
+  and on the removal of a row that is no longer paid.
+- The rule "nothing goes into an inactive account" now holds for every write,
+  not for new and changed transactions only: the removal of a row that is no
+  longer paid, the removal of one split of a group, and the rename of the
+  account itself. A cycle can no longer report that nothing was pushed into an
+  inactive account while it renamed that account.
+- An id that the asset list of the cycle does not carry holds the push back as
+  well. The account is gone, or is not an asset account; either way the app
+  cannot judge the write, and going on took the same 422 in every cycle.
+- An empty currency is no currency. `"" != "USD"` made a transfer carry a
+  foreign amount with no currency code of its own, which is how 1,200 BDT came
+  to count as 1,200 USD. A wallet made before the currency setting has `""` or
+  null there.
+- `convertToPrimaryWallet` runs its four steps in one transaction. A sync
+  cycle between two of them saw two copies of one account, or an account whose
+  rows had moved and whose Firefly link had not.
+- The settings page: an overlapping refresh of the links is queued in place of
+  dropped, `loadingWalletLinks` cannot stick on an error, a link that fails
+  tells the user in place of failing in silence, the confirm dialog names the
+  local account that loses the link, a list of accounts that could not be read
+  no longer reads as "not linked", and a second sync while a cycle runs says
+  that a sync is running in place of "sync failed".
+- Tests: a row of the old account is not rewritten onto the new one, a row
+  that the user moved to another wallet still moves on Firefly, an unpaid row
+  is not deleted from an inactive account, an account that Firefly does not
+  list holds the push back, an update does not write into a deactivated
+  account, a wallet with no currency sends no foreign amount, and a transfer
+  between two currencies carries both amounts over the wire in both
+  directions. 98 tests pass.
+
 ### Follow the link when the primary wallet changes
 
 The report was: the first push after the fix below "created lots of duplicated

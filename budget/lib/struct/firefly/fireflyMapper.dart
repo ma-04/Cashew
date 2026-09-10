@@ -242,7 +242,15 @@ FireflyTransactionSplit transferPairToFireflySplit({
       : fromTransaction.note;
   String? from = fromCurrency?.trim().toUpperCase();
   String? to = toCurrency?.trim().toUpperCase();
-  bool crossCurrency = from != null && to != null && from != to;
+  // An empty code is no code. Without the test on the length, a wallet with
+  // no currency makes "" != "USD" true, and the split then carries a foreign
+  // amount with no currency_code of its own, which is how Firefly came to
+  // count 1,200 BDT as 1,200 USD.
+  bool crossCurrency = from != null &&
+      to != null &&
+      from.isNotEmpty &&
+      to.isNotEmpty &&
+      from != to;
   return FireflyTransactionSplit(
     type: "transfer",
     date: fromTransaction.dateCreated,

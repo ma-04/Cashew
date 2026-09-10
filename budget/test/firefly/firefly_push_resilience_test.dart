@@ -101,7 +101,8 @@ void main() {
       expect(env.firefly.accounts[9]!['attributes']['active'], isFalse);
     });
 
-    test('an update keeps a deactivated Firefly account deactivated', () async {
+    test('an update does not write into a deactivated Firefly account',
+        () async {
       String updatedAt = "2026-01-01T00:00:00Z";
       env.firefly.addAccount(9, 'Old savings',
           balance: '40', active: false, updatedAt: updatedAt);
@@ -122,12 +123,116 @@ void main() {
       expect(ok, isTrue,
           reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
 
-      List<FakeRequest> puts =
-          env.firefly.requestsTo('PUT', '/api/v1/accounts/9');
-      expect(puts, hasLength(1), reason: 'the edit was not pushed');
-      expect(puts.single.body!['active'], isFalse,
-          reason: 'the push re-enabled the account');
+      // The rename is held back with the rows of the account: a cycle that
+      // tells the user that nothing was pushed to an inactive account must
+      // not have renamed it either.
+      expect(env.firefly.requestsTo('PUT', '/api/v1/accounts/9'), isEmpty,
+          reason: 'the push wrote into an inactive account');
       expect(env.firefly.accounts[9]!['attributes']['active'], isFalse);
+      FireflySyncReport report = fireflySyncReportNotifier.value!;
+      expect(report.skippedInactiveAccount, 1);
+      expect(report.warnings.join('\n'), contains('inactive'));
+      // The edit stays in front of the watermark, so activating the account
+      // on Firefly and syncing again sends it.
+      expect((await fireflyCountUnsyncedChanges()).wallets, 1);
+    });
+  });
+
+  group('a transfer between two currencies', () {
+    // Two mapped wallets in two currencies and one paired local transfer.
+    Future<(Transaction, Transaction)> crossCurrencyTransfer() async {
+      env.firefly.addAccount(5, 'Cash BDT', balance: '0', currencyCode: 'BDT');
+      env.firefly.addAccount(7, 'Card USD', balance: '0', currencyCode: 'USD');
+      env.firefly.addCategory(6, 'Food');
+      TransactionWallet fromWallet =
+          await env.insertWallet('Cash BDT', modified: old, currency: 'bdt');
+      TransactionWallet toWallet =
+          await env.insertWallet('Card USD', modified: old, currency: 'usd');
+      TransactionCategory category =
+          await env.insertCategory('Food', modified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, fromWallet.walletPk, 5,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, toWallet.walletPk, 7,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.category, category.categoryPk, 6,
+          lastSyncedLocalModified: old);
+      Transaction from = await env.insertTransaction(
+          name: 'Move to the card',
+          amount: -1200,
+          wallet: fromWallet,
+          category: category);
+      Transaction to = await env.insertTransaction(
+          name: 'Move to the card',
+          amount: 9.68,
+          wallet: toWallet,
+          category: category);
+      await database.createOrUpdateTransaction(
+          from.copyWith(pairedTransactionFk: Value(to.transactionPk)),
+          updateSharedEntry: false);
+      await database.createOrUpdateTransaction(
+          to.copyWith(pairedTransactionFk: Value(from.transactionPk)),
+          updateSharedEntry: false);
+      return (from, to);
+    }
+
+    test('the push carries both amounts', () async {
+      await crossCurrencyTransfer();
+
+      bool ok = await fireflySyncNow(pushOnly: true);
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      List<FakeRequest> posts =
+          env.firefly.requestsTo('POST', '/api/v1/transactions');
+      expect(posts, hasLength(1), reason: 'the transfer was not pushed');
+      Map<String, dynamic> split =
+          Map<String, dynamic>.from(posts.single.body!['transactions'][0]);
+      expect(split['type'], 'transfer');
+      expect(split['source_id'], '5');
+      expect(split['destination_id'], '7');
+      expect(split['amount'], '1200.00');
+      expect(split['currency_code'], 'BDT');
+      // Without these two, Firefly counts 1200 on the USD account.
+      expect(split['foreign_amount'], '9.68');
+      expect(split['foreign_currency_code'], 'USD');
+    });
+
+    test('the pull gives each side the amount of its own wallet', () async {
+      env.firefly.addAccount(5, 'Cash BDT', balance: '0', currencyCode: 'BDT');
+      env.firefly.addAccount(7, 'Card USD', balance: '0', currencyCode: 'USD');
+      TransactionWallet fromWallet =
+          await env.insertWallet('Cash BDT', modified: old, currency: 'bdt');
+      TransactionWallet toWallet =
+          await env.insertWallet('Card USD', modified: old, currency: 'usd');
+      await env.mapRow(FireflySyncEntityType.wallet, fromWallet.walletPk, 5,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, toWallet.walletPk, 7,
+          lastSyncedLocalModified: old);
+      env.firefly.addTransaction(300, 3000,
+          description: 'Move to the card',
+          amount: '1200.00',
+          sourceId: 5,
+          destinationId: 7,
+          type: 'transfer',
+          currencyCode: 'BDT',
+          foreignAmount: '9.68',
+          foreignCurrencyCode: 'USD');
+
+      bool ok = await fireflySyncNow();
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      List<Transaction> pulled = await (database.select(database.transactions)
+            ..where((t) => t.name.equals('Move to the card')))
+          .get();
+      expect(pulled, hasLength(2), reason: 'the transfer did not arrive');
+      Transaction source =
+          pulled.firstWhere((t) => t.walletFk == fromWallet.walletPk);
+      Transaction destination =
+          pulled.firstWhere((t) => t.walletFk == toWallet.walletPk);
+      expect(source.amount, -1200.0);
+      // The USD side must hold the USD amount, not the 1200 of the split.
+      expect(destination.amount, 9.68);
     });
   });
 

@@ -370,6 +370,43 @@ void main() {
       expect(split.toRequestJson().containsKey("foreign_amount"), isFalse);
     });
 
+    test('a wallet with no currency sends no foreign amount', () {
+      // A wallet made before the currency setting has "" or null there.
+      // Reading "" as a currency of its own made the split carry a foreign
+      // amount with no currency code, and Firefly then counted the source
+      // amount on the destination account.
+      Transaction from =
+          _transaction(transactionPk: "from-1", amount: -1200.0, income: false);
+      Transaction to =
+          _transaction(transactionPk: "to-1", amount: 9.68, income: true);
+      for ((String?, String?) pair in <(String?, String?)>[
+        ("", "USD"),
+        ("BDT", ""),
+        (null, "USD"),
+        ("BDT", null),
+        ("", ""),
+        (null, null),
+      ]) {
+        FireflyTransactionSplit split = transferPairToFireflySplit(
+          fromTransaction: from,
+          toTransaction: to,
+          fromWalletFireflyId: 1,
+          toWalletFireflyId: 2,
+          fromCurrency: pair.$1,
+          toCurrency: pair.$2,
+        );
+        expect(split.foreignAmount, isNull,
+            reason: 'currencies ${pair.$1} -> ${pair.$2}');
+        expect(split.foreignCurrencyCode, isNull,
+            reason: 'currencies ${pair.$1} -> ${pair.$2}');
+        Map<String, dynamic> json = split.toRequestJson();
+        expect(json.containsKey("foreign_amount"), isFalse,
+            reason: 'currencies ${pair.$1} -> ${pair.$2}');
+        expect(json.containsKey("foreign_currency_code"), isFalse,
+            reason: 'currencies ${pair.$1} -> ${pair.$2}');
+      }
+    });
+
     test('the destination row of a pulled transfer gets the foreign amount',
         () {
       FireflyTransactionSplit split = FireflyTransactionSplit(

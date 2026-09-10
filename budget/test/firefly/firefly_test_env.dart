@@ -78,6 +78,7 @@ class FakeFirefly {
       String? balance,
       bool active = true,
       String role = "defaultAsset",
+      String currencyCode = "USD",
       String? updatedAt}) {
     Map<String, dynamic> account = {
       "type": "accounts",
@@ -85,7 +86,7 @@ class FakeFirefly {
       "attributes": {
         "name": name,
         "type": type,
-        "currency_code": "USD",
+        "currency_code": currencyCode,
         if (balance != null) "current_balance": balance,
         "active": active,
         "account_role": role,
@@ -120,6 +121,9 @@ class FakeFirefly {
       String type = "withdrawal",
       DateTime? date,
       String? categoryId,
+      String currencyCode = "USD",
+      String? foreignAmount,
+      String? foreignCurrencyCode,
       String? updatedAt}) {
     Map<String, dynamic> group = {
       "type": "transactions",
@@ -137,7 +141,10 @@ class FakeFirefly {
             "description": description,
             "source_id": sourceId,
             "destination_id": destinationId,
-            "currency_code": "USD",
+            "currency_code": currencyCode,
+            if (foreignAmount != null) "foreign_amount": foreignAmount,
+            if (foreignCurrencyCode != null)
+              "foreign_currency_code": foreignCurrencyCode,
             if (categoryId != null) "category_id": categoryId,
           }
         ],
@@ -399,10 +406,13 @@ class FireflyTestEnv {
   }
 
   Future<TransactionWallet> insertWallet(String name,
-      {DateTime? modified}) async {
+      {DateTime? modified, String? currency}) async {
     int rowId = await database.into(database.wallets).insert(
         WalletsCompanion.insert(
-            name: name, order: 0, dateTimeModified: Value(modified)));
+            name: name,
+            order: 0,
+            currency: Value(currency),
+            dateTimeModified: Value(modified)));
     return (database.select(database.wallets)
           ..where((w) => w.rowId.equals(rowId)))
         .getSingle();

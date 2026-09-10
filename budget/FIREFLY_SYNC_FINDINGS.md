@@ -9,6 +9,44 @@ code and proposes the better fix. todo.md has since absorbed the verification
 results and carries the current status of every item, including a second round
 of findings (10-18) not covered here; where the two overlap, todo.md wins.
 
+## Status, 2026-09-10 (third)
+
+An adversarial review of the fix above found that it closed the way into the
+incident but not the mechanism of it. `_pushOneTransaction` builds the split
+from the link that the wallet holds now, and sends it to the group id that the
+map row holds. A map row that points at a group on another Firefly account
+therefore still moves that group, and the manual link picker makes exactly
+such a row: it points the wallet at another account and leaves the rows of the
+old account mapped.
+
+Closed with a guard on each write path. Before a push writes to a group, it
+reads the asset account of that group. If the account is not the account of
+the wallet, and no local account is linked to it, the write is held back, the
+change stays in front of the watermark and one warning names the account. A
+transaction that the user moved to another wallet by hand still moves on
+Firefly, because the account it came from is still linked to the wallet it
+came from. The new counter `skippedMovedRemoteRow` carries this in the report.
+
+The other findings of that review, each closed:
+
+- The rule "nothing is pushed into an inactive account" held for new and
+  changed transactions only. It now holds for the removal of a row that is no
+  longer paid, for the removal of one split of a group, and for the rename of
+  the account itself. The report of such a cycle no longer says that nothing
+  was pushed while a rename went out.
+- An id that the account list of the cycle does not carry now holds the push
+  back as well. It used to go on and take the same 422 in every cycle.
+- A wallet with no currency made `"" != "USD"` true, thus a transfer carried a
+  foreign amount with no currency of its own. An empty code is now no code.
+- `convertToPrimaryWallet` ran its four steps one after the other. A sync
+  cycle between two of them saw two copies of one account, or an account whose
+  rows had moved and whose link had not. The four steps are one transaction.
+- The settings page: a refresh that overlaps another one is queued instead of
+  dropped, the loading flag cannot stick, a link that fails tells the user, the
+  confirm dialog names the local account that loses the link, an account list
+  that could not be read no longer reads as "not linked", and a second sync
+  during a cycle says that a sync is running in place of "sync failed".
+
 ## Status, 2026-09-10 (second)
 
 The first push after the fix above moved 38 transactions of the "Cash wallet"

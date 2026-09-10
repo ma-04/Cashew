@@ -156,6 +156,84 @@ void main() {
           report.warnings.where((w) => w.contains('inactive')).toList().length,
           1);
     });
+
+    test('an unpaid row is not deleted from an inactive account', () async {
+      // Firefly holds no unpaid state, so a row that the user marks unpaid is
+      // removed from Firefly. That removal is a write like any other, thus an
+      // inactive account holds it back too.
+      env.firefly.addAccount(5, 'Cash', balance: '100', active: false);
+      env.firefly.addCategory(6, 'Food');
+      env.firefly.addTransaction(300, 3000,
+          description: 'Coffee',
+          amount: '4.50',
+          sourceId: 5,
+          destinationId: 90,
+          updatedAt: old.toUtc().toIso8601String());
+      TransactionWallet wallet = await env.insertWallet('Cash', modified: old);
+      TransactionCategory category =
+          await env.insertCategory('Food', modified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, wallet.walletPk, 5,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.category, category.categoryPk, 6,
+          lastSyncedLocalModified: old);
+      Transaction transaction = await env.insertTransaction(
+          name: 'Coffee',
+          amount: -4.5,
+          wallet: wallet,
+          category: category,
+          modified: old,
+          paid: false);
+      await env.mapRow(
+          FireflySyncEntityType.transaction, transaction.transactionPk, 300,
+          lastSyncedLocalModified: old, journalId: 3000);
+      await database.createOrUpdateTransaction(
+          transaction.copyWith(dateTimeModified: Value(DateTime.now())),
+          updateSharedEntry: false);
+
+      bool ok = await fireflySyncNow(pushOnly: true);
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      FireflySyncReport report = fireflySyncReportNotifier.value!;
+      expect(
+          env.firefly.requestsTo('DELETE', '/api/v1/transactions/300'), isEmpty,
+          reason: 'the delete went into an inactive account');
+      expect(report.deletedRemote, 0);
+      expect(report.skippedInactiveAccount, 1);
+      // The link stays, so the row is removed once the account is active.
+      expect(
+          await env.mapFor(
+              FireflySyncEntityType.transaction, transaction.transactionPk),
+          isNotNull);
+    });
+
+    test('an account that Firefly does not list holds the push back', () async {
+      // The list of the cycle was read and does not name the account. That
+      // means the account is gone or is not an asset account; either way the
+      // app cannot judge the write, and a push that goes on gets a 422 in
+      // each cycle for ever.
+      env.firefly.addAccount(5, 'Cash', balance: '100');
+      env.firefly.addCategory(6, 'Food');
+      TransactionWallet wallet = await env.insertWallet('Cash', modified: old);
+      TransactionCategory category =
+          await env.insertCategory('Food', modified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, wallet.walletPk, 99,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.category, category.categoryPk, 6,
+          lastSyncedLocalModified: old);
+      await env.insertTransaction(
+          name: 'Coffee', amount: -4.5, wallet: wallet, category: category);
+
+      bool ok = await fireflySyncNow(pushOnly: true);
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      FireflySyncReport report = fireflySyncReportNotifier.value!;
+      expect(env.firefly.requestsTo('POST', '/api/v1/transactions'), isEmpty);
+      expect(report.skippedInactiveAccount, 1);
+      FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
+      expect(counts.transactions, 1);
+    });
   });
 
   group('a rename that Firefly refuses', () {
@@ -269,6 +347,118 @@ void main() {
           .get();
       expect(pulled, hasLength(1));
       expect(pulled.single.walletFk, wallet.walletPk);
+    });
+
+    // The failure of 2026-09-10 in one test. The wallet holds rows that were
+    // pushed into the account 9; the user links the wallet to the account 4.
+    // The rows still name the groups of 9, and the push builds each split
+    // from the account of the wallet, thus a request onto one of those groups
+    // would move it from 9 to 4.
+    test('a row of the old account is not rewritten onto the new one',
+        () async {
+      env.firefly.addAccount(9, 'Bank', balance: '0');
+      Map<String, dynamic> cashAccount =
+          env.firefly.addAccount(4, 'Cash', balance: '100');
+      env.firefly.addCategory(6, 'Food');
+      TransactionWallet wallet = await env.insertWallet('Bank', modified: old);
+      TransactionCategory category =
+          await env.insertCategory('Food', modified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, wallet.walletPk, 9,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.category, category.categoryPk, 6,
+          lastSyncedLocalModified: old);
+      // One row of this wallet, on the Firefly account 9.
+      env.firefly.addTransaction(300, 301,
+          description: 'Coffee',
+          amount: '4.50',
+          sourceId: 9,
+          destinationId: 800,
+          updatedAt: old.toUtc().toIso8601String());
+      Transaction local = await env.insertTransaction(
+          name: 'Coffee',
+          amount: -4.5,
+          wallet: wallet,
+          category: category,
+          modified: old);
+      await env.mapRow(
+          FireflySyncEntityType.transaction, local.transactionPk, 300,
+          lastSyncedLocalModified: old, journalId: 301);
+
+      await fireflyLinkWalletToAccount(
+          wallet.walletPk, FireflyAccount.fromJson(cashAccount));
+
+      // The user edits that row after the link changed.
+      await database.createOrUpdateTransaction(
+          local.copyWith(
+              name: 'Coffee and cake', dateTimeModified: Value(DateTime.now())),
+          updateSharedEntry: false);
+
+      bool ok = await fireflySyncNow();
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      expect(env.firefly.requestsTo('PUT', '/api/v1/transactions/300'), isEmpty,
+          reason: 'the group of the old account must not be rewritten');
+      List<dynamic> splits =
+          env.firefly.transactionGroups[300]!['attributes']['transactions'];
+      expect(splits.single['source_id'], 9,
+          reason: 'the transaction stays on the Firefly account it is on');
+      FireflySyncReport report = fireflySyncReportNotifier.value!;
+      expect(report.skippedMovedRemoteRow, 1);
+      expect(report.warnings.join('\n'), contains('Bank'));
+      // The change is still waiting: the user can link the wallet back.
+      FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
+      expect(counts.transactions, 1);
+    });
+
+    test('a row that the user moved to another wallet still moves on Firefly',
+        () async {
+      // Both accounts are linked, thus the remote account of the row belongs
+      // to a wallet of this app: the user moved the row, and Firefly follows.
+      env.firefly.addAccount(9, 'Bank', balance: '0');
+      env.firefly.addAccount(4, 'Cash', balance: '100');
+      env.firefly.addCategory(6, 'Food');
+      TransactionWallet bank = await env.insertWallet('Bank', modified: old);
+      TransactionWallet cash = await env.insertWallet('Cash', modified: old);
+      TransactionCategory category =
+          await env.insertCategory('Food', modified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, bank.walletPk, 9,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.wallet, cash.walletPk, 4,
+          lastSyncedLocalModified: old);
+      await env.mapRow(FireflySyncEntityType.category, category.categoryPk, 6,
+          lastSyncedLocalModified: old);
+      env.firefly.addTransaction(300, 301,
+          description: 'Coffee',
+          amount: '4.50',
+          sourceId: 9,
+          destinationId: 800,
+          updatedAt: old.toUtc().toIso8601String());
+      Transaction local = await env.insertTransaction(
+          name: 'Coffee',
+          amount: -4.5,
+          wallet: bank,
+          category: category,
+          modified: old);
+      await env.mapRow(
+          FireflySyncEntityType.transaction, local.transactionPk, 300,
+          lastSyncedLocalModified: old, journalId: 301);
+
+      await database.createOrUpdateTransaction(
+          local.copyWith(
+              walletFk: cash.walletPk, dateTimeModified: Value(DateTime.now())),
+          updateSharedEntry: false);
+
+      bool ok = await fireflySyncNow();
+      expect(ok, isTrue,
+          reason: 'sync failed: ${fireflySyncErrorNotifier.value}');
+
+      expect(env.firefly.requestsTo('PUT', '/api/v1/transactions/300'),
+          hasLength(1));
+      List<dynamic> splits =
+          env.firefly.transactionGroups[300]!['attributes']['transactions'];
+      expect(splits.single['source_id'], '4');
+      expect(fireflySyncReportNotifier.value!.skippedMovedRemoteRow, 0);
     });
 
     test('unlinking leaves a tombstone and no live link', () async {

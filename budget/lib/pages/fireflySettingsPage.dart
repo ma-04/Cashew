@@ -50,6 +50,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   List<FireflyAccount>? assetAccounts;
   List<FireflyWalletLink> walletLinks = [];
   bool loadingWalletLinks = false;
+  // A refresh that came in while one was running.
+  bool walletLinksRefreshQueued = false;
   // The account id that stands for "Not linked" in the radio list. Firefly
   // has no account with a negative id.
   static const int _notLinkedId = -1;
@@ -96,17 +98,32 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       }
       return;
     }
-    if (loadingWalletLinks) return;
+    // A refresh that arrives during one is not dropped: the state that it
+    // would read changes while the request runs, thus the list must be read
+    // once more afterwards.
+    if (loadingWalletLinks) {
+      walletLinksRefreshQueued = true;
+      return;
+    }
     if (mounted) setState(() => loadingWalletLinks = true);
-    List<FireflyAccount>? accounts = await fireflyListAssetAccounts();
-    List<FireflyWalletLink> links =
-        await fireflyWalletLinks(accounts: accounts);
-    if (!mounted) return;
-    setState(() {
-      assetAccounts = accounts;
-      walletLinks = links;
-      loadingWalletLinks = false;
-    });
+    try {
+      List<FireflyAccount>? accounts = await fireflyListAssetAccounts();
+      List<FireflyWalletLink> links =
+          await fireflyWalletLinks(accounts: accounts);
+      if (!mounted) return;
+      setState(() {
+        assetAccounts = accounts;
+        walletLinks = links;
+      });
+    } finally {
+      // Without this the flag stays true after a throw, and each row of the
+      // list is then untappable until the page is opened again.
+      if (mounted) setState(() => loadingWalletLinks = false);
+    }
+    if (walletLinksRefreshQueued) {
+      walletLinksRefreshQueued = false;
+      await _refreshWalletLinks();
+    }
   }
 
   // The line under the name of a local account in the "Linked accounts" list.
@@ -114,6 +131,10 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     if (link.fireflyId == null) return "firefly-not-linked".tr();
     FireflyAccount? account = link.account;
     if (account == null) {
+      // The request for the accounts failed. The link is fine; the app only
+      // cannot name it. To call it missing here invites the user to repair a
+      // link that has nothing wrong with it.
+      if (assetAccounts == null) return "firefly-linked-account-unknown".tr();
       // The id has no account in the list of the server: it was removed
       // there, or it is not an asset account any more.
       return "firefly-linked-account-missing".tr();
@@ -143,6 +164,22 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     Map<int, FireflyAccount> byId = {
       for (FireflyAccount account in sorted) account.id: account
     };
+    // Firefly allows one account per local account. To choose one that
+    // another local account holds takes it from that one, thus the list says
+    // so before the choice, and the question afterwards says it again.
+    Map<int, String> walletByAccountId = {
+      for (FireflyWalletLink other in walletLinks)
+        if (other.fireflyId != null &&
+            other.wallet.walletPk != link.wallet.walletPk)
+          other.fireflyId!: other.wallet.name
+    };
+    // A link that points at an id the server did not give still selects a
+    // row: without it the list opens with nothing selected and the state of
+    // the account is not visible.
+    int? unknownLinkedId =
+        link.fireflyId != null && !byId.containsKey(link.fireflyId)
+            ? link.fireflyId
+            : null;
     await openBottomSheet(
       context,
       PopupFramework(
@@ -151,40 +188,65 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         child: RadioItems<int>(
           items: [
             _notLinkedId,
+            if (unknownLinkedId != null) unknownLinkedId,
             for (FireflyAccount account in sorted) account.id
           ],
           initial: link.fireflyId ?? _notLinkedId,
-          displayFilter: (int id) =>
-              id == _notLinkedId ? "firefly-not-linked".tr() : byId[id]!.name,
+          displayFilter: (int id) {
+            if (id == _notLinkedId) return "firefly-not-linked".tr();
+            return byId[id]?.name ?? "firefly-linked-account-missing".tr();
+          },
           getDescription: (int id) {
             FireflyAccount? account = byId[id];
             if (account == null) return "";
+            String? holder = walletByAccountId[id];
             List<String> parts = [
               if (account.currencyCode != null) account.currencyCode!,
               if (!account.active) "firefly-inactive".tr(),
+              if (holder != null)
+                "firefly-link-account-taken".tr(namedArgs: {"wallet": holder}),
             ];
             return parts.join(" - ");
           },
           onChanged: (int id) async {
             popRoute(context);
-            await _confirmLink(link, id == _notLinkedId ? null : byId[id]);
+            // RadioItems does not await this, thus an error here has no
+            // handler and never reaches the user.
+            try {
+              await _confirmLink(link, id == _notLinkedId ? null : byId[id],
+                  takenFrom: walletByAccountId[id]);
+            } catch (e) {
+              openSnackbar(SnackbarMessage(
+                title: "firefly-sync-failed".tr(),
+                description: e.toString(),
+                icon: appStateSettings["outlinedIcons"]
+                    ? Icons.error_outlined
+                    : Icons.error_rounded,
+              ));
+            }
           },
         ),
       ),
     );
   }
 
-  Future<void> _confirmLink(
-      FireflyWalletLink link, FireflyAccount? account) async {
+  Future<void> _confirmLink(FireflyWalletLink link, FireflyAccount? account,
+      {String? takenFrom}) async {
     if (account?.id == link.fireflyId) return;
     bool confirmed = false;
+    String description = "firefly-link-account-confirm".tr(namedArgs: {
+      "wallet": link.wallet.name,
+      "account": account?.name ?? "firefly-not-linked".tr(),
+    });
+    if (takenFrom != null) {
+      description += "\n\n" +
+          "firefly-link-account-taken-warning"
+              .tr(namedArgs: {"wallet": takenFrom});
+    }
     await openPopup(
       context,
       title: "firefly-link-account".tr(),
-      description: "firefly-link-account-confirm".tr(namedArgs: {
-        "wallet": link.wallet.name,
-        "account": account?.name ?? "firefly-not-linked".tr(),
-      }),
+      description: description,
       icon: appStateSettings["outlinedIcons"]
           ? Icons.link_outlined
           : Icons.link_rounded,
@@ -400,16 +462,34 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   }
 
   Future<void> syncNow() async {
+    // A cycle that the engine started on its own holds the same lock. Such a
+    // call does nothing and returns false, which is not a failure.
+    bool alreadyRunning = fireflySyncIsRunning;
     setState(() {
       syncingNow = true;
     });
-    bool success = await fireflySyncNow();
-    if (mounted) {
-      setState(() {
-        syncingNow = false;
-      });
+    bool success;
+    try {
+      success = await fireflySyncNow();
+    } finally {
+      // Without this a throw leaves the flag set and each button of the page
+      // stays disabled until the page is opened again.
+      if (mounted) {
+        setState(() {
+          syncingNow = false;
+        });
+      }
     }
     await _refreshUnsyncedCounts();
+    if (!success && alreadyRunning) {
+      openSnackbar(SnackbarMessage(
+        title: "firefly-sync-busy".tr(),
+        icon: appStateSettings["outlinedIcons"]
+            ? Icons.hourglass_empty_outlined
+            : Icons.hourglass_empty_rounded,
+      ));
+      return;
+    }
     String? description = success
         ? fireflySyncReportNotifier.value?.summary()
         : fireflySyncErrorNotifier.value;
@@ -433,16 +513,30 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   }
 
   Future<void> _runHistoryAction(Future<bool> Function() action) async {
+    bool alreadyRunning = fireflySyncIsRunning;
     setState(() {
       runningHistoryAction = true;
     });
-    bool success = await action();
-    if (mounted) {
-      setState(() {
-        runningHistoryAction = false;
-      });
+    bool success;
+    try {
+      success = await action();
+    } finally {
+      if (mounted) {
+        setState(() {
+          runningHistoryAction = false;
+        });
+      }
     }
     await _refreshUnsyncedCounts();
+    if (!success && alreadyRunning) {
+      openSnackbar(SnackbarMessage(
+        title: "firefly-sync-busy".tr(),
+        icon: appStateSettings["outlinedIcons"]
+            ? Icons.hourglass_empty_outlined
+            : Icons.hourglass_empty_rounded,
+      ));
+      return;
+    }
     openSnackbar(
       SnackbarMessage(
         title: success

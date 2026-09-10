@@ -69,6 +69,9 @@ class FireflySyncReport {
   // Rows that a push held back because their Firefly account is inactive.
   // Each such row has a warning, and the watermark stays at the row.
   int skippedInactiveAccount = 0;
+  // Rows that a push held back because the Firefly record they point at sits
+  // on another Firefly account. See _pushBlockedByMovedRemoteRow.
+  int skippedMovedRemoteRow = 0;
   // Rows that a push tried and that Firefly or the network refused. Each one
   // has a warning, and the next cycle tries it again.
   int failedCategories = 0;
@@ -109,6 +112,10 @@ class FireflySyncReport {
           "$skippedInactiveAccount transactions held back (Firefly account "
           "inactive)");
     }
+    if (skippedMovedRemoteRow > 0) {
+      parts.add("$skippedMovedRemoteRow transactions held back (they belong to "
+          "another Firefly account)");
+    }
     if (failedTotal > 0) {
       parts.add("$failedTotal not pushed (see warnings)");
     }
@@ -126,6 +133,11 @@ final ValueNotifier<FireflySyncReport?> fireflySyncReportNotifier =
     ValueNotifier(null);
 
 bool _canSyncFirefly = true;
+
+// True while a cycle runs. fireflySyncNow returns false for a second call
+// during that cycle, and that is not a failure: the caller shows a different
+// message for it.
+bool get fireflySyncIsRunning => !_canSyncFirefly;
 // A depth counter, not a flag. An on-demand fetch can start and stop while a
 // sync is in operation. A flag that the fetch clears would make the remaining
 // writes of that sync look like user edits, which starts one more push each
@@ -309,12 +321,12 @@ Future<bool> fireflySyncNow({
           }
           await _pushCategories(api, lastSynced, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
-          await _pushAccounts(api, lastSynced, report, backlog,
+          await _pushAccounts(api, lastSynced, assets, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
           await _pushTransactions(
               api, lastSynced, counterparties, assets, report, backlog,
               includeUnmodifiedRows: pushExistingLocalHistory);
-          await _pushDeletes(api, lastSynced, report, backlog);
+          await _pushDeletes(api, lastSynced, assets, report, backlog);
           // Last, because the push changes the remote balances that this
           // reads. A balance from before the push would make each wallet that
           // the cycle pushed to wrong by the amount that it pushed.
@@ -413,11 +425,18 @@ class _FireflyAssetIndex {
   // The accounts that already have a warning in this cycle. One warning per
   // account, not one per row.
   final Set<int> warnedInactive = {};
+  // The Firefly transactions that already have a warning in this cycle.
+  final Set<int> warnedMoved = {};
+  // True once the cycle read the list. Before that a missing id says nothing;
+  // after it a missing id means that a link points at a record that the
+  // server does not give as an asset account.
+  bool loaded = false;
 
   void load(List<FireflyAccount> accounts) {
     for (FireflyAccount account in accounts) {
       byId[account.id] = account;
     }
+    loaded = true;
   }
 }
 
@@ -438,17 +457,98 @@ Future<bool> _pushBlockedByInactiveAccount({
       await _syncMapByLocalPk(FireflySyncEntityType.wallet, walletPk);
   if (walletMap == null) return false;
   FireflyAccount? account = assets.byId[walletMap.fireflyId];
-  if (account == null || account.active) return false;
+  // The cycle has not read the list: nothing is known about the account, and
+  // a push that the app cannot judge goes on as before.
+  if (account == null && !assets.loaded) return false;
+  if (account != null && account.active) return false;
   report.skippedInactiveAccount++;
   backlog.recordNotPushed(localModified);
-  if (assets.warnedInactive.add(account.id)) {
+  if (assets.warnedInactive.add(walletMap.fireflyId)) {
     TransactionWallet? wallet =
         await database.getWalletInstanceOrNull(walletPk);
+    String walletName = wallet?.name ?? walletPk;
+    report.warnings.add(account == null
+        // The id is not in the asset accounts of the server. A push would
+        // fail on each cycle, and it must not create the record somewhere
+        // else, thus the row waits for the user.
+        ? "The account \"$walletName\" is linked to a Firefly account that "
+            "the server no longer gives as an asset account. Nothing was "
+            "pushed to it. Link the account to another Firefly account in the "
+            "Firefly settings."
+        : "The account \"$walletName\" is linked to the Firefly "
+            "account \"${account.name}\", which is inactive. Nothing was "
+            "pushed to it. Activate it on Firefly, or link the account to "
+            "another Firefly account in the Firefly settings.");
+  }
+  return true;
+}
+
+// The split of a group that a sync-map row points at. The journal id names
+// it; a group with one split is that split.
+FireflyTransactionSplit? _splitOfRemoteGroup(
+    FireflyTransactionGroup group, int? journalId) {
+  if (journalId != null) {
+    for (FireflyTransactionSplit split in group.splits) {
+      if (split.transactionJournalId == journalId) return split;
+    }
+  }
+  if (group.splits.length == 1) return group.splits.first;
+  return null;
+}
+
+// True when the Firefly split that a local row points at sits on an asset
+// account that no account of this app is linked to, and that is not the
+// account of the wallet of that row.
+//
+// A push builds the split from the account that the wallet is linked to now
+// and sends it to the group that the sync map names. If a wallet is linked to
+// another Firefly account while its rows still point at the groups of the old
+// one, that request moves those groups into the new account, and the ledger
+// of the old account loses them. That is the failure of 2026-09-10, and the
+// manual link picker can reach it again.
+//
+// A row whose remote account is the account of another wallet of this app is
+// a row that the user moved from that wallet to this one. Firefly must follow
+// that move, thus the push goes on.
+Future<bool> _pushBlockedByMovedRemoteRow({
+  required _FireflyAssetIndex assets,
+  required FireflyTransactionSplit? split,
+  required Set<int> walletAccountIds,
+  required int fireflyId,
+  required DateTime? localModified,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+}) async {
+  // The app cannot say which split the row is. _splitsForPartialGroupUpdate
+  // stops such a request on its own.
+  if (split == null) return false;
+  Set<int> foreign = {
+    for (int? id in [split.sourceId, split.destinationId])
+      if (id != null &&
+          assets.byId.containsKey(id) &&
+          !walletAccountIds.contains(id))
+        id
+  };
+  if (foreign.isEmpty) return false;
+  int? orphan;
+  for (int id in foreign) {
+    if ((await _syncMapsByFireflyId(FireflySyncEntityType.wallet, id))
+        .isNotEmpty) {
+      continue;
+    }
+    orphan = id;
+    break;
+  }
+  if (orphan == null) return false;
+  report.skippedMovedRemoteRow++;
+  backlog.recordNotPushed(localModified);
+  if (assets.warnedMoved.add(fireflyId)) {
     report.warnings.add(
-        "The account \"${wallet?.name ?? walletPk}\" is linked to the Firefly "
-        "account \"${account.name}\", which is inactive. Nothing was pushed to "
-        "it. Activate it on Firefly, or link the account to another Firefly "
-        "account in the Firefly settings.");
+        "Did not change a transaction on Firefly: it belongs to the Firefly "
+        "account \"${assets.byId[orphan]?.name ?? orphan}\", which no account "
+        "of this app is linked to. To write it would move it into the account "
+        "that holds the record here. Link an account of this app to that "
+        "Firefly account, or remove the record here.");
   }
   return true;
 }
@@ -1584,8 +1684,12 @@ Future<void> _pushOneCategory({
   }
 }
 
-Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
-    FireflySyncReport report, _FireflyPushBacklog backlog,
+Future<void> _pushAccounts(
+    FireflyApiClient client,
+    DateTime lastSynced,
+    _FireflyAssetIndex assets,
+    FireflySyncReport report,
+    _FireflyPushBacklog backlog,
     {required bool includeUnmodifiedRows}) async {
   List<TransactionWallet> changed = await database.getAllNewWallets(lastSynced);
   for (TransactionWallet wallet in changed) {
@@ -1593,6 +1697,7 @@ Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
       await _pushOneAccount(
         client: client,
         wallet: wallet,
+        assets: assets,
         report: report,
         backlog: backlog,
         includeUnmodifiedRows: includeUnmodifiedRows,
@@ -1614,6 +1719,7 @@ Future<void> _pushAccounts(FireflyApiClient client, DateTime lastSynced,
 Future<void> _pushOneAccount({
   required FireflyApiClient client,
   required TransactionWallet wallet,
+  required _FireflyAssetIndex assets,
   required FireflySyncReport report,
   required _FireflyPushBacklog backlog,
   required bool includeUnmodifiedRows,
@@ -1672,6 +1778,21 @@ Future<void> _pushOneAccount({
       lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
     );
     if (direction == FireflySyncDirection.push) {
+      // An account that the user deactivated on Firefly takes no write at
+      // all, thus the report of a cycle that held its transactions back does
+      // not also rename it.
+      if (!remote.active) {
+        report.skippedInactiveAccount++;
+        backlog.recordNotPushed(wallet.dateTimeModified);
+        if (assets.warnedInactive.add(map.fireflyId)) {
+          report.warnings.add(
+              "The account \"${wallet.name}\" is linked to the Firefly "
+              "account \"${remote.name}\", which is inactive. Nothing was "
+              "pushed to it. Activate it on Firefly, or link the account to "
+              "another Firefly account in the Firefly settings.");
+        }
+        return;
+      }
       // The local database has no active flag either. An update that sends
       // active: true switches on an account that the user deactivated on
       // Firefly.
@@ -1876,11 +1997,29 @@ int _splitIndexAfterUpdate(
 Future<void> _removeRemoteRowThatIsNotPaid({
   required FireflyApiClient client,
   required List<FireflySyncMapEntry> maps,
+  required _FireflyAssetIndex assets,
+  // The wallets of the local rows. A delete is a write: the same rules that
+  // hold an update back hold it back too.
+  required Set<String> walletPks,
   required FireflySyncReport report,
   required _FireflyPushBacklog backlog,
   required DateTime? localModified,
 }) async {
   if (maps.isEmpty) return;
+  Set<int> walletAccountIds = {};
+  for (String walletPk in walletPks) {
+    if (await _pushBlockedByInactiveAccount(
+        assets: assets,
+        walletPk: walletPk,
+        localModified: localModified,
+        report: report,
+        backlog: backlog)) {
+      return;
+    }
+    FireflySyncMapEntry? walletMap =
+        await _syncMapByLocalPk(FireflySyncEntityType.wallet, walletPk);
+    if (walletMap != null) walletAccountIds.add(walletMap.fireflyId);
+  }
   FireflySyncMapEntry first = maps.first;
   FireflyTransactionGroup remoteGroup;
   try {
@@ -1889,6 +2028,16 @@ Future<void> _removeRemoteRowThatIsNotPaid({
     for (FireflySyncMapEntry map in maps) {
       await _deleteSyncMapRow(map);
     }
+    return;
+  }
+  if (await _pushBlockedByMovedRemoteRow(
+      assets: assets,
+      split: _splitOfRemoteGroup(remoteGroup, first.fireflyJournalId),
+      walletAccountIds: walletAccountIds,
+      fireflyId: first.fireflyId,
+      localModified: localModified,
+      report: report,
+      backlog: backlog)) {
     return;
   }
   try {
@@ -2016,6 +2165,8 @@ Future<void> _pushOneTransaction({
       await _removeRemoteRowThatIsNotPaid(
         client: client,
         maps: [paidMap],
+        assets: assets,
+        walletPks: {transaction.walletFk},
         report: report,
         backlog: backlog,
         localModified: transaction.dateTimeModified,
@@ -2154,6 +2305,16 @@ Future<void> _pushOneTransaction({
       lastSyncedRemoteUpdatedAt: map.fireflyUpdatedAt,
     );
     if (direction == FireflySyncDirection.push) {
+      if (await _pushBlockedByMovedRemoteRow(
+          assets: assets,
+          split: _splitOfRemoteGroup(remoteGroup, map.fireflyJournalId),
+          walletAccountIds: {walletMap.fireflyId},
+          fireflyId: map.fireflyId,
+          localModified: transaction.dateTimeModified,
+          report: report,
+          backlog: backlog)) {
+        return;
+      }
       List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
         remoteGroup: remoteGroup,
         changedSplit: split,
@@ -2326,6 +2487,27 @@ Future<void> _pushExistingMultiSplitGroup({
   if (mappedGroupMaps.isEmpty) return;
   groupMaps = mappedGroupMaps;
 
+  // Each split of the request must already sit on the account of the wallet
+  // that holds its local row. One that does not holds the whole group back:
+  // the request rewrites every split at once.
+  for (FireflySyncMapEntry map in groupMaps) {
+    Transaction? local = await database.tryGetTransactionFromPk(map.localPk);
+    if (local == null) continue;
+    FireflySyncMapEntry? walletMap =
+        await _syncMapByLocalPk(FireflySyncEntityType.wallet, local.walletFk);
+    if (walletMap == null) continue;
+    if (await _pushBlockedByMovedRemoteRow(
+        assets: assets,
+        split: _splitOfRemoteGroup(remoteGroup, map.fireflyJournalId),
+        walletAccountIds: {walletMap.fireflyId},
+        fireflyId: map.fireflyId,
+        localModified: newestLocal,
+        report: report,
+        backlog: backlog)) {
+      return;
+    }
+  }
+
   // A PUT must name each split by its id. A split that comes with no id thus
   // stops the request. To read the id with `!` throws here and stops the full
   // cycle, and each later cycle again.
@@ -2444,6 +2626,8 @@ Future<void> _pushTransfer({
       await _removeRemoteRowThatIsNotPaid(
         client: client,
         maps: maps,
+        assets: assets,
+        walletPks: {fromTransaction.walletFk, toTransaction.walletFk},
         report: report,
         backlog: backlog,
         localModified: transaction.dateTimeModified,
@@ -2562,6 +2746,17 @@ Future<void> _pushTransfer({
   );
   if (direction != FireflySyncDirection.push) return;
 
+  if (await _pushBlockedByMovedRemoteRow(
+      assets: assets,
+      split: _splitOfRemoteGroup(remoteGroup, storedJournalId),
+      walletAccountIds: {fromWalletMap.fireflyId, toWalletMap.fireflyId},
+      fireflyId: linkedMap.fireflyId,
+      localModified: newestLocal,
+      report: report,
+      backlog: backlog)) {
+    return;
+  }
+
   List<FireflyTransactionSplit>? splits = _splitsForPartialGroupUpdate(
     remoteGroup: remoteGroup,
     changedSplit: split,
@@ -2613,8 +2808,12 @@ Future<void> _pushTransfer({
   report.pushedTransactions++;
 }
 
-Future<void> _pushDeletes(FireflyApiClient client, DateTime lastSynced,
-    FireflySyncReport report, _FireflyPushBacklog backlog) async {
+Future<void> _pushDeletes(
+    FireflyApiClient client,
+    DateTime lastSynced,
+    _FireflyAssetIndex assets,
+    FireflySyncReport report,
+    _FireflyPushBacklog backlog) async {
   List<DeleteLog> deleteLogs = await database.getAllNewDeleteLogs(lastSynced);
   Set<int> remoteDeletedTransactionIds = {};
 
@@ -2708,6 +2907,7 @@ Future<void> _pushDeletes(FireflyApiClient client, DateTime lastSynced,
           client: client,
           deletedMap: map,
           groupMaps: groupMaps,
+          assets: assets,
           report: report,
           backlog: backlog,
           deleteLoggedAt: log.dateTimeModified,
@@ -2780,6 +2980,7 @@ Future<bool> _removeSplitFromRemoteGroup({
   // Each row of this app that points at the group. The links of all of them
   // close when the full group goes.
   required List<FireflySyncMapEntry> groupMaps,
+  required _FireflyAssetIndex assets,
   required FireflySyncReport report,
   required _FireflyPushBacklog backlog,
   required DateTime deleteLoggedAt,
@@ -2789,6 +2990,21 @@ Future<bool> _removeSplitFromRemoteGroup({
     remoteGroup = await client.getTransaction(deletedMap.fireflyId);
   } on FireflyNotFoundException {
     await _tombstoneGroupMaps(deletedMap, groupMaps);
+    return false;
+  }
+  // A delete is a write. deleteWallet() removes the local rows before it
+  // writes the delete log, thus the wallet of the row is gone here and the
+  // account comes from the live group instead.
+  FireflyAccount? inactive = _inactiveAssetAccountOfGroup(remoteGroup, assets);
+  if (inactive != null) {
+    report.skippedInactiveAccount++;
+    backlog.recordNotPushed(deleteLoggedAt);
+    if (assets.warnedInactive.add(inactive.id)) {
+      report.warnings
+          .add("Did not remove a transaction from the Firefly account "
+              "\"${inactive.name}\": that account is inactive. Activate it on "
+              "Firefly to let the delete through.");
+    }
     return false;
   }
   if (remoteGroup.splits.length <= 1) {
@@ -2812,6 +3028,19 @@ Future<bool> _removeSplitFromRemoteGroup({
   await _tombstoneMapRow(deletedMap);
   report.deletedRemote++;
   return false;
+}
+
+// The first inactive asset account that one side of the group names. null
+// when each account of the group is active, or not known here.
+FireflyAccount? _inactiveAssetAccountOfGroup(
+    FireflyTransactionGroup group, _FireflyAssetIndex assets) {
+  for (FireflyTransactionSplit split in group.splits) {
+    for (int? id in [split.sourceId, split.destinationId]) {
+      FireflyAccount? account = id == null ? null : assets.byId[id];
+      if (account != null && !account.active) return account;
+    }
+  }
+  return null;
 }
 
 Future<void> _tombstoneGroupMaps(

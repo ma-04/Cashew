@@ -5282,18 +5282,25 @@ class FinanceDatabase extends _$FinanceDatabase {
     // If the source if the main wallet (we cannot delete it)
     // Move transactions the other way and update parameters if moving to main wallet
 
-    // Update the primary wallet to match old, create an entirely new wallet copy under "0"
-    await database
-        .createOrUpdateWallet(sourceWallet.copyWith(walletPk: "0")); // "0"
-    // The Firefly link goes with the wallet. Without this, "0" keeps the
-    // link of the wallet that the user removed, and each row of the moved
-    // wallet is then pushed into the Firefly account of the removed wallet.
-    await database.swapFireflyWalletLinks(sourceWallet.walletPk, "0");
-    // Force move transactions over from old to new "0"
-    await database.transferTransactionsOnly(sourceWallet.walletPk, "0");
-    // Delete the duplicate, the old
-    await database.deleteWallet(sourceWallet.walletPk, sourceWallet.order);
-    await database.fixOrderWallets();
+    // One transaction over all of it. Between these steps the database holds
+    // two copies of the same account, or an account whose rows have moved
+    // but whose Firefly link has not. A sync cycle that reads it there
+    // creates a second Firefly account, or pushes the rows into the account
+    // of the wallet that the user removed.
+    await transaction(() async {
+      // Update the primary wallet to match old, create an entirely new wallet copy under "0"
+      await database
+          .createOrUpdateWallet(sourceWallet.copyWith(walletPk: "0")); // "0"
+      // The Firefly link goes with the wallet. Without this, "0" keeps the
+      // link of the wallet that the user removed, and each row of the moved
+      // wallet is then pushed into the Firefly account of the removed wallet.
+      await database.swapFireflyWalletLinks(sourceWallet.walletPk, "0");
+      // Force move transactions over from old to new "0"
+      await database.transferTransactionsOnly(sourceWallet.walletPk, "0");
+      // Delete the duplicate, the old
+      await database.deleteWallet(sourceWallet.walletPk, sourceWallet.order);
+      await database.fixOrderWallets();
+    });
   }
 
   // Moves the Firefly links of two wallets onto each other's key. Used when
