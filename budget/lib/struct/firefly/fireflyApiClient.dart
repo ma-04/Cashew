@@ -4,6 +4,7 @@
 // This file has no Flutter imports. A test can therefore drive it with the
 // MockClient from package:http/testing.dart and no widget harness.
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:budget/struct/firefly/fireflyModels.dart';
@@ -12,6 +13,16 @@ import 'package:budget/struct/firefly/fireflyModels.dart';
 // Firefly log shows only "Dart/3.3 (dart:io)", which does not tell the user
 // which application made the request.
 const String kFireflyUserAgent = "Cashew-FireflySync";
+
+// Every request gets this deadline. package:http has none of its own: a
+// connection that the server accepts and then never answers leaves the await
+// pending for ever. The sync engine holds a lock for the length of a cycle,
+// so one such request stops every later sync until the app restarts.
+const Duration kFireflyRequestTimeout = Duration(seconds: 30);
+
+// A 429 answer with a Retry-After no longer than this is waited out inside
+// the client. A longer one ends the cycle, which the user can start again.
+const Duration kFireflyMaxRetryAfterWait = Duration(seconds: 5);
 
 class FireflyAuthException implements Exception {
   final String message;
@@ -22,9 +33,18 @@ class FireflyAuthException implements Exception {
 
 class FireflyRateLimitException implements Exception {
   final String message;
-  FireflyRateLimitException([this.message = "Rate limited by Firefly server"]);
+  // The Retry-After header of the answer, in seconds, when the server sent
+  // one. The client waits for it itself if it is short; a longer wait ends
+  // the cycle and this value tells the user when to try again.
+  final int? retryAfterSeconds;
+  FireflyRateLimitException(
+      [this.message = "Rate limited by Firefly server",
+      this.retryAfterSeconds]);
   @override
-  String toString() => "FireflyRateLimitException: $message";
+  String toString() => retryAfterSeconds == null
+      ? "FireflyRateLimitException: $message"
+      : "FireflyRateLimitException: $message (retry after "
+          "${retryAfterSeconds}s)";
 }
 
 class FireflyNetworkException implements Exception {
@@ -104,7 +124,8 @@ class FireflyApiClient {
       throw FireflyNotFoundException();
     }
     if (response.statusCode == 429) {
-      throw FireflyRateLimitException();
+      throw FireflyRateLimitException(
+          "Rate limited by Firefly server", _retryAfterSeconds(response));
     }
     if (response.statusCode == 422) {
       throw FireflyValidationException(
@@ -118,46 +139,80 @@ class FireflyApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body));
   }
 
+  // Reads Retry-After. Firefly sends whole seconds; the HTTP date form is
+  // permitted by the specification, thus it is read too.
+  static int? _retryAfterSeconds(http.Response response) {
+    String? header = response.headers["retry-after"];
+    if (header == null) return null;
+    int? seconds = int.tryParse(header.trim());
+    if (seconds != null) return seconds < 0 ? 0 : seconds;
+    DateTime? until = DateTime.tryParse(header.trim());
+    if (until == null) return null;
+    int delta = until.difference(DateTime.now()).inSeconds;
+    return delta < 0 ? 0 : delta;
+  }
+
+  // The one place that makes a request. Every verb goes through it, so the
+  // deadline and the answer to a 429 hold for all of them.
+  Future<Map<String, dynamic>> _send(
+    String method,
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? body,
+  }) async {
+    Uri uri = _uri(path, query);
+    String? payload = body == null ? null : jsonEncode(body);
+    Future<http.Response> attempt() {
+      switch (method) {
+        case "GET":
+          return _client.get(uri, headers: _headers);
+        case "POST":
+          return _client.post(uri, headers: _headers, body: payload);
+        case "PUT":
+          return _client.put(uri, headers: _headers, body: payload);
+        case "DELETE":
+          return _client.delete(uri, headers: _headers);
+      }
+      throw ArgumentError("Unknown method $method");
+    }
+
+    try {
+      try {
+        return await _handleResponse(
+            await attempt().timeout(kFireflyRequestTimeout));
+      } on FireflyRateLimitException catch (e) {
+        // One wait, and only for a limit that lifts soon. Anything longer is
+        // the caller's decision: the cycle ends and keeps its watermark.
+        int? after = e.retryAfterSeconds;
+        if (after == null || after > kFireflyMaxRetryAfterWait.inSeconds) {
+          rethrow;
+        }
+        await Future.delayed(Duration(seconds: after));
+        return await _handleResponse(
+            await attempt().timeout(kFireflyRequestTimeout));
+      }
+    } on TimeoutException {
+      // As a network failure, not as its own kind. The engine already ends
+      // the cycle on one of those and keeps the changes in front of the
+      // watermark, which is what a request with no answer needs.
+      throw FireflyNetworkException("The Firefly server did not answer within "
+          "${kFireflyRequestTimeout.inSeconds}s ($method $path)");
+    } on http.ClientException catch (e) {
+      throw FireflyNetworkException(e.message);
+    }
+  }
+
   Future<Map<String, dynamic>> _get(String path,
-      [Map<String, dynamic>? query]) async {
-    try {
-      http.Response response =
-          await _client.get(_uri(path, query), headers: _headers);
-      return await _handleResponse(response);
-    } on http.ClientException catch (e) {
-      throw FireflyNetworkException(e.message);
-    }
-  }
+          [Map<String, dynamic>? query]) =>
+      _send("GET", path, query: query);
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) async {
-    try {
-      http.Response response = await _client.post(_uri(path),
-          headers: _headers, body: jsonEncode(body));
-      return await _handleResponse(response);
-    } on http.ClientException catch (e) {
-      throw FireflyNetworkException(e.message);
-    }
-  }
+  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) =>
+      _send("POST", path, body: body);
 
-  Future<Map<String, dynamic>> _put(String path, Map<String, dynamic> body) async {
-    try {
-      http.Response response = await _client.put(_uri(path),
-          headers: _headers, body: jsonEncode(body));
-      return await _handleResponse(response);
-    } on http.ClientException catch (e) {
-      throw FireflyNetworkException(e.message);
-    }
-  }
+  Future<Map<String, dynamic>> _put(String path, Map<String, dynamic> body) =>
+      _send("PUT", path, body: body);
 
-  Future<void> _delete(String path) async {
-    try {
-      http.Response response =
-          await _client.delete(_uri(path), headers: _headers);
-      await _handleResponse(response);
-    } on http.ClientException catch (e) {
-      throw FireflyNetworkException(e.message);
-    }
-  }
+  Future<void> _delete(String path) => _send("DELETE", path);
 
   // The "Test Connection" button uses this. It is the smallest request
   // that needs the token.
@@ -166,11 +221,35 @@ class FireflyApiClient {
     return FireflyAbout.fromJson(json);
   }
 
+  // Records of a list that this app cannot read. One of them must not end
+  // the cycle, and it must not pass silently either: the engine drains this
+  // after a pull and reports each one as a warning.
+  final List<String> _malformedRecords = [];
+
+  List<String> takeMalformedRecordWarnings() {
+    List<String> warnings = List<String>.from(_malformedRecords);
+    _malformedRecords.clear();
+    return warnings;
+  }
+
+  List<T> _readRecords<T>(
+      List<Map<String, dynamic>> pages, T Function(Map<String, dynamic>) read) {
+    List<T> records = [];
+    for (Map<String, dynamic> json in pages) {
+      try {
+        records.add(read(json));
+      } on FireflyMalformedRecordException catch (e) {
+        _malformedRecords.add(e.message);
+      }
+    }
+    return records;
+  }
+
   Future<List<FireflyAccount>> getAccounts({String? type}) async {
     Map<String, dynamic> query = {};
     if (type != null) query["type"] = type;
     List<Map<String, dynamic>> pages = await _getAllPages("/accounts", query);
-    return pages.map((json) => FireflyAccount.fromJson(json)).toList();
+    return _readRecords(pages, FireflyAccount.fromJson);
   }
 
   Future<FireflyAccount> createAccount(FireflyAccount account) async {
@@ -189,13 +268,12 @@ class FireflyApiClient {
 
   Future<FireflyAccount> getAccount(int id) async {
     Map<String, dynamic> json = await _get("/accounts/$id");
-    return FireflyAccount.fromJson(
-        Map<String, dynamic>.from(json["data"]));
+    return FireflyAccount.fromJson(Map<String, dynamic>.from(json["data"]));
   }
 
   Future<List<FireflyCategory>> getCategories() async {
     List<Map<String, dynamic>> pages = await _getAllPages("/categories", {});
-    return pages.map((json) => FireflyCategory.fromJson(json)).toList();
+    return _readRecords(pages, FireflyCategory.fromJson);
   }
 
   Future<FireflyCategory> createCategory(FireflyCategory category) async {
@@ -229,7 +307,7 @@ class FireflyApiClient {
     if (end != null) query["end"] = _formatDate(end);
     List<Map<String, dynamic>> pages =
         await _getAllPages("/transactions", query);
-    return pages.map((json) => FireflyTransactionGroup.fromJson(json)).toList();
+    return _readRecords(pages, FireflyTransactionGroup.fromJson);
   }
 
   Future<FireflyTransactionGroup> createTransaction(
@@ -308,9 +386,8 @@ class FireflyApiClient {
       List<dynamic> data = List<dynamic>.from(json["data"] ?? []);
       results.addAll(data.map((item) => Map<String, dynamic>.from(item)));
 
-      Map<String, dynamic>? meta = json["meta"] == null
-          ? null
-          : Map<String, dynamic>.from(json["meta"]);
+      Map<String, dynamic>? meta =
+          json["meta"] == null ? null : Map<String, dynamic>.from(json["meta"]);
       Map<String, dynamic>? pagination = meta?["pagination"] == null
           ? null
           : Map<String, dynamic>.from(meta!["pagination"]);

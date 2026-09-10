@@ -2,6 +2,27 @@
 // uses. They keep the shape of Firefly's JSON. fireflyMapper.dart maps them to
 // and from the local Drift rows.
 
+// A record of the server that this app cannot read. One such record must
+// not stop the cycle: the pull catches this, warns and leaves the record
+// alone. Before, a missing field became a made-up value (a withdrawal of 0
+// dated today) that the pull then wrote into the local database.
+class FireflyMalformedRecordException implements Exception {
+  final String message;
+  FireflyMalformedRecordException(this.message);
+  @override
+  String toString() => "FireflyMalformedRecordException: $message";
+}
+
+// Firefly sends ids as strings. int.parse throws a FormatException that no
+// layer of the app catches, and one unreadable record then ends every cycle.
+int _parseId(dynamic value, String what) {
+  int? parsed = value == null ? null : int.tryParse(value.toString());
+  if (parsed == null) {
+    throw FireflyMalformedRecordException("$what has no readable id: $value");
+  }
+  return parsed;
+}
+
 double? _parseDouble(dynamic value) {
   if (value == null) return null;
   if (value is num) return value.toDouble();
@@ -44,7 +65,7 @@ class FireflyAccount {
     Map<String, dynamic> attributes =
         Map<String, dynamic>.from(json["attributes"] ?? {});
     return FireflyAccount(
-      id: int.parse(json["id"].toString()),
+      id: _parseId(json["id"], "An account"),
       name: attributes["name"]?.toString() ?? "",
       type: attributes["type"]?.toString() ?? "asset",
       currencyCode: attributes["currency_code"]?.toString(),
@@ -87,7 +108,7 @@ class FireflyCategory {
     Map<String, dynamic> attributes =
         Map<String, dynamic>.from(json["attributes"] ?? {});
     return FireflyCategory(
-      id: int.parse(json["id"].toString()),
+      id: _parseId(json["id"], "A category"),
       name: attributes["name"]?.toString() ?? "",
       createdAt: _parseDate(attributes["created_at"]),
       updatedAt: _parseDate(attributes["updated_at"]),
@@ -121,6 +142,11 @@ class FireflyTransactionSplit {
   final double? foreignAmount;
   final String? foreignCurrencyCode;
   final String? notes;
+  // The key of the local row that made this record. It is written on every
+  // create, so a create whose answer never arrived can be found again: the
+  // pull sees a record with an external id, finds the local row of that key
+  // with no link, and links the two rather than making a second copy.
+  final String? externalId;
   // The identity that Firefly gives to this split. It stays the same when a
   // sibling split is deleted, but the position in group.splits does not. The
   // sync map therefore matches on this value. It is null for a split that the
@@ -147,6 +173,7 @@ class FireflyTransactionSplit {
     this.foreignAmount,
     this.foreignCurrencyCode,
     this.notes,
+    this.externalId,
     this.transactionJournalId,
     this.unchanged = false,
   });
@@ -165,10 +192,28 @@ class FireflyTransactionSplit {
   }
 
   factory FireflyTransactionSplit.fromJson(Map<String, dynamic> json) {
+    // The three fields that decide what the row is and what it does to a
+    // balance. A default for any of them writes a record the server does not
+    // hold: "withdrawal" hides the type the pull is meant to skip, DateTime
+    // .now() moves the row to today, and 0 empties it.
+    String? type = json["type"]?.toString();
+    DateTime? date = _parseDate(json["date"]);
+    double? amount = _parseDouble(json["amount"]);
+    if (type == null || type.isEmpty) {
+      throw FireflyMalformedRecordException("A split has no type");
+    }
+    if (date == null) {
+      throw FireflyMalformedRecordException(
+          "A split has no readable date: ${json["date"]}");
+    }
+    if (amount == null) {
+      throw FireflyMalformedRecordException(
+          "A split has no readable amount: ${json["amount"]}");
+    }
     return FireflyTransactionSplit(
-      type: json["type"]?.toString() ?? "withdrawal",
-      date: _parseDate(json["date"]) ?? DateTime.now(),
-      amount: _parseDouble(json["amount"]) ?? 0,
+      type: type,
+      date: date,
+      amount: amount,
       description: json["description"]?.toString() ?? "",
       sourceId: json["source_id"] == null
           ? null
@@ -186,6 +231,7 @@ class FireflyTransactionSplit {
       foreignAmount: _parseDouble(json["foreign_amount"]),
       foreignCurrencyCode: json["foreign_currency_code"]?.toString(),
       notes: json["notes"]?.toString(),
+      externalId: json["external_id"]?.toString(),
       transactionJournalId: json["transaction_journal_id"] == null
           ? null
           : int.tryParse(json["transaction_journal_id"].toString()),
@@ -217,6 +263,7 @@ class FireflyTransactionSplit {
       if (foreignAmount != null && foreignCurrencyCode != null)
         "foreign_currency_code": foreignCurrencyCode,
       if (notes != null) "notes": notes,
+      if (externalId != null) "external_id": externalId,
     };
   }
 }
@@ -242,7 +289,7 @@ class FireflyTransactionGroup {
     List<dynamic> transactionsJson =
         List<dynamic>.from(attributes["transactions"] ?? []);
     return FireflyTransactionGroup(
-      id: int.parse(json["id"].toString()),
+      id: _parseId(json["id"], "A transaction"),
       groupTitle: attributes["group_title"]?.toString(),
       createdAt: _parseDate(attributes["created_at"]),
       updatedAt: _parseDate(attributes["updated_at"]),

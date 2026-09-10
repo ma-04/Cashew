@@ -33,7 +33,8 @@ Future<void> clearFireflyPat() {
 
 bool get fireflyEnabled => appStateSettings["fireflyEnabled"] == true;
 
-String get fireflyHostUrl => appStateSettings["fireflyHostUrl"]?.toString() ?? "";
+String get fireflyHostUrl =>
+    appStateSettings["fireflyHostUrl"]?.toString() ?? "";
 
 Future<void> setFireflyEnabled(bool enabled) {
   return updateSettings("fireflyEnabled", enabled, updateGlobalState: false);
@@ -76,8 +77,7 @@ Future<void> setFireflySyncWindowDays(int days) {
 // tests.
 DateTime fireflySyncWindowStart({DateTime? now}) {
   DateTime reference = now ?? DateTime.now();
-  DateTime start =
-      reference.subtract(Duration(days: fireflySyncWindowDays));
+  DateTime start = reference.subtract(Duration(days: fireflySyncWindowDays));
   return DateTime(start.year, start.month, start.day);
 }
 
@@ -88,8 +88,7 @@ DateTime? get fireflyLastSyncedAt {
 }
 
 Future<void> setFireflyLastSyncedAt(DateTime dateTime) {
-  return updateSettings(
-      "fireflyLastSyncedAt", dateTime.toIso8601String(),
+  return updateSettings("fireflyLastSyncedAt", dateTime.toIso8601String(),
       updateGlobalState: false);
 }
 
