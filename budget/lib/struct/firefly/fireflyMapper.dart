@@ -39,7 +39,11 @@ FireflyAccount walletToFireflyAccount(
     id: 0,
     name: wallet.name,
     type: kFireflyAssetAccountType,
-    currencyCode: wallet.currency?.toUpperCase(),
+    // An empty string is no currency. Firefly reads "currency_code": "" as a
+    // code it does not know and answers 422.
+    currencyCode: (wallet.currency ?? "").trim().isEmpty
+        ? null
+        : wallet.currency!.trim().toUpperCase(),
     accountRole: existingAccountRole ?? "defaultAsset",
     active: existingActive,
   );
@@ -180,6 +184,10 @@ FireflyAccount? resolvePushCounterparty({
 FireflyTransactionSplit transactionToFireflySplit(
   Transaction transaction, {
   required int walletFireflyId,
+  // The currency of the wallet. Firefly takes the currency preference of the
+  // asset account before this one, so it only decides for an account that has
+  // no preference of its own. The push refuses a row whose two currencies
+  // differ; see _pushBlockedByCurrencyMismatch.
   String? walletCurrencyCode,
   int? categoryFireflyId,
   String? categoryName,
@@ -205,8 +213,13 @@ FireflyTransactionSplit transactionToFireflySplit(
         : null,
     categoryId: categoryFireflyId,
     categoryName: categoryFireflyId == null ? categoryName : null,
-    currencyCode: walletCurrencyCode?.toUpperCase(),
+    currencyCode: (walletCurrencyCode ?? "").trim().isEmpty
+        ? null
+        : walletCurrencyCode!.trim().toUpperCase(),
     notes: transaction.note.trim().isEmpty ? null : transaction.note,
+    // The key of the row that this split stands for. It is what finds the
+    // record again when the answer to its create never arrived.
+    externalId: transaction.transactionPk,
     transactionJournalId: transactionJournalId,
   );
 }
@@ -262,6 +275,8 @@ FireflyTransactionSplit transferPairToFireflySplit({
     foreignAmount: crossCurrency ? toTransaction.amount.abs() : null,
     foreignCurrencyCode: crossCurrency ? to : null,
     notes: notes.trim().isEmpty ? null : notes,
+    // The source leg carries the key. The pull links the paired leg with it.
+    externalId: fromTransaction.transactionPk,
     transactionJournalId: transactionJournalId,
   );
 }

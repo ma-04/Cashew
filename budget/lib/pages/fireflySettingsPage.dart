@@ -243,6 +243,21 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
           "firefly-link-account-taken-warning"
               .tr(namedArgs: {"wallet": takenFrom});
     }
+    // Two currencies that differ make every push of this account fail, and
+    // the sync says so only after the fact. Say it here, while the user can
+    // still pick another account.
+    String walletCurrency = (link.wallet.currency ?? "").trim().toUpperCase();
+    String accountCurrency = (account?.currencyCode ?? "").trim().toUpperCase();
+    if (walletCurrency.isNotEmpty &&
+        accountCurrency.isNotEmpty &&
+        walletCurrency != accountCurrency) {
+      description += "\n\n" +
+          "firefly-link-account-currency-warning".tr(namedArgs: {
+            "wallet": link.wallet.name,
+            "walletCurrency": walletCurrency,
+            "accountCurrency": accountCurrency,
+          });
+    }
     await openPopup(
       context,
       title: "firefly-link-account".tr(),
@@ -325,6 +340,31 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   // Removes the token and the links of the previous host. The token is a
   // secret of that server, thus the application must not send it to a
   // different one, and each saved Firefly id is correct for that server only.
+  // The user is about to change the host. That removes the token and every
+  // link, which cannot be undone from here. Ask first: before this, a typo in
+  // the host field and a tap on Save were enough to lose them.
+  Future<bool> _confirmForgetPreviousHost() async {
+    bool confirmed = false;
+    await openPopup(
+      context,
+      title: "firefly-host-changed".tr(),
+      description: "firefly-host-change-confirm".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.warning_amber_outlined
+          : Icons.warning_amber_rounded,
+      onSubmitLabel: "continue".tr(),
+      onSubmit: () {
+        confirmed = true;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    return confirmed;
+  }
+
   Future<void> _forgetPreviousHost() async {
     await clearFireflyPat();
     await fireflyForgetSyncState();
@@ -358,13 +398,19 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     }
     String host = hostController.text.trim();
     String token = patController.text.trim();
-    if (_hostChanged(host)) await _forgetPreviousHost();
+    if (_hostChanged(host)) {
+      if (!await _confirmForgetPreviousHost()) return false;
+      await _forgetPreviousHost();
+    }
     await setFireflyHostUrl(host);
     if (token.isNotEmpty) {
       await setFireflyPat(token);
       patController.clear();
     }
     await setFireflyEnabled(true);
+    // The page can be gone: each await above gives the user time to leave it,
+    // and this one is a full-height sheet that a drag closes.
+    if (!mounted) return true;
     setState(() {
       enabled = true;
     });
@@ -374,6 +420,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
 
   Future<bool> disableFirefly() async {
     await setFireflyEnabled(false);
+    if (!mounted) return true;
     setState(() {
       enabled = false;
     });
@@ -385,6 +432,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     String token = patController.text.trim();
     bool hostChanged = _hostChanged(host);
     if (hostChanged) {
+      if (!await _confirmForgetPreviousHost()) return;
       await _forgetPreviousHost();
       // Without a token for the new host the application cannot sync. Stop
       // the automatic cycles until the user gives one.
@@ -398,6 +446,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     // The cached ranges of the on-demand fetches are answers of the previous
     // host, or of a smaller window.
     fireflyClearOnDemandCacheMemory();
+    if (!mounted) return;
     setState(() {
       enabled = fireflyEnabled;
     });

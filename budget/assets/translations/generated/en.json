@@ -1230,9 +1230,11 @@
   "firefly-link-account": "Link a Firefly account",
   "firefly-link-account-confirm": "\"{wallet}\" will sync with \"{account}\" from now on. Transactions already on Firefly are not moved, and the Firefly account linked until now is no longer synced.",
   "firefly-link-account-taken": "currently \"{wallet}\"",
+  "firefly-link-account-currency-warning": "\"{wallet}\" is in {walletCurrency} and this Firefly account is in {accountCurrency}. Firefly books every amount in the currency of its own account, so nothing will be pushed to it until both use the same currency.",
   "firefly-link-account-taken-warning": "\"{wallet}\" is linked to this Firefly account and loses its link. Its transactions stay in this app and are no longer synced.",
   "firefly-link-account-done": "Account linked",
   "firefly-uncategorized": "Uncategorized",
+  "firefly-host-change-confirm": "Cashew will remove the saved token and every link to the previous server. The transactions stay in this app, and nothing is removed from either Firefly server, but the accounts of the new host have to be linked again.",
   "firefly-host-changed": "Host changed",
   "firefly-host-changed-description": "Cashew removed the saved token and the links to the previous server. Enter a Personal Access Token for the new host."
 }

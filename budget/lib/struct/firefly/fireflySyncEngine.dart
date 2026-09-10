@@ -72,6 +72,12 @@ class FireflySyncReport {
   // Rows that a push held back because the Firefly record they point at sits
   // on another Firefly account. See _pushBlockedByMovedRemoteRow.
   int skippedMovedRemoteRow = 0;
+  // Rows that a push held back because the wallet and the Firefly account it
+  // is linked to keep different currencies. See _pushBlockedByAccountState.
+  int skippedCurrencyMismatch = 0;
+  // Records of a create whose answer never arrived, found again by their
+  // external id and linked instead of imported a second time.
+  int recoveredCreates = 0;
   // Rows that a push tried and that Firefly or the network refused. Each one
   // has a warning, and the next cycle tries it again.
   int failedCategories = 0;
@@ -115,6 +121,13 @@ class FireflySyncReport {
     if (skippedMovedRemoteRow > 0) {
       parts.add("$skippedMovedRemoteRow transactions held back (they belong to "
           "another Firefly account)");
+    }
+    if (skippedCurrencyMismatch > 0) {
+      parts.add("$skippedCurrencyMismatch transactions held back (the account "
+          "and the Firefly account have different currencies)");
+    }
+    if (recoveredCreates > 0) {
+      parts.add("$recoveredCreates transactions relinked instead of copied");
     }
     if (failedTotal > 0) {
       parts.add("$failedTotal not pushed (see warnings)");
@@ -257,7 +270,17 @@ Future<bool> fireflySyncNow({
     String hostUrl = fireflyHostUrl;
     String? pat = await getFireflyPat();
     if (hostUrl.isEmpty || pat == null || pat.isEmpty) {
-      throw FireflyAuthException("Firefly host or access token not set");
+      // The enabled flag and the host are in the settings, which a backup
+      // carries. The token is in the key store of the device, which it does
+      // not. A restore therefore leaves the integration reading as on with
+      // no way to reach the server, and every cycle from then on fails with
+      // an error that does not say why. Switch it off and say what to do.
+      await setFireflyEnabled(false);
+      throw FireflyAuthException(hostUrl.isEmpty
+          ? "Firefly host or access token not set"
+          : "The Firefly access token is not on this device. A backup does "
+              "not carry it. Firefly sync is off; enter the token again in "
+              "the Firefly settings to switch it back on.");
     }
     client = FireflyApiClient(baseUrl: hostUrl, personalAccessToken: pat);
 
@@ -337,6 +360,13 @@ Future<bool> fireflySyncNow({
             await _refreshBalanceAnchors(api, report);
           }
         }));
+
+    // Records that the client could not read. It skipped them rather than
+    // ending the cycle; each one is a warning here so that they are not lost.
+    for (String malformed in client.takeMalformedRecordWarnings()) {
+      report.warnings
+          .add("A Firefly record was not read and stays as it is: $malformed");
+    }
 
     await setFireflyLastSyncedAt(backlog.nextWatermark(syncStartedAt));
     fireflySyncReportNotifier.value = report;
@@ -427,6 +457,8 @@ class _FireflyAssetIndex {
   final Set<int> warnedInactive = {};
   // The Firefly transactions that already have a warning in this cycle.
   final Set<int> warnedMoved = {};
+  // The accounts whose currency already has a warning in this cycle.
+  final Set<int> warnedCurrency = {};
   // True once the cycle read the list. Before that a missing id says nothing;
   // after it a missing id means that a link points at a record that the
   // server does not give as an asset account.
@@ -440,13 +472,54 @@ class _FireflyAssetIndex {
   }
 }
 
+// True if the wallet of a local row is linked to a Firefly account of
+// another currency.
+//
+// Firefly does not book a withdrawal or a deposit in the currency that the
+// request names. TransactionJournalFactory::getCurrency takes the currency
+// preference of the asset account first and falls back to the submitted code
+// only when the account has none. A wallet in BDT linked to an account in USD
+// therefore books 1,200 BDT as 1,200 USD, and no field of the request can
+// stop it. The only thing the app can do is refuse to send the row.
+//
+// The row is held back rather than dropped: the watermark stays at it, thus
+// it goes as soon as the user fixes the currency on either side or links the
+// account to another Firefly account.
+Future<bool> _pushBlockedByCurrencyMismatch({
+  required _FireflyAssetIndex assets,
+  required String walletPk,
+  required FireflyAccount account,
+  required DateTime? localModified,
+  required FireflySyncReport report,
+  required _FireflyPushBacklog backlog,
+}) async {
+  String remote = (account.currencyCode ?? "").trim().toUpperCase();
+  if (remote.isEmpty) return false;
+  TransactionWallet? wallet = await database.getWalletInstanceOrNull(walletPk);
+  String local = (wallet?.currency ?? "").trim().toUpperCase();
+  // A wallet with no currency of its own follows the account. Only two codes
+  // that are both set and different are a mismatch.
+  if (local.isEmpty || local == remote) return false;
+  report.skippedCurrencyMismatch++;
+  backlog.recordNotPushed(localModified);
+  if (assets.warnedCurrency.add(account.id)) {
+    report.warnings.add(
+        "The account \"${wallet?.name ?? walletPk}\" is in $local and the "
+        "Firefly account \"${account.name}\" it is linked to is in $remote. "
+        "Firefly books every amount in the currency of its own account, so "
+        "nothing was pushed. Give both the same currency, or link the account "
+        "to another Firefly account in the Firefly settings.");
+  }
+  return true;
+}
+
 // True if the wallet of a local row is linked to an inactive Firefly
 // account. The push then holds the row back: a warning names the account,
 // the counter goes up, and the watermark stays at the row, thus a later
 // cycle sends it once the user activated the account or linked the wallet to
 // another account. A wallet with no link is not this case; the caller has
 // its own test for that.
-Future<bool> _pushBlockedByInactiveAccount({
+Future<bool> _pushBlockedByAccountState({
   required _FireflyAssetIndex assets,
   required String walletPk,
   required DateTime? localModified,
@@ -460,7 +533,16 @@ Future<bool> _pushBlockedByInactiveAccount({
   // The cycle has not read the list: nothing is known about the account, and
   // a push that the app cannot judge goes on as before.
   if (account == null && !assets.loaded) return false;
-  if (account != null && account.active) return false;
+  if (account != null && account.active) {
+    return await _pushBlockedByCurrencyMismatch(
+      assets: assets,
+      walletPk: walletPk,
+      account: account,
+      localModified: localModified,
+      report: report,
+      backlog: backlog,
+    );
+  }
   report.skippedInactiveAccount++;
   backlog.recordNotPushed(localModified);
   if (assets.warnedInactive.add(walletMap.fireflyId)) {
@@ -1072,6 +1154,15 @@ Future<Set<int>> _pullTransactions(
           splitMaps.isEmpty ? null : splitMaps.first;
 
       if (existingMap == null) {
+        if (await _adoptLostCreate(
+          group: group,
+          split: split,
+          splitIndex: splitIndex,
+          report: report,
+          counterpartyFireflyId: counterpartyId,
+        )) {
+          continue;
+        }
         Transaction newTransaction = fireflySplitToTransaction(
           split,
           walletPk: walletPk,
@@ -1195,6 +1286,70 @@ Future<FireflySyncMapEntry> _writeSplitJournalId(
   return map.copyWith(fireflyJournalId: Value(journalId));
 }
 
+// Links the local row that made a Firefly record to that record.
+//
+// A create is two steps that cannot be one: the request to Firefly, and the
+// row of the sync map that keeps the answer. Between them the app can be
+// killed. Firefly then holds a record that no local row points at, and both
+// halves of the sync make a copy of it: the pull imports it as a new local
+// row, and the push sends the local row again as a new remote record.
+//
+// Every create carries the key of its local row in external_id. This reads
+// it back. A row that is already linked is not this case, and neither is a
+// key that names no row.
+//
+// The link is written with no local watermark, so the next push sends the
+// current content of the local row onto the record as an update. That is
+// right whether or not the row changed after the lost create.
+Future<bool> _adoptLostCreate({
+  required FireflyTransactionGroup group,
+  required FireflyTransactionSplit split,
+  required int splitIndex,
+  required FireflySyncReport report,
+  int? counterpartyFireflyId,
+  // The transfer path links both legs of the pair, not the source row alone.
+  bool linkPairedRow = false,
+}) async {
+  String externalId = (split.externalId ?? "").trim();
+  if (externalId.isEmpty) return false;
+  Transaction? local = await database.tryGetTransactionFromPk(externalId);
+  if (local == null) return false;
+  List<Transaction> rows = [local];
+  if (linkPairedRow) {
+    if (local.pairedTransactionFk == null) return false;
+    Transaction? paired =
+        await database.tryGetTransactionFromPk(local.pairedTransactionFk!);
+    if (paired == null) return false;
+    rows.add(paired);
+  }
+  // Any existing entry, tombstone included, means the app already decided
+  // what this row points at. Adoption must not overwrite that decision.
+  for (Transaction row in rows) {
+    if (await _syncMapByLocalPk(
+            FireflySyncEntityType.transaction, row.transactionPk,
+            includeTombstones: true) !=
+        null) {
+      return false;
+    }
+  }
+  await database.transaction(() async {
+    for (Transaction row in rows) {
+      await _upsertSyncMap(
+        type: FireflySyncEntityType.transaction,
+        localPk: row.transactionPk,
+        fireflyId: group.id,
+        fireflyUpdatedAt: group.updatedAt,
+        lastSyncedLocalModified: null,
+        counterpartyFireflyId: counterpartyFireflyId,
+        fireflySplitIndex: splitIndex,
+        fireflyJournalId: split.transactionJournalId,
+      );
+    }
+  });
+  report.recoveredCreates += rows.length;
+  return true;
+}
+
 Future<void> _pullTransferSplit({
   required FireflyTransactionGroup group,
   required FireflyTransactionSplit split,
@@ -1221,6 +1376,15 @@ Future<void> _pullTransferSplit({
       (await database.getWalletInstanceOrNull(destPk))?.currency;
 
   if (splitMaps.isEmpty) {
+    if (await _adoptLostCreate(
+      group: group,
+      split: split,
+      splitIndex: splitIndex,
+      report: report,
+      linkPairedRow: true,
+    )) {
+      return;
+    }
     (Transaction, Transaction) pair = fireflySplitToTransferPair(
       split,
       sourceWalletPk: sourcePk,
@@ -1325,42 +1489,52 @@ Future<void> _pullTransferSplit({
             : await database.tryGetTransactionFromPk(existingDestPk),
         rebuilt.$2),
   );
-  await database.createOrUpdateTransaction(pair.$1,
-      insert: false, updateSharedEntry: false, fireflySync: true);
-  await database.createOrUpdateTransaction(pair.$2,
-      insert: false, updateSharedEntry: false, fireflySync: true);
-  Transaction? savedFrom =
-      await database.tryGetTransactionFromPk(pair.$1.transactionPk);
-  Transaction? savedTo =
-      await database.tryGetTransactionFromPk(pair.$2.transactionPk);
-  FireflySyncMapEntry? fromMap = splitMaps
-      .cast<FireflySyncMapEntry?>()
-      .firstWhere((m) => m?.localPk == pair.$1.transactionPk,
-          orElse: () => null);
-  FireflySyncMapEntry? toMap = splitMaps
-      .cast<FireflySyncMapEntry?>()
-      .firstWhere((m) => m?.localPk == pair.$2.transactionPk,
-          orElse: () => null);
-  await _upsertSyncMap(
-    syncMapPk: fromMap?.syncMapPk,
-    type: FireflySyncEntityType.transaction,
-    localPk: pair.$1.transactionPk,
-    fireflyId: group.id,
-    fireflyUpdatedAt: group.updatedAt,
-    lastSyncedLocalModified: savedFrom?.dateTimeModified,
-    fireflySplitIndex: splitIndex,
-    fireflyJournalId: split.transactionJournalId ?? fromMap?.fireflyJournalId,
-  );
-  await _upsertSyncMap(
-    syncMapPk: toMap?.syncMapPk,
-    type: FireflySyncEntityType.transaction,
-    localPk: pair.$2.transactionPk,
-    fireflyId: group.id,
-    fireflyUpdatedAt: group.updatedAt,
-    lastSyncedLocalModified: savedTo?.dateTimeModified,
-    fireflySplitIndex: splitIndex,
-    fireflyJournalId: split.transactionJournalId ?? toMap?.fireflyJournalId,
-  );
+  // The two legs and their two map rows commit together, as they do on the
+  // insert path above. A part commit leaves one leg at the new amount and the
+  // other at the old one, and the balance of the two accounts no longer
+  // matches the one transfer they hold.
+  await database.transaction(() async {
+    await database.createOrUpdateTransaction(pair.$1,
+        insert: false, updateSharedEntry: false, fireflySync: true);
+    await database.createOrUpdateTransaction(pair.$2,
+        insert: false, updateSharedEntry: false, fireflySync: true);
+    Transaction? savedFrom =
+        await database.tryGetTransactionFromPk(pair.$1.transactionPk);
+    Transaction? savedTo =
+        await database.tryGetTransactionFromPk(pair.$2.transactionPk);
+    FireflySyncMapEntry? fromMap = splitMaps
+        .cast<FireflySyncMapEntry?>()
+        .firstWhere((m) => m?.localPk == pair.$1.transactionPk,
+            orElse: () => null);
+    FireflySyncMapEntry? toMap = splitMaps
+        .cast<FireflySyncMapEntry?>()
+        .firstWhere((m) => m?.localPk == pair.$2.transactionPk,
+            orElse: () => null);
+    await _upsertSyncMap(
+      syncMapPk: fromMap?.syncMapPk,
+      type: FireflySyncEntityType.transaction,
+      localPk: pair.$1.transactionPk,
+      fireflyId: group.id,
+      fireflyUpdatedAt: group.updatedAt,
+      lastSyncedLocalModified: savedFrom?.dateTimeModified,
+      // The link of a transfer leg names the account on the other side, and
+      // an upsert with no value for it drops that. It is written back here.
+      counterpartyFireflyId: fromMap?.counterpartyFireflyId,
+      fireflySplitIndex: splitIndex,
+      fireflyJournalId: split.transactionJournalId ?? fromMap?.fireflyJournalId,
+    );
+    await _upsertSyncMap(
+      syncMapPk: toMap?.syncMapPk,
+      type: FireflySyncEntityType.transaction,
+      localPk: pair.$2.transactionPk,
+      fireflyId: group.id,
+      fireflyUpdatedAt: group.updatedAt,
+      lastSyncedLocalModified: savedTo?.dateTimeModified,
+      counterpartyFireflyId: toMap?.counterpartyFireflyId,
+      fireflySplitIndex: splitIndex,
+      fireflyJournalId: split.transactionJournalId ?? toMap?.fireflyJournalId,
+    );
+  });
   report.pulledTransactions += 2;
 }
 
@@ -2008,7 +2182,7 @@ Future<void> _removeRemoteRowThatIsNotPaid({
   if (maps.isEmpty) return;
   Set<int> walletAccountIds = {};
   for (String walletPk in walletPks) {
-    if (await _pushBlockedByInactiveAccount(
+    if (await _pushBlockedByAccountState(
         assets: assets,
         walletPk: walletPk,
         localModified: localModified,
@@ -2232,9 +2406,12 @@ Future<void> _pushOneTransaction({
     }
   }
 
+  TransactionWallet? pushWallet =
+      await database.getWalletInstanceOrNull(transaction.walletFk);
   FireflyTransactionSplit split = transactionToFireflySplit(
     transaction,
     walletFireflyId: walletMap.fireflyId,
+    walletCurrencyCode: pushWallet?.currency,
     categoryFireflyId: categoryMap?.fireflyId,
     categoryName: category?.name,
     counterpartyFireflyId: counterparty?.id,
@@ -2245,7 +2422,7 @@ Future<void> _pushOneTransaction({
       FireflyTransactionGroup(id: 0, splits: [split]);
 
   if (map == null) {
-    if (await _pushBlockedByInactiveAccount(
+    if (await _pushBlockedByAccountState(
         assets: assets,
         walletPk: transaction.walletFk,
         localModified: transaction.dateTimeModified,
@@ -2279,7 +2456,7 @@ Future<void> _pushOneTransaction({
     )) {
       return;
     }
-    if (await _pushBlockedByInactiveAccount(
+    if (await _pushBlockedByAccountState(
         assets: assets,
         walletPk: transaction.walletFk,
         localModified: transaction.dateTimeModified,
@@ -2328,9 +2505,17 @@ Future<void> _pushOneTransaction({
         backlog.recordNotPushed(transaction.dateTimeModified);
         return;
       }
-      FireflyTransactionGroup updated = await client.updateTransaction(
-          map.fireflyId,
-          FireflyTransactionGroup(id: map.fireflyId, splits: splits));
+      FireflyTransactionGroup updated;
+      try {
+        updated = await client.updateTransaction(map.fireflyId,
+            FireflyTransactionGroup(id: map.fireflyId, splits: splits));
+      } on FireflyNotFoundException {
+        // Deleted between the read above and this write. Without the
+        // tombstone the link stays, and every later cycle takes the same 404
+        // for this row for ever.
+        await _tombstoneMapRow(map);
+        return;
+      }
       await _upsertSyncMap(
         syncMapPk: map.syncMapPk,
         type: FireflySyncEntityType.transaction,
@@ -2376,9 +2561,12 @@ Future<FireflyTransactionSplit?> _splitForMappedLocalRow({
     expenseByName: counterparties.expenseByName,
     revenueByName: counterparties.revenueByName,
   );
+  TransactionWallet? localWallet =
+      await database.getWalletInstanceOrNull(local.walletFk);
   return transactionToFireflySplit(
     local,
     walletFireflyId: walletMap.fireflyId,
+    walletCurrencyCode: localWallet?.currency,
     categoryFireflyId: categoryMap?.fireflyId,
     categoryName: category?.name,
     counterpartyFireflyId: counterparty?.id,
@@ -2428,7 +2616,7 @@ Future<void> _pushExistingMultiSplitGroup({
   // The request rewrites each split that has a local row. One of them on an
   // inactive account holds the whole group back.
   for (String walletPk in walletPks) {
-    if (await _pushBlockedByInactiveAccount(
+    if (await _pushBlockedByAccountState(
         assets: assets,
         walletPk: walletPk,
         localModified: newestLocal,
@@ -2668,7 +2856,7 @@ Future<void> _pushTransfer({
       fromTransaction.walletFk,
       toTransaction.walletFk
     }) {
-      if (await _pushBlockedByInactiveAccount(
+      if (await _pushBlockedByAccountState(
           assets: assets,
           walletPk: walletPk,
           localModified: localModified,
@@ -3078,7 +3266,20 @@ Future<void> _refreshBalanceAnchors(
   for (FireflySyncMapEntry map
       in await _syncMapEntriesForType(FireflySyncEntityType.wallet)) {
     FireflyAccount? remote = byId[map.fireflyId];
-    if (remote == null) continue;
+    if (remote == null) {
+      // The link names a Firefly account that the server no longer gives.
+      // The anchor of that account then keeps the balance of the day the
+      // account went, and the total of the local account drifts from it with
+      // every row that is added. Say so: nothing else in a cycle does.
+      TransactionWallet? wallet =
+          await database.getWalletInstanceOrNull(map.localPk);
+      report.warnings.add(
+          "The account \"${wallet?.name ?? map.localPk}\" is linked to a "
+          "Firefly account that the server no longer gives. Its total is held "
+          "at the balance of the last sync that found it. Link the account to "
+          "another Firefly account in the Firefly settings.");
+      continue;
+    }
     await _refreshBalanceAnchorForWallet(
       walletPk: map.localPk,
       remoteBalance: remote.currentBalance,

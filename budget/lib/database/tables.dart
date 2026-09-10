@@ -5266,14 +5266,19 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (appStateSettings["selectedWalletPk"] == walletPk) {
       setPrimaryWallet("0");
     }
-    await database.deleteWalletsTransactions(walletPk);
-    await database.shiftWallets(-1, order);
-    await createDeleteLog(DeleteLogType.TransactionWallet, walletPk);
-    await (delete(wallets)..where((w) => w.walletPk.equals(walletPk))).go();
+    // One transaction over all of it. A part commit leaves the rows of the
+    // account gone with the account still there, or the account gone with no
+    // delete log, which keeps its Firefly link alive for ever.
+    await transaction(() async {
+      await database.deleteWalletsTransactions(walletPk);
+      await database.shiftWallets(-1, order);
+      await createDeleteLog(DeleteLogType.TransactionWallet, walletPk);
+      await (delete(wallets)..where((w) => w.walletPk.equals(walletPk))).go();
 
-    if (newPrimaryCandidate != null && walletPk == "0") {
-      await convertToPrimaryWallet(newPrimaryCandidate);
-    }
+      if (newPrimaryCandidate != null && walletPk == "0") {
+        await convertToPrimaryWallet(newPrimaryCandidate);
+      }
+    });
 
     return;
   }
