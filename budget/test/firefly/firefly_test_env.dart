@@ -124,6 +124,7 @@ class FakeFirefly {
       String currencyCode = "USD",
       String? foreignAmount,
       String? foreignCurrencyCode,
+      String? externalId,
       String? updatedAt}) {
     Map<String, dynamic> group = {
       "type": "transactions",
@@ -145,6 +146,7 @@ class FakeFirefly {
             if (foreignAmount != null) "foreign_amount": foreignAmount,
             if (foreignCurrencyCode != null)
               "foreign_currency_code": foreignCurrencyCode,
+            if (externalId != null) "external_id": externalId,
             if (categoryId != null) "category_id": categoryId,
           }
         ],
@@ -207,7 +209,7 @@ class FakeFirefly {
         List<dynamic> list = accounts.values
             .where((a) => type == null || a["attributes"]["type"] == type)
             .toList();
-        return FakeResponse(200, _paginated(list));
+        return FakeResponse(200, _paginated(list, uri));
       }
       if (r.method == "GET" && id != null && sub == "transactions") {
         List<dynamic> list = transactionGroups.values.where((g) {
@@ -215,7 +217,7 @@ class FakeFirefly {
           return splits
               .any((s) => s["source_id"] == id || s["destination_id"] == id);
         }).toList();
-        return FakeResponse(200, _paginated(list));
+        return FakeResponse(200, _paginated(list, uri));
       }
       if (r.method == "GET" && id != null) {
         Map<String, dynamic>? account = accounts[id];
@@ -260,7 +262,7 @@ class FakeFirefly {
 
     if (resource == "categories") {
       if (r.method == "GET" && id == null) {
-        return FakeResponse(200, _paginated(categories.values.toList()));
+        return FakeResponse(200, _paginated(categories.values.toList(), uri));
       }
       if (r.method == "GET" && id != null) {
         Map<String, dynamic>? category = categories[id];
@@ -297,7 +299,23 @@ class FakeFirefly {
 
     if (resource == "transactions") {
       if (r.method == "GET" && id == null) {
-        return FakeResponse(200, _paginated(transactionGroups.values.toList()));
+        // Firefly filters this endpoint by booking date. The engine relies on
+        // it: _applyRemoteDeletes reads the answer as "every record of the
+        // window", and a fake that answers with the whole ledger hides both
+        // the window logic and what a short answer does to the local rows.
+        DateTime? start = _dateParam(uri, "start");
+        DateTime? end = _dateParam(uri, "end");
+        List<dynamic> list = transactionGroups.values.where((g) {
+          List<dynamic> splits = g["attributes"]["transactions"];
+          return splits.any((s) {
+            DateTime? date = DateTime.tryParse(s["date"].toString());
+            if (date == null) return true;
+            if (start != null && date.isBefore(start)) return false;
+            if (end != null && date.isAfter(end)) return false;
+            return true;
+          });
+        }).toList();
+        return FakeResponse(200, _paginated(list, uri));
       }
       if (r.method == "GET" && id != null) {
         Map<String, dynamic>? group = transactionGroups[id];
@@ -329,13 +347,47 @@ class FakeFirefly {
         Map<String, dynamic>? group = transactionGroups[id];
         if (group == null) return FakeResponse(404, {"message": "no"});
         List<dynamic> old = group["attributes"]["transactions"];
-        List<dynamic> splits =
-            List<dynamic>.from(r.body!["transactions"] ?? []).map((s) {
-          Map<String, dynamic> split = Map<String, dynamic>.from(s);
-          split["transaction_journal_id"] ??=
-              old.isEmpty ? nextId++ : old.first["transaction_journal_id"];
-          return split;
-        }).toList();
+        Set<int> knownJournalIds = {
+          for (dynamic s in old)
+            if (s["transaction_journal_id"] != null)
+              int.parse(s["transaction_journal_id"].toString())
+        };
+        // The contract that both incidents of this branch turned on, and that
+        // the fake used to hide by re-attaching an id-less split to the first
+        // split of the group:
+        //   - a split with no transaction_journal_id is a NEW split;
+        //   - a split whose id the group does not hold is refused, and
+        //     Firefly answers 401 for it, not 404;
+        //   - every split of the group that the request does not name is
+        //     DELETED.
+        List<dynamic> splits = [];
+        for (dynamic entry
+            in List<dynamic>.from(r.body!["transactions"] ?? [])) {
+          Map<String, dynamic> split = Map<String, dynamic>.from(entry);
+          Object? rawJournalId = split["transaction_journal_id"];
+          if (rawJournalId == null) {
+            split["transaction_journal_id"] = nextId++;
+            splits.add(split);
+            continue;
+          }
+          int journalId = int.parse(rawJournalId.toString());
+          if (!knownJournalIds.contains(journalId)) {
+            return FakeResponse(401, {
+              "message": "Unauthenticated.",
+            });
+          }
+          Map<String, dynamic> before = Map<String, dynamic>.from(
+              old.firstWhere((s) =>
+                  int.parse(s["transaction_journal_id"].toString()) ==
+                  journalId));
+          // An entry that holds the id alone keeps the split as it is.
+          if (split.keys.length == 1) {
+            splits.add(before);
+            continue;
+          }
+          before.addAll(split);
+          splits.add(before);
+        }
         group["attributes"]["transactions"] = splits;
         group["attributes"]["updated_at"] = _isoNow();
         return FakeResponse(200, {"data": group});
@@ -347,24 +399,60 @@ class FakeFirefly {
     }
 
     if (resource == "transaction-journals" && r.method == "DELETE") {
-      return FakeResponse(204, {});
+      // It removes one split of its group, and it answers 404 for an id that
+      // no group holds. Answering 204 for everything hid both.
+      for (MapEntry<int, Map<String, dynamic>> entry
+          in transactionGroups.entries) {
+        List<dynamic> splits = entry.value["attributes"]["transactions"];
+        int before = splits.length;
+        splits.removeWhere((s) =>
+            s["transaction_journal_id"] != null &&
+            int.parse(s["transaction_journal_id"].toString()) == id);
+        if (splits.length == before) continue;
+        entry.value["attributes"]["updated_at"] = _isoNow();
+        // Firefly removes a group that holds no split.
+        if (splits.isEmpty) transactionGroups.remove(entry.key);
+        return FakeResponse(204, {});
+      }
+      return FakeResponse(404, {"message": "no such journal"});
     }
 
     return FakeResponse(404, {"message": "unexpected ${r.method} ${r.path}"});
   }
 
-  Map<String, dynamic> _paginated(List<dynamic> data) => {
-        "data": data,
-        "meta": {
-          "pagination": {
-            "total": data.length,
-            "count": data.length,
-            "per_page": 50,
-            "current_page": 1,
-            "total_pages": 1,
-          }
-        },
-      };
+  static DateTime? _dateParam(Uri uri, String name) {
+    String? raw = uri.queryParameters[name];
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  // Real pagination. The client asks for a page and a limit and refuses a
+  // full page that carries no metadata; a fake that always answers
+  // "total_pages": 1 with every record left the paging code untested and let
+  // a short answer read as the whole ledger.
+  Map<String, dynamic> _paginated(List<dynamic> data, [Uri? uri]) {
+    int perPage = int.tryParse(uri?.queryParameters["limit"] ?? "") ?? 50;
+    if (perPage < 1) perPage = 50;
+    int page = int.tryParse(uri?.queryParameters["page"] ?? "") ?? 1;
+    if (page < 1) page = 1;
+    int totalPages = data.isEmpty ? 1 : ((data.length - 1) ~/ perPage) + 1;
+    int from = (page - 1) * perPage;
+    List<dynamic> slice = from >= data.length
+        ? const []
+        : data.sublist(from, (from + perPage).clamp(0, data.length));
+    return {
+      "data": slice,
+      "meta": {
+        "pagination": {
+          "total": data.length,
+          "count": slice.length,
+          "per_page": perPage,
+          "current_page": page,
+          "total_pages": totalPages,
+        }
+      },
+    };
+  }
 }
 
 // The database, the settings and the server of one test.
