@@ -9,6 +9,59 @@ code and proposes the better fix. todo.md has since absorbed the verification
 results and carries the current status of every item, including a second round
 of findings (10-18) not covered here; where the two overlap, todo.md wins.
 
+## Status, 2026-09-11
+
+The second data divergence. The user reported a cross-currency transfer whose
+foreign amount was overwritten (22.98 USD became 2,850.00, the amount of the
+source side), and wrong totals on the Cash wallet, the Bkash wallet and the
+MTB credit card. Read against `https://money.onku.dev` with the live token:
+the full resync of 2026-09-10 23:16 created a second Firefly record for 30
+rows that the app had held since before the link, and each of those records
+carried a new expense account named after the description of the row
+("Lunch", "3500", "Atm Withdrawal"). Firefly was repaired by hand; these are
+the three faults behind it, and the repair of the fourth.
+
+- **A push of a transfer sent the local destination leg over a correct
+  foreign amount.** `transferPairToFireflySplit` always read
+  `toTransaction.amount`. An edit to the source leg alone therefore rewrote
+  the foreign amount with the source amount, because the local destination
+  leg still held the pre-foreign-amount value. `_pushTransfer` now reads the
+  remote split first: for a cross-currency pair, a side that did not change
+  locally keeps what Firefly holds (`sourceAmountOverride`,
+  `destinationAmountOverride`, compared with a tolerance of half a cent), and
+  the local row is healed with that value in the same transaction, before the
+  PUT. The map then carries the post-heal stamp, thus the next cycle does not
+  read the heal as an edit.
+- **A local row that is wrong and unchanged was never read again.**
+  `decideSyncDirection` answered `none` when neither side had changed, thus a
+  value that had already diverged stayed wrong for ever. It takes
+  `healUnchanged` now, and a full resync passes it: the neither-changed case
+  then pulls. A routine cycle is unchanged, so the cheap path stays cheap.
+- **A bulk operation of this app made old rows look new.**
+  `convertToPrimaryWallet` → `transferTransactionsOnly` stamps
+  `dateTimeModified = now` onto every row it moves. Rows booked years before
+  the link then read as new work and went up as creates, next to the records
+  Firefly already held. A push now skips an unmapped row whose `dateCreated`
+  is before `fireflyLinkedAt`, counts it in `skippedPreLinkHistory` and warns
+  once per cycle pointing at "Push local history", which is the deliberate
+  way to upload it. The gate reads `dateCreated` and not `dateTimeModified`
+  precisely because the bulk operation rewrites the latter; the cost is that
+  a row entered today with an old date counts as history, which the warning
+  covers.
+- **Firefly grew one expense account per description.**
+  `transactionToFireflySplit` passed the description as `sourceName` /
+  `destinationName`, and Firefly makes an account for a name it does not
+  know. The name is the caller's choice now, and the new setting
+  `fireflyCounterpartyNaming` decides it: `generic` (the default) sends the
+  built-in cash account of the instance, by id when the instance has one and
+  as the name "Cash account" when it does not; `category` names the account
+  after the category of the row, for a user who wants the Firefly expense
+  accounts to mirror the categories. An account the row is already linked to
+  wins in both modes.
+
+`test/firefly/firefly_divergence_test.dart` holds ten tests over the three
+faults and the heal.
+
 ## Status, 2026-09-10 (fourth)
 
 A five-agent review of the whole branch (API client, mapper, engine, database,

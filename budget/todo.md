@@ -2,6 +2,31 @@
 
 ## Done
 
+### Keep a foreign amount, hold back local history, and stop naming an account after every description
+
+The second data divergence (2026-09-10/11): a cross-currency transfer lost its
+foreign amount, 30 rows from before the link went up a second time, and each
+of them made a Firefly expense account named after the description of the row.
+See the 2026-09-11 status in `FIREFLY_SYNC_FINDINGS.md` for the reading of the
+server.
+
+- A push of a cross-currency transfer keeps the side that did not change
+  locally at what Firefly holds, and heals the stale local row with it before
+  the PUT. Before this, one edit to the source leg wrote the source amount
+  over the foreign amount.
+- A full resync passes `healUnchanged` to `decideSyncDirection`, thus a row
+  that is wrong on both stamps is pulled in place of being left alone. A
+  routine cycle still answers "nothing changed".
+- A push skips an unmapped row whose `dateCreated` is before
+  `fireflyLinkedAt`, counts it in `skippedPreLinkHistory` and warns once per
+  cycle pointing at "Push local history". It reads `dateCreated` because
+  `convertToPrimaryWallet` rewrites `dateTimeModified` on every row it moves,
+  which is what made old rows look new.
+- The other side of a withdrawal or a deposit is no longer named after the
+  description. The new setting `fireflyCounterpartyNaming` chooses between one
+  generic account (the built-in cash account of the instance, the default) and
+  an account named after the category of the row.
+
 ### Hold back a push that Firefly would book in another currency, and find a lost create again
 
 A five-agent review of the branch gave 4 high, 24 medium and 11 low findings.
@@ -486,10 +511,11 @@ from <= 49`, and it has its own try/catch.
 the loopback interface and an in-memory database. The multi-split group, the
 two delete paths, the pull of a record that cannot be read, the second page
 of a collection, the lost create and the currency guard are covered by
-`firefly_sync_hardening_test.dart`. What has no engine test yet: the transfer
-pull and push as a pair, a request that runs into the timeout (the constant
-is 30 seconds, thus a test of it needs a way to set it), the 429 retry, and
-"Sync all history".
+`firefly_sync_hardening_test.dart`, and the push of a cross-currency transfer
+by `firefly_divergence_test.dart`. What has no engine test yet: the transfer
+pull and push as a pair within one currency, a request that runs into the
+timeout (the constant is 30 seconds, thus a test of it needs a way to set it),
+the 429 retry, and "Sync all history".
 
 The mapper suite covers `fireflyPositionMatchIsSafe`,
 `matchSplitToSyncMaps` with no position match, the journal id in

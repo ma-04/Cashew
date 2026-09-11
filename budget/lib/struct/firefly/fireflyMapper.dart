@@ -12,6 +12,11 @@ const String kFireflyExpenseAccountType = "expense";
 const String kFireflyRevenueAccountType = "revenue";
 const String kFireflyCashAccountType = "cash";
 
+// The name of the built-in cash account of a Firefly instance. A request that
+// names it is matched to that account, and on an instance that does not have
+// one yet it makes exactly one account instead of one per description.
+const String kFireflyCashAccountName = "Cash account";
+
 // The balance-correction category. onlyShowIfNotBalanceCorrection() in
 // tables.dart counts a row in this category in the net total and the net
 // worth, but keeps it out of the income and expense reports. That is correct
@@ -204,13 +209,14 @@ FireflyTransactionSplit transactionToFireflySplit(
     amount: transaction.amount.abs(),
     description: fallbackName,
     sourceId: isIncome ? counterpartyFireflyId : walletFireflyId,
-    sourceName: isIncome && counterpartyFireflyId == null
-        ? (counterpartyName ?? fallbackName)
-        : null,
+    // Only a name that the caller chose. The description used to stand in
+    // here, and Firefly then made one expense account per description
+    // ("Lunch", "3500", "Atm Withdrawal"). See fireflyCounterpartyNaming.
+    sourceName:
+        isIncome && counterpartyFireflyId == null ? counterpartyName : null,
     destinationId: isIncome ? walletFireflyId : counterpartyFireflyId,
-    destinationName: !isIncome && counterpartyFireflyId == null
-        ? (counterpartyName ?? fallbackName)
-        : null,
+    destinationName:
+        !isIncome && counterpartyFireflyId == null ? counterpartyName : null,
     categoryId: categoryFireflyId,
     categoryName: categoryFireflyId == null ? categoryName : null,
     currencyCode: (walletCurrencyCode ?? "").trim().isEmpty
@@ -241,6 +247,12 @@ FireflyTransactionSplit transferPairToFireflySplit({
   // go to Firefly.
   String? descriptionOverride,
   String? notesOverride,
+  // The amounts to send, when the caller holds a better value than the local
+  // rows do. A cross-currency push uses them to leave the side of the
+  // transfer that the user did not change at the value that Firefly has:
+  // without that, a stale local row overwrites a correct foreign amount.
+  double? sourceAmountOverride,
+  double? destinationAmountOverride,
   int? transactionJournalId,
 }) {
   String description = (descriptionOverride ?? "").trim().isNotEmpty
@@ -267,12 +279,14 @@ FireflyTransactionSplit transferPairToFireflySplit({
   return FireflyTransactionSplit(
     type: "transfer",
     date: fromTransaction.dateCreated,
-    amount: fromTransaction.amount.abs(),
+    amount: (sourceAmountOverride ?? fromTransaction.amount).abs(),
     description: description,
     sourceId: fromWalletFireflyId,
     destinationId: toWalletFireflyId,
     currencyCode: from == null || from.isEmpty ? null : from,
-    foreignAmount: crossCurrency ? toTransaction.amount.abs() : null,
+    foreignAmount: crossCurrency
+        ? (destinationAmountOverride ?? toTransaction.amount).abs()
+        : null,
     foreignCurrencyCode: crossCurrency ? to : null,
     notes: notes.trim().isEmpty ? null : notes,
     // The source leg carries the key. The pull links the paired leg with it.
@@ -458,6 +472,13 @@ FireflySyncDirection decideSyncDirection({
   required DateTime? remoteUpdatedAt,
   required DateTime? lastSyncedLocalModified,
   required DateTime? lastSyncedRemoteUpdatedAt,
+  // Read the remote record onto the local row even when neither side changed
+  // since the last sync. A routine cycle must not do this: "nothing changed"
+  // is the answer that keeps it cheap. A full resync must, because a local
+  // row that a build with a bug wrote is wrong and unchanged, thus no cycle
+  // ever repairs it. That is how a destination leg of a cross-currency
+  // transfer kept the source amount after the foreign amount was fixed.
+  bool healUnchanged = false,
 }) {
   bool localChanged = lastSyncedLocalModified == null ||
       (localModified != null && localModified.isAfter(lastSyncedLocalModified));
@@ -465,7 +486,11 @@ FireflySyncDirection decideSyncDirection({
       (remoteUpdatedAt != null &&
           remoteUpdatedAt.isAfter(lastSyncedRemoteUpdatedAt));
 
-  if (!localChanged && !remoteChanged) return FireflySyncDirection.none;
+  if (!localChanged && !remoteChanged) {
+    return healUnchanged
+        ? FireflySyncDirection.pull
+        : FireflySyncDirection.none;
+  }
   if (localChanged && !remoteChanged) return FireflySyncDirection.push;
   if (!localChanged && remoteChanged) return FireflySyncDirection.pull;
 

@@ -123,3 +123,39 @@ Future<void> clearFireflyLinkedAt() {
 DateTime fireflyUnsyncedSince() {
   return fireflyLinkedAt ?? fireflyLastSyncedAt ?? DateTime(2000);
 }
+
+// How a push names the other side of a withdrawal or a deposit.
+//
+// Firefly books every withdrawal into an expense account and every deposit
+// out of a revenue account. This application has no such account: it has a
+// description and a category. The push used to send the description as the
+// account name, and Firefly then made one account per description ("Lunch",
+// "3500", "Atm Withdrawal", "Chocolate for Jannatul Mawa"), which is noise
+// that the user has to clean up by hand.
+//
+// generic:  one account for all of them, the built-in cash account of the
+//           Firefly instance. The default.
+// category: the account carries the name of the category of the row, so the
+//           Firefly expense and revenue accounts mirror the categories.
+//
+// An account that the row is already linked to, or an account whose name is
+// the description or the category, is used in both modes. This decides only
+// what happens when there is no such account.
+const String kFireflyCounterpartyNamingGeneric = "generic";
+const String kFireflyCounterpartyNamingCategory = "category";
+
+String get fireflyCounterpartyNaming {
+  return appStateSettings["fireflyCounterpartyNaming"]?.toString() ==
+          kFireflyCounterpartyNamingCategory
+      ? kFireflyCounterpartyNamingCategory
+      : kFireflyCounterpartyNamingGeneric;
+}
+
+Future<void> setFireflyCounterpartyNaming(String naming) {
+  return updateSettings(
+      "fireflyCounterpartyNaming",
+      naming == kFireflyCounterpartyNamingCategory
+          ? kFireflyCounterpartyNamingCategory
+          : kFireflyCounterpartyNamingGeneric,
+      updateGlobalState: false);
+}

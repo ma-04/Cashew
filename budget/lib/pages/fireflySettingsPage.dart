@@ -43,6 +43,7 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   bool syncingNow = false;
   bool runningHistoryAction = false;
   late int syncWindowDays = fireflySyncWindowDays;
+  late String counterpartyNaming = fireflyCounterpartyNaming;
   // What "Push unsynced changes" would send. null until the first count.
   FireflyUnsyncedCounts? unsyncedCounts;
   // The asset accounts of the server, for the "Linked accounts" list. null
@@ -886,6 +887,30 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                       fireflyClearOnDemandCacheMemory();
                       setState(() {
                         syncWindowDays = fireflySyncWindowDays;
+                      });
+                    },
+                  ),
+                  SizedBox(height: 8),
+                  SettingsContainerDropdown(
+                    enableBorderRadius: true,
+                    title: "firefly-payee-naming".tr(),
+                    description: "firefly-payee-naming-description".tr(),
+                    icon: appStateSettings["outlinedIcons"]
+                        ? Icons.storefront_outlined
+                        : Icons.storefront_rounded,
+                    initial: counterpartyNaming,
+                    items: const [
+                      kFireflyCounterpartyNamingGeneric,
+                      kFireflyCounterpartyNamingCategory,
+                    ],
+                    getLabel: (String value) =>
+                        value == kFireflyCounterpartyNamingCategory
+                            ? "firefly-payee-naming-category".tr()
+                            : "firefly-payee-naming-generic".tr(),
+                    onChanged: (String value) async {
+                      await setFireflyCounterpartyNaming(value);
+                      setState(() {
+                        counterpartyNaming = fireflyCounterpartyNaming;
                       });
                     },
                   ),
