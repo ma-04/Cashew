@@ -2,6 +2,9 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/fireflyMapper.dart'
+    show isFireflyBalanceAnchorPk;
+import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
@@ -93,6 +96,17 @@ class ExportCSV extends StatelessWidget {
               null,
             ),
       );
+      // Firefly balance anchors are synthetic rows carrying the history that
+      // is not stored locally, not something the user ever entered. They
+      // belong in balances and net worth, which is why they live in the
+      // balance-correction category, but exporting them would put a large
+      // unexplained line in the user's spreadsheet. Filtered by primary key
+      // rather than by category so genuine balance corrections - which the
+      // user did enter, and which predate this feature - still export.
+      transactions = transactions
+          .where((transactionWithCategory) => !isFireflyBalanceAnchorPk(
+              transactionWithCategory.transaction.transactionPk))
+          .toList();
       if (transactions.length <= 0) {
         openSnackbar(SnackbarMessage(
           title: "no-transactions-within-time-range".tr().capitalizeFirstofEach,
@@ -267,6 +281,12 @@ class _ExportCSVPopupState extends State<ExportCSVPopup> {
                       : Icons.calendar_month_rounded,
                   onTap: () async {
                     popRoute(context);
+                    // With Firefly linked the local database deliberately
+                    // holds only a recent window of the ledger, so an
+                    // "all time" export would quietly stop at the edge of that
+                    // window. Cache the whole history first, exactly as the
+                    // date-range branch below does for its own range.
+                    await fireflyEnsureRangeCached(DateTime(1970), null);
                     await widget.exportCSV(
                       boxContext: widget.boxContext,
                       dateTimeRange: null,
@@ -301,6 +321,12 @@ class _ExportCSVPopupState extends State<ExportCSVPopup> {
                         ),
                       );
                     } else {
+                      // Wait for the fetch here rather than firing and
+                      // forgetting: an export that ran against a partially
+                      // cached range would quietly be missing rows.
+                      await fireflyEnsureRangeCached(
+                          dateRange.dateTimeRange?.start,
+                          dateRange.dateTimeRange?.end);
                       await widget.exportCSV(
                         boxContext: widget.boxContext,
                         dateTimeRange: dateRange.dateTimeRange,

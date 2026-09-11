@@ -26,7 +26,16 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 46;
+int schemaVersionGlobal = 50;
+
+// The highest schema version drift_schemas/ has a snapshot for, and therefore
+// the highest version the generated migrationSteps() in schema_versions.dart
+// can step to. Everything above this is migrated by the hand-rolled blocks at
+// the end of onUpgrade. Raise this only once the matching drift_schema_vNN.json
+// exists and schema_versions.dart has been regenerated from it, or upgrades
+// will throw ArgumentError("Unknown migration from N") and the database will
+// not open.
+const int _lastGeneratedMigrationSchema = 46;
 
 // To update and migrate the database, check the README
 
@@ -125,6 +134,7 @@ enum MethodAdded {
   csv,
   preview,
   appLink,
+  firefly,
 }
 
 enum SharedStatus { waiting, shared, error }
@@ -245,6 +255,48 @@ class DeleteLogs extends Table {
 
   @override
   Set<Column> get primaryKey => {deleteLogPk};
+}
+
+// Maps a local UUID-keyed row (Wallet/Transaction/Category) to the numeric id
+// of the corresponding resource on a linked Firefly III instance, so pull/push
+// sync can resolve either direction without touching the core tables.
+enum FireflySyncEntityType { wallet, transaction, category }
+
+@DataClassName('FireflySyncMapEntry')
+class FireflySyncMap extends Table {
+  TextColumn get syncMapPk => text().clientDefault(() => uuid.v4())();
+  IntColumn get entityType => intEnum<FireflySyncEntityType>()();
+  TextColumn get localPk => text()();
+  IntColumn get fireflyId => integer()();
+  DateTimeColumn get fireflyUpdatedAt => dateTime().nullable()();
+  // The local dateTimeModified value at the moment this record was last
+  // pushed/pulled - lets us detect "changed locally since last synced"
+  // without re-diffing the full row.
+  DateTimeColumn get lastSyncedLocalModified => dateTime().nullable()();
+  // Kept after a local or remote delete so a later pull cannot resurrect
+  // the Firefly resource as a new local row.
+  BoolColumn get isTombstone => boolean().withDefault(const Constant(false))();
+  // Firefly expense/revenue/cash account id used as the counterparty of
+  // this transaction (not a Cashew wallet).
+  IntColumn get counterpartyFireflyId => integer().nullable()();
+  // Index of this row inside a multi-split Firefly journal group. This is a
+  // position, not an identity - it is kept because rebuilding a journal's
+  // split list needs an ordering, but matching is done on fireflyJournalId.
+  IntColumn get fireflySplitIndex => integer().withDefault(const Constant(0))();
+  // Firefly's stable per-split journal id, which survives its siblings being
+  // deleted. Nullable: rows written before this column existed have none and
+  // are matched by fireflySplitIndex until the next pull backfills them.
+  IntColumn get fireflyJournalId => integer().nullable()();
+  DateTimeColumn get dateCreated =>
+      dateTime().clientDefault(() => new DateTime.now())();
+
+  @override
+  Set<Column> get primaryKey => {syncMapPk};
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {entityType, localPk},
+      ];
 }
 
 @DataClassName('TransactionWallet')
@@ -688,6 +740,7 @@ class CategoryWithTotal {
   ScannerTemplates,
   DeleteLogs,
   Objectives,
+  FireflySyncMap,
 ])
 class FinanceDatabase extends _$FinanceDatabase {
   // FinanceDatabase() : super(_openConnection());
@@ -697,11 +750,25 @@ class FinanceDatabase extends _$FinanceDatabase {
   @override
   int get schemaVersion => schemaVersionGlobal;
 
+  // Each pull reads the map rows of a Firefly id. The index makes that read a
+  // lookup and not a scan of the table. It is not unique: the two rows of a
+  // transfer point at one Firefly transaction.
+  //
+  // A statement and not a @TableIndex annotation, because an annotation needs
+  // a new generated schema file, and drift_schemas/ stops at v46.
+  static Future<void> _createFireflySyncMapFireflyIdIndex(
+      FinanceDatabase db) async {
+    await db.customStatement("CREATE INDEX IF NOT EXISTS "
+        "firefly_sync_map_entity_type_firefly_id "
+        "ON firefly_sync_map (entity_type, firefly_id)");
+  }
+
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
+        await _createFireflySyncMapFireflyIdIndex(this);
       },
       // import 'package:drift_dev/api/migrations.dart';
       // beforeOpen: (details) async {
@@ -863,9 +930,31 @@ class FinanceDatabase extends _$FinanceDatabase {
           await migrator.alterTable(TableMigration(transactions));
           await migrator.deleteTable("Labels");
         }
+        // `to` is deliberately clamped here and is not the target version.
+        //
+        // migrationSteps() below is generated from drift_schemas/, which stops
+        // at v46, and its switch throws ArgumentError("Unknown migration from
+        // N") for every version past that. drift's runMigrationSteps is only
+        // `for (var target = from; target < to;) steps(target, database)`, so
+        // passing the real `to` (currently 49) made it call steps(46) and throw
+        // straight out of onUpgrade - this call is not inside a try/catch, and
+        // deliberately so, since a genuine failure here must not be swallowed.
+        // Every upgrade from an existing install therefore aborted before the
+        // v47+ blocks below could run and the database never opened. Only fresh
+        // installs worked, because those go through onCreate instead.
+        //
+        // Clamping lets the generated steps do exactly what they can and leaves
+        // 46 -> 49 to the hand-rolled blocks after this call. Passing `from`
+        // itself once it has reached the cap runs that loop zero times, which
+        // is the whole of what the call does.
+        //
+        // When drift_schemas/ is extended past v46 and these become real
+        // from46To47 / from47To48 / from48To49 steps, the cap moves up with it.
         await migrator.runMigrationSteps(
           from: from,
-          to: to,
+          to: from < _lastGeneratedMigrationSchema
+              ? _lastGeneratedMigrationSchema
+              : from,
           steps: migrationSteps(
             from33To34: (m, schema) async {
               await m.addColumn(schema.wallets, schema.wallets.decimals);
@@ -1166,6 +1255,98 @@ class FinanceDatabase extends _$FinanceDatabase {
             },
           ),
         );
+        // Note: these migrations are intentionally handled here instead of as
+        // `from46To47` / `from47To48` / `from48To49` steps within
+        // `migrationSteps` above. `schema_versions.dart` only defines schemas
+        // up to Schema46 - see the comment on the clamp above.
+        if (from <= 46) {
+          try {
+            // `fireflySyncMap`, not `$FireflySyncMapTable(database)`: the
+            // latter reaches past `this` for the app-wide
+            // `late FinanceDatabase database` global, which only app startup
+            // assigns. Anywhere the database is constructed directly - under
+            // `flutter test`, for one - all three of these blocks threw
+            // LateInitializationError into their catch and silently migrated
+            // nothing. Every other block here uses the generated accessor on
+            // `this`.
+            await migrator.createTable(fireflySyncMap);
+          } catch (e) {
+            print("Migration Error: Error creating table FireflySyncMap " +
+                e.toString());
+          }
+        }
+        if (from == 47) {
+          try {
+            await migrator.addColumn(
+                fireflySyncMap, fireflySyncMap.isTombstone);
+            await migrator.addColumn(
+                fireflySyncMap, fireflySyncMap.counterpartyFireflyId);
+            await migrator.addColumn(
+                fireflySyncMap, fireflySyncMap.fireflySplitIndex);
+          } catch (e) {
+            print("Migration Error: Error adding FireflySyncMap columns " +
+                e.toString());
+          }
+        }
+        // A v47 install made firefly_sync_map without the
+        // UNIQUE(entity_type, local_pk) key that the current CREATE TABLE
+        // carries, and SQLite cannot add a table key afterwards.
+        // _upsertSyncMap needs that key: it writes with
+        // InsertMode.insertOrReplace and lets the conflict replace the
+        // previous row. Without the key each sync adds one more row for the
+        // same entity, and the "one row for one entity" reads then give the
+        // copy that they find first. A unique index makes REPLACE do the same.
+        //
+        // Guarded at `>= 47`, not at `== 47`: a build that came before this
+        // block moved a v47 database to v48 or to v49 and left it with no
+        // unique key. The `from <= 46` branch above makes the table with the
+        // current definition, thus that path has the key. The statements are
+        // idempotent, and this block has its own try/catch, thus a throw in
+        // the addColumn block above cannot skip it.
+        if (from >= 47 && from <= 49) {
+          try {
+            // Each duplicate that a v47 build collected must go first, or the
+            // index cannot be made. Keep the row that was written last, which
+            // is the row that the code would have used.
+            await customStatement("DELETE FROM firefly_sync_map "
+                "WHERE rowid NOT IN (SELECT MAX(rowid) FROM firefly_sync_map "
+                "GROUP BY entity_type, local_pk)");
+            await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS "
+                "firefly_sync_map_entity_type_local_pk "
+                "ON firefly_sync_map (entity_type, local_pk)");
+          } catch (e) {
+            print(
+                "Migration Error: Error creating FireflySyncMap unique index " +
+                    e.toString());
+          }
+        }
+        // Guarded at `>= 47` on purpose, not just `<= 48`. The `from <= 46`
+        // branch above calls createTable, which reflects the *current* table
+        // definition and therefore already includes fireflyJournalId. An
+        // unguarded addColumn would throw on those installs, be swallowed by
+        // the catch, and print a migration error for a table that is fine.
+        //
+        // Its own try/catch, separate from the v47 block, so a throw up there
+        // cannot skip this.
+        if (from >= 47 && from <= 48) {
+          try {
+            await migrator.addColumn(
+                fireflySyncMap, fireflySyncMap.fireflyJournalId);
+          } catch (e) {
+            print("Migration Error: Error adding column "
+                    "FireflySyncMap.fireflyJournalId " +
+                e.toString());
+          }
+        }
+        if (from <= 49) {
+          try {
+            await _createFireflySyncMapFireflyIdIndex(this);
+          } catch (e) {
+            print("Migration Error: Error creating FireflySyncMap "
+                    "firefly_id index " +
+                e.toString());
+          }
+        }
       },
       beforeOpen: (details) async {
         // This code exists because migration 42to43 may have not run correctly...
@@ -3429,6 +3610,15 @@ class FinanceDatabase extends _$FinanceDatabase {
     bool insert = false,
     bool updateSharedEntry = true,
     Transaction? originalTransaction,
+    // Set by the Firefly sync engine for rows it owns. Two of the
+    // conveniences below are actively harmful for synced data:
+    //  - the balance-correction second-rewrite silently changes the time of
+    //    every uncategorized row that came from Firefly, so the local copy
+    //    stops matching the remote one;
+    //  - touching the category's dateTimeModified marks it dirty, which makes
+    //    the very next push send back a category that nobody edited.
+    // Both are skipped when this is true.
+    bool fireflySync = false,
   }) async {
     if (updateSharedEntry == true && appStateSettings["sharedBudgets"] == false)
       updateSharedEntry = false;
@@ -3462,7 +3652,7 @@ class FinanceDatabase extends _$FinanceDatabase {
     // Preserve order of balance correction transaction
     // Negative entries at 30 seconds on the minute
     // Positive entries at 31 seconds on the minute
-    if (transaction.categoryFk == "0") {
+    if (transaction.categoryFk == "0" && fireflySync == false) {
       if (transaction.amount < 0) {
         transaction = transaction.copyWith(
             dateCreated: transaction.dateCreated
@@ -3489,10 +3679,12 @@ class FinanceDatabase extends _$FinanceDatabase {
         categoryInUse = await getCategoryInstance(transaction.categoryFk);
       }
 
-      await createOrUpdateCategory(
-        categoryInUse.copyWith(dateTimeModified: Value(DateTime.now())),
-        updateSharedEntry: false,
-      );
+      if (fireflySync == false) {
+        await createOrUpdateCategory(
+          categoryInUse.copyWith(dateTimeModified: Value(DateTime.now())),
+          updateSharedEntry: false,
+        );
+      }
     } catch (e) {
       throw ("category-no-longer-exists");
     }
@@ -3502,10 +3694,12 @@ class FinanceDatabase extends _$FinanceDatabase {
       try {
         TransactionCategory subCategoryInUse =
             await getCategoryInstance(transaction.subCategoryFk!);
-        await createOrUpdateCategory(
-          subCategoryInUse.copyWith(dateTimeModified: Value(DateTime.now())),
-          updateSharedEntry: false,
-        );
+        if (fireflySync == false) {
+          await createOrUpdateCategory(
+            subCategoryInUse.copyWith(dateTimeModified: Value(DateTime.now())),
+            updateSharedEntry: false,
+          );
+        }
       } catch (e) {
         print("subcategory no longer exists");
         transaction = transaction.copyWith(subCategoryFk: Value(null));
@@ -5072,14 +5266,19 @@ class FinanceDatabase extends _$FinanceDatabase {
     if (appStateSettings["selectedWalletPk"] == walletPk) {
       setPrimaryWallet("0");
     }
-    await database.deleteWalletsTransactions(walletPk);
-    await database.shiftWallets(-1, order);
-    await createDeleteLog(DeleteLogType.TransactionWallet, walletPk);
-    await (delete(wallets)..where((w) => w.walletPk.equals(walletPk))).go();
+    // One transaction over all of it. A part commit leaves the rows of the
+    // account gone with the account still there, or the account gone with no
+    // delete log, which keeps its Firefly link alive for ever.
+    await transaction(() async {
+      await database.deleteWalletsTransactions(walletPk);
+      await database.shiftWallets(-1, order);
+      await createDeleteLog(DeleteLogType.TransactionWallet, walletPk);
+      await (delete(wallets)..where((w) => w.walletPk.equals(walletPk))).go();
 
-    if (newPrimaryCandidate != null && walletPk == "0") {
-      await convertToPrimaryWallet(newPrimaryCandidate);
-    }
+      if (newPrimaryCandidate != null && walletPk == "0") {
+        await convertToPrimaryWallet(newPrimaryCandidate);
+      }
+    });
 
     return;
   }
@@ -5088,14 +5287,52 @@ class FinanceDatabase extends _$FinanceDatabase {
     // If the source if the main wallet (we cannot delete it)
     // Move transactions the other way and update parameters if moving to main wallet
 
-    // Update the primary wallet to match old, create an entirely new wallet copy under "0"
-    await database
-        .createOrUpdateWallet(sourceWallet.copyWith(walletPk: "0")); // "0"
-    // Force move transactions over from old to new "0"
-    await database.transferTransactionsOnly(sourceWallet.walletPk, "0");
-    // Delete the duplicate, the old
-    await database.deleteWallet(sourceWallet.walletPk, sourceWallet.order);
-    await database.fixOrderWallets();
+    // One transaction over all of it. Between these steps the database holds
+    // two copies of the same account, or an account whose rows have moved
+    // but whose Firefly link has not. A sync cycle that reads it there
+    // creates a second Firefly account, or pushes the rows into the account
+    // of the wallet that the user removed.
+    await transaction(() async {
+      // Update the primary wallet to match old, create an entirely new wallet copy under "0"
+      await database
+          .createOrUpdateWallet(sourceWallet.copyWith(walletPk: "0")); // "0"
+      // The Firefly link goes with the wallet. Without this, "0" keeps the
+      // link of the wallet that the user removed, and each row of the moved
+      // wallet is then pushed into the Firefly account of the removed wallet.
+      await database.swapFireflyWalletLinks(sourceWallet.walletPk, "0");
+      // Force move transactions over from old to new "0"
+      await database.transferTransactionsOnly(sourceWallet.walletPk, "0");
+      // Delete the duplicate, the old
+      await database.deleteWallet(sourceWallet.walletPk, sourceWallet.order);
+      await database.fixOrderWallets();
+    });
+  }
+
+  // Moves the Firefly links of two wallets onto each other's key. Used when
+  // another wallet is copied onto pk "0": the link must follow the wallet,
+  // and the link of the removed wallet must go with its old key, thus the
+  // delete log of that key unlinks it on the next sync. Tombstones move too.
+  Future<void> swapFireflyWalletLinks(
+      String walletPkA, String walletPkB) async {
+    if (walletPkA == walletPkB) return;
+    await transaction(() async {
+      List<FireflySyncMapEntry> rows = await (select(fireflySyncMap)
+            ..where((tbl) =>
+                tbl.entityType.equalsValue(FireflySyncEntityType.wallet) &
+                tbl.localPk.isIn([walletPkA, walletPkB])))
+          .get();
+      if (rows.isEmpty) return;
+      await (delete(fireflySyncMap)
+            ..where((tbl) => tbl.syncMapPk
+                .isIn([for (FireflySyncMapEntry row in rows) row.syncMapPk])))
+          .go();
+      for (FireflySyncMapEntry row in rows) {
+        await into(fireflySyncMap).insert(
+          row.toCompanion(false).copyWith(
+              localPk: Value(row.localPk == walletPkA ? walletPkB : walletPkA)),
+        );
+      }
+    });
   }
 
   Future<bool> moveWalletTransactions(
@@ -6762,6 +6999,50 @@ class FinanceDatabase extends _$FinanceDatabase {
           .watchSingle());
     }
     return totalTotalWithCountStream(mergedStreams);
+  }
+
+  // Sum of a wallet's posted transactions, ignoring one row.
+  //
+  // Used by the Firefly balance anchor, which has to exclude itself from the
+  // sum it is derived from. Mirrors watchTotalOfWalletNoConversion's filter
+  // (paid rows only) so the anchor lands on the same basis the wallet totals
+  // are computed on, but includes balance-correction rows because the anchor
+  // is one and the total it must reconcile to contains them.
+  // notLaterThan keeps each transaction with a later date out of the sum. The
+  // Firefly balance anchor uses it, because the balance that Firefly reports
+  // does not count a transaction with a date in the future.
+  Future<double> getSumOfWalletExcludingTransaction(
+    String walletPk,
+    String excludeTransactionPk, {
+    DateTime? notLaterThan,
+  }) async {
+    final totalAmt =
+        transactions.amount.sum(filter: transactions.paid.equals(true));
+    final query = selectOnly(transactions)
+      ..addColumns([totalAmt])
+      ..where(transactions.walletFk.equals(walletPk) &
+          transactions.transactionPk.equals(excludeTransactionPk).not() &
+          (notLaterThan == null
+              ? Constant(true)
+              : transactions.dateCreated.isSmallerOrEqualValue(notLaterThan)));
+    return (await query.map((row) => row.read(totalAmt)).getSingleOrNull()) ??
+        0;
+  }
+
+  // Booking date of the wallet's oldest stored transaction, ignoring one row.
+  // The Firefly balance anchor is dated just before this so that a running
+  // balance over time does not show a step where the locally cached history
+  // happens to begin.
+  Future<DateTime?> getEarliestTransactionDateOfWallet(
+    String walletPk,
+    String excludeTransactionPk,
+  ) async {
+    final earliest = transactions.dateCreated.min();
+    final query = selectOnly(transactions)
+      ..addColumns([earliest])
+      ..where(transactions.walletFk.equals(walletPk) &
+          transactions.transactionPk.equals(excludeTransactionPk).not());
+    return await query.map((row) => row.read(earliest)).getSingleOrNull();
   }
 
   Stream<double?> watchTotalOfWalletNoConversion(

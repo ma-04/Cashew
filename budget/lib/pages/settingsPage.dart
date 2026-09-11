@@ -27,6 +27,8 @@ import 'package:budget/pages/editAssociatedTitlesPage.dart';
 import 'package:budget/pages/editBudgetPage.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/pages/editWalletsPage.dart';
+import 'package:budget/pages/fireflySettingsPage.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/pages/notificationsPage.dart';
 import 'package:budget/pages/subscriptionsPage.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
@@ -596,6 +598,17 @@ class SettingsPageContent extends StatelessWidget {
           icon: appStateSettings["outlinedIcons"]
               ? Icons.summarize_outlined
               : Icons.summarize_rounded,
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: FireflySettingsPage(),
+          title: "firefly-iii-sync".tr(),
+          description: fireflyEnabled
+              ? "on".tr().capitalizeFirst + " - " + fireflyHostUrl
+              : "off".tr().capitalizeFirst,
+          icon: appStateSettings["outlinedIcons"]
+              ? Icons.sync_outlined
+              : Icons.sync_rounded,
         ),
 
         SettingsContainerOpenPage(

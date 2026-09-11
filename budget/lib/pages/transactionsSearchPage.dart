@@ -2,6 +2,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/struct/defaultPreferences.dart';
+import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/fab.dart';
 import 'package:budget/widgets/fadeIn.dart';
@@ -146,6 +147,10 @@ class TransactionsSearchPageState extends State<TransactionsSearchPage>
           setState(() {
             searchFilters.dateTimeRange = picked.dateTimeRange;
           });
+          // A range reaching back past the Firefly sync window has to be
+          // fetched before the list can show anything for it.
+          fireflyEnsureRangeCached(
+              picked.dateTimeRange?.start, picked.dateTimeRange?.end);
           updateSettings(
             "searchTransactionsSetFiltersString",
             searchFilters.getFilterString(),
@@ -211,6 +216,10 @@ class TransactionsSearchPageState extends State<TransactionsSearchPage>
                           setState(() {
                             searchFilters.searchQuery = value;
                           });
+                          // Only a recent window of Firefly is stored
+                          // locally, so ask the server too - otherwise a
+                          // search would silently only ever cover the window.
+                          fireflyEnsureSearchCached(value);
                         },
                         onChanged: (value) {
                           _debouncer.run(() {
@@ -218,6 +227,7 @@ class TransactionsSearchPageState extends State<TransactionsSearchPage>
                               setState(() {
                                 searchFilters.searchQuery = value;
                               });
+                            fireflyEnsureSearchCached(value);
                           });
                         },
                         padding: EdgeInsetsDirectional.all(0),

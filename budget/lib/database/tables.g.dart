@@ -262,9 +262,9 @@ class TransactionWallet extends DataClass
     }
     map['decimals'] = Variable<int>(decimals);
     if (!nullToAbsent || homePageWidgetDisplay != null) {
-      final converter = $WalletsTable.$converterhomePageWidgetDisplayn;
-      map['home_page_widget_display'] =
-          Variable<String>(converter.toSql(homePageWidgetDisplay));
+      map['home_page_widget_display'] = Variable<String>($WalletsTable
+          .$converterhomePageWidgetDisplayn
+          .toSql(homePageWidgetDisplay));
     }
     return map;
   }
@@ -550,10 +550,9 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
       map['decimals'] = Variable<int>(decimals.value);
     }
     if (homePageWidgetDisplay.present) {
-      final converter = $WalletsTable.$converterhomePageWidgetDisplayn;
-
-      map['home_page_widget_display'] =
-          Variable<String>(converter.toSql(homePageWidgetDisplay.value));
+      map['home_page_widget_display'] = Variable<String>($WalletsTable
+          .$converterhomePageWidgetDisplayn
+          .toSql(homePageWidgetDisplay.value));
     }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
@@ -840,8 +839,8 @@ class TransactionCategory extends DataClass
     map['order'] = Variable<int>(order);
     map['income'] = Variable<bool>(income);
     if (!nullToAbsent || methodAdded != null) {
-      final converter = $CategoriesTable.$convertermethodAddedn;
-      map['method_added'] = Variable<int>(converter.toSql(methodAdded));
+      map['method_added'] = Variable<int>(
+          $CategoriesTable.$convertermethodAddedn.toSql(methodAdded));
     }
     if (!nullToAbsent || mainCategoryPk != null) {
       map['main_category_pk'] = Variable<String>(mainCategoryPk);
@@ -1123,9 +1122,8 @@ class CategoriesCompanion extends UpdateCompanion<TransactionCategory> {
       map['income'] = Variable<bool>(income.value);
     }
     if (methodAdded.present) {
-      final converter = $CategoriesTable.$convertermethodAddedn;
-
-      map['method_added'] = Variable<int>(converter.toSql(methodAdded.value));
+      map['method_added'] = Variable<int>(
+          $CategoriesTable.$convertermethodAddedn.toSql(methodAdded.value));
     }
     if (mainCategoryPk.present) {
       map['main_category_pk'] = Variable<String>(mainCategoryPk.value);
@@ -1461,8 +1459,7 @@ class Objective extends DataClass implements Insertable<Objective> {
     final map = <String, Expression>{};
     map['objective_pk'] = Variable<String>(objectivePk);
     {
-      final converter = $ObjectivesTable.$convertertype;
-      map['type'] = Variable<int>(converter.toSql(type));
+      map['type'] = Variable<int>($ObjectivesTable.$convertertype.toSql(type));
     }
     map['name'] = Variable<String>(name);
     map['amount'] = Variable<double>(amount);
@@ -1798,9 +1795,8 @@ class ObjectivesCompanion extends UpdateCompanion<Objective> {
       map['objective_pk'] = Variable<String>(objectivePk.value);
     }
     if (type.present) {
-      final converter = $ObjectivesTable.$convertertype;
-
-      map['type'] = Variable<int>(converter.toSql(type.value));
+      map['type'] =
+          Variable<int>($ObjectivesTable.$convertertype.toSql(type.value));
     }
     if (name.present) {
       map['name'] = Variable<String>(name.value);
@@ -2528,8 +2524,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       map['period_length'] = Variable<int>(periodLength);
     }
     if (!nullToAbsent || reoccurrence != null) {
-      final converter = $TransactionsTable.$converterreoccurrencen;
-      map['reoccurrence'] = Variable<int>(converter.toSql(reoccurrence));
+      map['reoccurrence'] = Variable<int>(
+          $TransactionsTable.$converterreoccurrencen.toSql(reoccurrence));
     }
     if (!nullToAbsent || endDate != null) {
       map['end_date'] = Variable<DateTime>(endDate);
@@ -2539,8 +2535,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           Variable<bool>(upcomingTransactionNotification);
     }
     if (!nullToAbsent || type != null) {
-      final converter = $TransactionsTable.$convertertypen;
-      map['type'] = Variable<int>(converter.toSql(type));
+      map['type'] =
+          Variable<int>($TransactionsTable.$convertertypen.toSql(type));
     }
     map['paid'] = Variable<bool>(paid);
     if (!nullToAbsent || createdAnotherFutureTransaction != null) {
@@ -2549,8 +2545,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
     }
     map['skip_paid'] = Variable<bool>(skipPaid);
     if (!nullToAbsent || methodAdded != null) {
-      final converter = $TransactionsTable.$convertermethodAddedn;
-      map['method_added'] = Variable<int>(converter.toSql(methodAdded));
+      map['method_added'] = Variable<int>(
+          $TransactionsTable.$convertermethodAddedn.toSql(methodAdded));
     }
     if (!nullToAbsent || transactionOwnerEmail != null) {
       map['transaction_owner_email'] = Variable<String>(transactionOwnerEmail);
@@ -2566,8 +2562,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       map['shared_old_key'] = Variable<String>(sharedOldKey);
     }
     if (!nullToAbsent || sharedStatus != null) {
-      final converter = $TransactionsTable.$convertersharedStatusn;
-      map['shared_status'] = Variable<int>(converter.toSql(sharedStatus));
+      map['shared_status'] = Variable<int>(
+          $TransactionsTable.$convertersharedStatusn.toSql(sharedStatus));
     }
     if (!nullToAbsent || sharedDateUpdated != null) {
       map['shared_date_updated'] = Variable<DateTime>(sharedDateUpdated);
@@ -2583,9 +2579,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       map['objective_loan_fk'] = Variable<String>(objectiveLoanFk);
     }
     if (!nullToAbsent || budgetFksExclude != null) {
-      final converter = $TransactionsTable.$converterbudgetFksExcluden;
-      map['budget_fks_exclude'] =
-          Variable<String>(converter.toSql(budgetFksExclude));
+      map['budget_fks_exclude'] = Variable<String>($TransactionsTable
+          .$converterbudgetFksExcluden
+          .toSql(budgetFksExclude));
     }
     return map;
   }
@@ -3271,9 +3267,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       map['period_length'] = Variable<int>(periodLength.value);
     }
     if (reoccurrence.present) {
-      final converter = $TransactionsTable.$converterreoccurrencen;
-
-      map['reoccurrence'] = Variable<int>(converter.toSql(reoccurrence.value));
+      map['reoccurrence'] = Variable<int>(
+          $TransactionsTable.$converterreoccurrencen.toSql(reoccurrence.value));
     }
     if (endDate.present) {
       map['end_date'] = Variable<DateTime>(endDate.value);
@@ -3283,9 +3278,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
           Variable<bool>(upcomingTransactionNotification.value);
     }
     if (type.present) {
-      final converter = $TransactionsTable.$convertertypen;
-
-      map['type'] = Variable<int>(converter.toSql(type.value));
+      map['type'] =
+          Variable<int>($TransactionsTable.$convertertypen.toSql(type.value));
     }
     if (paid.present) {
       map['paid'] = Variable<bool>(paid.value);
@@ -3298,9 +3292,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       map['skip_paid'] = Variable<bool>(skipPaid.value);
     }
     if (methodAdded.present) {
-      final converter = $TransactionsTable.$convertermethodAddedn;
-
-      map['method_added'] = Variable<int>(converter.toSql(methodAdded.value));
+      map['method_added'] = Variable<int>(
+          $TransactionsTable.$convertermethodAddedn.toSql(methodAdded.value));
     }
     if (transactionOwnerEmail.present) {
       map['transaction_owner_email'] =
@@ -3317,9 +3310,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       map['shared_old_key'] = Variable<String>(sharedOldKey.value);
     }
     if (sharedStatus.present) {
-      final converter = $TransactionsTable.$convertersharedStatusn;
-
-      map['shared_status'] = Variable<int>(converter.toSql(sharedStatus.value));
+      map['shared_status'] = Variable<int>(
+          $TransactionsTable.$convertersharedStatusn.toSql(sharedStatus.value));
     }
     if (sharedDateUpdated.present) {
       map['shared_date_updated'] = Variable<DateTime>(sharedDateUpdated.value);
@@ -3335,10 +3327,9 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       map['objective_loan_fk'] = Variable<String>(objectiveLoanFk.value);
     }
     if (budgetFksExclude.present) {
-      final converter = $TransactionsTable.$converterbudgetFksExcluden;
-
-      map['budget_fks_exclude'] =
-          Variable<String>(converter.toSql(budgetFksExclude.value));
+      map['budget_fks_exclude'] = Variable<String>($TransactionsTable
+          .$converterbudgetFksExcluden
+          .toSql(budgetFksExclude.value));
     }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
@@ -3955,25 +3946,25 @@ class Budget extends DataClass implements Insertable<Budget> {
     map['start_date'] = Variable<DateTime>(startDate);
     map['end_date'] = Variable<DateTime>(endDate);
     if (!nullToAbsent || walletFks != null) {
-      final converter = $BudgetsTable.$converterwalletFksn;
-      map['wallet_fks'] = Variable<String>(converter.toSql(walletFks));
+      map['wallet_fks'] =
+          Variable<String>($BudgetsTable.$converterwalletFksn.toSql(walletFks));
     }
     if (!nullToAbsent || categoryFks != null) {
-      final converter = $BudgetsTable.$convertercategoryFksn;
-      map['category_fks'] = Variable<String>(converter.toSql(categoryFks));
+      map['category_fks'] = Variable<String>(
+          $BudgetsTable.$convertercategoryFksn.toSql(categoryFks));
     }
     if (!nullToAbsent || categoryFksExclude != null) {
-      final converter = $BudgetsTable.$convertercategoryFksExcluden;
-      map['category_fks_exclude'] =
-          Variable<String>(converter.toSql(categoryFksExclude));
+      map['category_fks_exclude'] = Variable<String>($BudgetsTable
+          .$convertercategoryFksExcluden
+          .toSql(categoryFksExclude));
     }
     map['income'] = Variable<bool>(income);
     map['archived'] = Variable<bool>(archived);
     map['added_transactions_only'] = Variable<bool>(addedTransactionsOnly);
     map['period_length'] = Variable<int>(periodLength);
     if (!nullToAbsent || reoccurrence != null) {
-      final converter = $BudgetsTable.$converterreoccurrencen;
-      map['reoccurrence'] = Variable<int>(converter.toSql(reoccurrence));
+      map['reoccurrence'] = Variable<int>(
+          $BudgetsTable.$converterreoccurrencen.toSql(reoccurrence));
     }
     map['date_created'] = Variable<DateTime>(dateCreated);
     if (!nullToAbsent || dateTimeModified != null) {
@@ -3983,34 +3974,33 @@ class Budget extends DataClass implements Insertable<Budget> {
     map['order'] = Variable<int>(order);
     map['wallet_fk'] = Variable<String>(walletFk);
     if (!nullToAbsent || budgetTransactionFilters != null) {
-      final converter = $BudgetsTable.$converterbudgetTransactionFiltersn;
-      map['budget_transaction_filters'] =
-          Variable<String>(converter.toSql(budgetTransactionFilters));
+      map['budget_transaction_filters'] = Variable<String>($BudgetsTable
+          .$converterbudgetTransactionFiltersn
+          .toSql(budgetTransactionFilters));
     }
     if (!nullToAbsent || memberTransactionFilters != null) {
-      final converter = $BudgetsTable.$convertermemberTransactionFiltersn;
-      map['member_transaction_filters'] =
-          Variable<String>(converter.toSql(memberTransactionFilters));
+      map['member_transaction_filters'] = Variable<String>($BudgetsTable
+          .$convertermemberTransactionFiltersn
+          .toSql(memberTransactionFilters));
     }
     if (!nullToAbsent || sharedKey != null) {
       map['shared_key'] = Variable<String>(sharedKey);
     }
     if (!nullToAbsent || sharedOwnerMember != null) {
-      final converter = $BudgetsTable.$convertersharedOwnerMembern;
-      map['shared_owner_member'] =
-          Variable<int>(converter.toSql(sharedOwnerMember));
+      map['shared_owner_member'] = Variable<int>(
+          $BudgetsTable.$convertersharedOwnerMembern.toSql(sharedOwnerMember));
     }
     if (!nullToAbsent || sharedDateUpdated != null) {
       map['shared_date_updated'] = Variable<DateTime>(sharedDateUpdated);
     }
     if (!nullToAbsent || sharedMembers != null) {
-      final converter = $BudgetsTable.$convertersharedMembersn;
-      map['shared_members'] = Variable<String>(converter.toSql(sharedMembers));
+      map['shared_members'] = Variable<String>(
+          $BudgetsTable.$convertersharedMembersn.toSql(sharedMembers));
     }
     if (!nullToAbsent || sharedAllMembersEver != null) {
-      final converter = $BudgetsTable.$convertersharedAllMembersEvern;
-      map['shared_all_members_ever'] =
-          Variable<String>(converter.toSql(sharedAllMembersEver));
+      map['shared_all_members_ever'] = Variable<String>($BudgetsTable
+          .$convertersharedAllMembersEvern
+          .toSql(sharedAllMembersEver));
     }
     map['is_absolute_spending_limit'] = Variable<bool>(isAbsoluteSpendingLimit);
     return map;
@@ -4580,21 +4570,17 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       map['end_date'] = Variable<DateTime>(endDate.value);
     }
     if (walletFks.present) {
-      final converter = $BudgetsTable.$converterwalletFksn;
-
-      map['wallet_fks'] = Variable<String>(converter.toSql(walletFks.value));
+      map['wallet_fks'] = Variable<String>(
+          $BudgetsTable.$converterwalletFksn.toSql(walletFks.value));
     }
     if (categoryFks.present) {
-      final converter = $BudgetsTable.$convertercategoryFksn;
-
-      map['category_fks'] =
-          Variable<String>(converter.toSql(categoryFks.value));
+      map['category_fks'] = Variable<String>(
+          $BudgetsTable.$convertercategoryFksn.toSql(categoryFks.value));
     }
     if (categoryFksExclude.present) {
-      final converter = $BudgetsTable.$convertercategoryFksExcluden;
-
-      map['category_fks_exclude'] =
-          Variable<String>(converter.toSql(categoryFksExclude.value));
+      map['category_fks_exclude'] = Variable<String>($BudgetsTable
+          .$convertercategoryFksExcluden
+          .toSql(categoryFksExclude.value));
     }
     if (income.present) {
       map['income'] = Variable<bool>(income.value);
@@ -4610,9 +4596,8 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       map['period_length'] = Variable<int>(periodLength.value);
     }
     if (reoccurrence.present) {
-      final converter = $BudgetsTable.$converterreoccurrencen;
-
-      map['reoccurrence'] = Variable<int>(converter.toSql(reoccurrence.value));
+      map['reoccurrence'] = Variable<int>(
+          $BudgetsTable.$converterreoccurrencen.toSql(reoccurrence.value));
     }
     if (dateCreated.present) {
       map['date_created'] = Variable<DateTime>(dateCreated.value);
@@ -4630,40 +4615,34 @@ class BudgetsCompanion extends UpdateCompanion<Budget> {
       map['wallet_fk'] = Variable<String>(walletFk.value);
     }
     if (budgetTransactionFilters.present) {
-      final converter = $BudgetsTable.$converterbudgetTransactionFiltersn;
-
-      map['budget_transaction_filters'] =
-          Variable<String>(converter.toSql(budgetTransactionFilters.value));
+      map['budget_transaction_filters'] = Variable<String>($BudgetsTable
+          .$converterbudgetTransactionFiltersn
+          .toSql(budgetTransactionFilters.value));
     }
     if (memberTransactionFilters.present) {
-      final converter = $BudgetsTable.$convertermemberTransactionFiltersn;
-
-      map['member_transaction_filters'] =
-          Variable<String>(converter.toSql(memberTransactionFilters.value));
+      map['member_transaction_filters'] = Variable<String>($BudgetsTable
+          .$convertermemberTransactionFiltersn
+          .toSql(memberTransactionFilters.value));
     }
     if (sharedKey.present) {
       map['shared_key'] = Variable<String>(sharedKey.value);
     }
     if (sharedOwnerMember.present) {
-      final converter = $BudgetsTable.$convertersharedOwnerMembern;
-
-      map['shared_owner_member'] =
-          Variable<int>(converter.toSql(sharedOwnerMember.value));
+      map['shared_owner_member'] = Variable<int>($BudgetsTable
+          .$convertersharedOwnerMembern
+          .toSql(sharedOwnerMember.value));
     }
     if (sharedDateUpdated.present) {
       map['shared_date_updated'] = Variable<DateTime>(sharedDateUpdated.value);
     }
     if (sharedMembers.present) {
-      final converter = $BudgetsTable.$convertersharedMembersn;
-
-      map['shared_members'] =
-          Variable<String>(converter.toSql(sharedMembers.value));
+      map['shared_members'] = Variable<String>(
+          $BudgetsTable.$convertersharedMembersn.toSql(sharedMembers.value));
     }
     if (sharedAllMembersEver.present) {
-      final converter = $BudgetsTable.$convertersharedAllMembersEvern;
-
-      map['shared_all_members_ever'] =
-          Variable<String>(converter.toSql(sharedAllMembersEver.value));
+      map['shared_all_members_ever'] = Variable<String>($BudgetsTable
+          .$convertersharedAllMembersEvern
+          .toSql(sharedAllMembersEver.value));
     }
     if (isAbsoluteSpendingLimit.present) {
       map['is_absolute_spending_limit'] =
@@ -6454,8 +6433,7 @@ class DeleteLog extends DataClass implements Insertable<DeleteLog> {
     map['delete_log_pk'] = Variable<String>(deleteLogPk);
     map['entry_pk'] = Variable<String>(entryPk);
     {
-      final converter = $DeleteLogsTable.$convertertype;
-      map['type'] = Variable<int>(converter.toSql(type));
+      map['type'] = Variable<int>($DeleteLogsTable.$convertertype.toSql(type));
     }
     map['date_time_modified'] = Variable<DateTime>(dateTimeModified);
     return map;
@@ -6589,9 +6567,8 @@ class DeleteLogsCompanion extends UpdateCompanion<DeleteLog> {
       map['entry_pk'] = Variable<String>(entryPk.value);
     }
     if (type.present) {
-      final converter = $DeleteLogsTable.$convertertype;
-
-      map['type'] = Variable<int>(converter.toSql(type.value));
+      map['type'] =
+          Variable<int>($DeleteLogsTable.$convertertype.toSql(type.value));
     }
     if (dateTimeModified.present) {
       map['date_time_modified'] = Variable<DateTime>(dateTimeModified.value);
@@ -6615,8 +6592,601 @@ class DeleteLogsCompanion extends UpdateCompanion<DeleteLog> {
   }
 }
 
+class $FireflySyncMapTable extends FireflySyncMap
+    with TableInfo<$FireflySyncMapTable, FireflySyncMapEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $FireflySyncMapTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _syncMapPkMeta =
+      const VerificationMeta('syncMapPk');
+  @override
+  late final GeneratedColumn<String> syncMapPk = GeneratedColumn<String>(
+      'sync_map_pk', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      clientDefault: () => uuid.v4());
+  static const VerificationMeta _entityTypeMeta =
+      const VerificationMeta('entityType');
+  @override
+  late final GeneratedColumnWithTypeConverter<FireflySyncEntityType, int>
+      entityType = GeneratedColumn<int>('entity_type', aliasedName, false,
+              type: DriftSqlType.int, requiredDuringInsert: true)
+          .withConverter<FireflySyncEntityType>(
+              $FireflySyncMapTable.$converterentityType);
+  static const VerificationMeta _localPkMeta =
+      const VerificationMeta('localPk');
+  @override
+  late final GeneratedColumn<String> localPk = GeneratedColumn<String>(
+      'local_pk', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _fireflyIdMeta =
+      const VerificationMeta('fireflyId');
+  @override
+  late final GeneratedColumn<int> fireflyId = GeneratedColumn<int>(
+      'firefly_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _fireflyUpdatedAtMeta =
+      const VerificationMeta('fireflyUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> fireflyUpdatedAt =
+      GeneratedColumn<DateTime>('firefly_updated_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _lastSyncedLocalModifiedMeta =
+      const VerificationMeta('lastSyncedLocalModified');
+  @override
+  late final GeneratedColumn<DateTime> lastSyncedLocalModified =
+      GeneratedColumn<DateTime>('last_synced_local_modified', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _isTombstoneMeta =
+      const VerificationMeta('isTombstone');
+  @override
+  late final GeneratedColumn<bool> isTombstone = GeneratedColumn<bool>(
+      'is_tombstone', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("is_tombstone" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _counterpartyFireflyIdMeta =
+      const VerificationMeta('counterpartyFireflyId');
+  @override
+  late final GeneratedColumn<int> counterpartyFireflyId = GeneratedColumn<int>(
+      'counterparty_firefly_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _fireflySplitIndexMeta =
+      const VerificationMeta('fireflySplitIndex');
+  @override
+  late final GeneratedColumn<int> fireflySplitIndex = GeneratedColumn<int>(
+      'firefly_split_index', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _fireflyJournalIdMeta =
+      const VerificationMeta('fireflyJournalId');
+  @override
+  late final GeneratedColumn<int> fireflyJournalId = GeneratedColumn<int>(
+      'firefly_journal_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _dateCreatedMeta =
+      const VerificationMeta('dateCreated');
+  @override
+  late final GeneratedColumn<DateTime> dateCreated = GeneratedColumn<DateTime>(
+      'date_created', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      clientDefault: () => new DateTime.now());
+  @override
+  List<GeneratedColumn> get $columns => [
+        syncMapPk,
+        entityType,
+        localPk,
+        fireflyId,
+        fireflyUpdatedAt,
+        lastSyncedLocalModified,
+        isTombstone,
+        counterpartyFireflyId,
+        fireflySplitIndex,
+        fireflyJournalId,
+        dateCreated
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'firefly_sync_map';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<FireflySyncMapEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('sync_map_pk')) {
+      context.handle(
+          _syncMapPkMeta,
+          syncMapPk.isAcceptableOrUnknown(
+              data['sync_map_pk']!, _syncMapPkMeta));
+    }
+    context.handle(_entityTypeMeta, const VerificationResult.success());
+    if (data.containsKey('local_pk')) {
+      context.handle(_localPkMeta,
+          localPk.isAcceptableOrUnknown(data['local_pk']!, _localPkMeta));
+    } else if (isInserting) {
+      context.missing(_localPkMeta);
+    }
+    if (data.containsKey('firefly_id')) {
+      context.handle(_fireflyIdMeta,
+          fireflyId.isAcceptableOrUnknown(data['firefly_id']!, _fireflyIdMeta));
+    } else if (isInserting) {
+      context.missing(_fireflyIdMeta);
+    }
+    if (data.containsKey('firefly_updated_at')) {
+      context.handle(
+          _fireflyUpdatedAtMeta,
+          fireflyUpdatedAt.isAcceptableOrUnknown(
+              data['firefly_updated_at']!, _fireflyUpdatedAtMeta));
+    }
+    if (data.containsKey('last_synced_local_modified')) {
+      context.handle(
+          _lastSyncedLocalModifiedMeta,
+          lastSyncedLocalModified.isAcceptableOrUnknown(
+              data['last_synced_local_modified']!,
+              _lastSyncedLocalModifiedMeta));
+    }
+    if (data.containsKey('is_tombstone')) {
+      context.handle(
+          _isTombstoneMeta,
+          isTombstone.isAcceptableOrUnknown(
+              data['is_tombstone']!, _isTombstoneMeta));
+    }
+    if (data.containsKey('counterparty_firefly_id')) {
+      context.handle(
+          _counterpartyFireflyIdMeta,
+          counterpartyFireflyId.isAcceptableOrUnknown(
+              data['counterparty_firefly_id']!, _counterpartyFireflyIdMeta));
+    }
+    if (data.containsKey('firefly_split_index')) {
+      context.handle(
+          _fireflySplitIndexMeta,
+          fireflySplitIndex.isAcceptableOrUnknown(
+              data['firefly_split_index']!, _fireflySplitIndexMeta));
+    }
+    if (data.containsKey('firefly_journal_id')) {
+      context.handle(
+          _fireflyJournalIdMeta,
+          fireflyJournalId.isAcceptableOrUnknown(
+              data['firefly_journal_id']!, _fireflyJournalIdMeta));
+    }
+    if (data.containsKey('date_created')) {
+      context.handle(
+          _dateCreatedMeta,
+          dateCreated.isAcceptableOrUnknown(
+              data['date_created']!, _dateCreatedMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {syncMapPk};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {entityType, localPk},
+      ];
+  @override
+  FireflySyncMapEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return FireflySyncMapEntry(
+      syncMapPk: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}sync_map_pk'])!,
+      entityType: $FireflySyncMapTable.$converterentityType.fromSql(
+          attachedDatabase.typeMapping
+              .read(DriftSqlType.int, data['${effectivePrefix}entity_type'])!),
+      localPk: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}local_pk'])!,
+      fireflyId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}firefly_id'])!,
+      fireflyUpdatedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}firefly_updated_at']),
+      lastSyncedLocalModified: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime,
+          data['${effectivePrefix}last_synced_local_modified']),
+      isTombstone: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}is_tombstone'])!,
+      counterpartyFireflyId: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}counterparty_firefly_id']),
+      fireflySplitIndex: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}firefly_split_index'])!,
+      fireflyJournalId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}firefly_journal_id']),
+      dateCreated: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}date_created'])!,
+    );
+  }
+
+  @override
+  $FireflySyncMapTable createAlias(String alias) {
+    return $FireflySyncMapTable(attachedDatabase, alias);
+  }
+
+  static JsonTypeConverter2<FireflySyncEntityType, int, int>
+      $converterentityType = const EnumIndexConverter<FireflySyncEntityType>(
+          FireflySyncEntityType.values);
+}
+
+class FireflySyncMapEntry extends DataClass
+    implements Insertable<FireflySyncMapEntry> {
+  final String syncMapPk;
+  final FireflySyncEntityType entityType;
+  final String localPk;
+  final int fireflyId;
+  final DateTime? fireflyUpdatedAt;
+  final DateTime? lastSyncedLocalModified;
+  final bool isTombstone;
+  final int? counterpartyFireflyId;
+  final int fireflySplitIndex;
+  final int? fireflyJournalId;
+  final DateTime dateCreated;
+  const FireflySyncMapEntry(
+      {required this.syncMapPk,
+      required this.entityType,
+      required this.localPk,
+      required this.fireflyId,
+      this.fireflyUpdatedAt,
+      this.lastSyncedLocalModified,
+      required this.isTombstone,
+      this.counterpartyFireflyId,
+      required this.fireflySplitIndex,
+      this.fireflyJournalId,
+      required this.dateCreated});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['sync_map_pk'] = Variable<String>(syncMapPk);
+    {
+      map['entity_type'] = Variable<int>(
+          $FireflySyncMapTable.$converterentityType.toSql(entityType));
+    }
+    map['local_pk'] = Variable<String>(localPk);
+    map['firefly_id'] = Variable<int>(fireflyId);
+    if (!nullToAbsent || fireflyUpdatedAt != null) {
+      map['firefly_updated_at'] = Variable<DateTime>(fireflyUpdatedAt);
+    }
+    if (!nullToAbsent || lastSyncedLocalModified != null) {
+      map['last_synced_local_modified'] =
+          Variable<DateTime>(lastSyncedLocalModified);
+    }
+    map['is_tombstone'] = Variable<bool>(isTombstone);
+    if (!nullToAbsent || counterpartyFireflyId != null) {
+      map['counterparty_firefly_id'] = Variable<int>(counterpartyFireflyId);
+    }
+    map['firefly_split_index'] = Variable<int>(fireflySplitIndex);
+    if (!nullToAbsent || fireflyJournalId != null) {
+      map['firefly_journal_id'] = Variable<int>(fireflyJournalId);
+    }
+    map['date_created'] = Variable<DateTime>(dateCreated);
+    return map;
+  }
+
+  FireflySyncMapCompanion toCompanion(bool nullToAbsent) {
+    return FireflySyncMapCompanion(
+      syncMapPk: Value(syncMapPk),
+      entityType: Value(entityType),
+      localPk: Value(localPk),
+      fireflyId: Value(fireflyId),
+      fireflyUpdatedAt: fireflyUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fireflyUpdatedAt),
+      lastSyncedLocalModified: lastSyncedLocalModified == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSyncedLocalModified),
+      isTombstone: Value(isTombstone),
+      counterpartyFireflyId: counterpartyFireflyId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(counterpartyFireflyId),
+      fireflySplitIndex: Value(fireflySplitIndex),
+      fireflyJournalId: fireflyJournalId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fireflyJournalId),
+      dateCreated: Value(dateCreated),
+    );
+  }
+
+  factory FireflySyncMapEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return FireflySyncMapEntry(
+      syncMapPk: serializer.fromJson<String>(json['syncMapPk']),
+      entityType: $FireflySyncMapTable.$converterentityType
+          .fromJson(serializer.fromJson<int>(json['entityType'])),
+      localPk: serializer.fromJson<String>(json['localPk']),
+      fireflyId: serializer.fromJson<int>(json['fireflyId']),
+      fireflyUpdatedAt:
+          serializer.fromJson<DateTime?>(json['fireflyUpdatedAt']),
+      lastSyncedLocalModified:
+          serializer.fromJson<DateTime?>(json['lastSyncedLocalModified']),
+      isTombstone: serializer.fromJson<bool>(json['isTombstone']),
+      counterpartyFireflyId:
+          serializer.fromJson<int?>(json['counterpartyFireflyId']),
+      fireflySplitIndex: serializer.fromJson<int>(json['fireflySplitIndex']),
+      fireflyJournalId: serializer.fromJson<int?>(json['fireflyJournalId']),
+      dateCreated: serializer.fromJson<DateTime>(json['dateCreated']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'syncMapPk': serializer.toJson<String>(syncMapPk),
+      'entityType': serializer.toJson<int>(
+          $FireflySyncMapTable.$converterentityType.toJson(entityType)),
+      'localPk': serializer.toJson<String>(localPk),
+      'fireflyId': serializer.toJson<int>(fireflyId),
+      'fireflyUpdatedAt': serializer.toJson<DateTime?>(fireflyUpdatedAt),
+      'lastSyncedLocalModified':
+          serializer.toJson<DateTime?>(lastSyncedLocalModified),
+      'isTombstone': serializer.toJson<bool>(isTombstone),
+      'counterpartyFireflyId': serializer.toJson<int?>(counterpartyFireflyId),
+      'fireflySplitIndex': serializer.toJson<int>(fireflySplitIndex),
+      'fireflyJournalId': serializer.toJson<int?>(fireflyJournalId),
+      'dateCreated': serializer.toJson<DateTime>(dateCreated),
+    };
+  }
+
+  FireflySyncMapEntry copyWith(
+          {String? syncMapPk,
+          FireflySyncEntityType? entityType,
+          String? localPk,
+          int? fireflyId,
+          Value<DateTime?> fireflyUpdatedAt = const Value.absent(),
+          Value<DateTime?> lastSyncedLocalModified = const Value.absent(),
+          bool? isTombstone,
+          Value<int?> counterpartyFireflyId = const Value.absent(),
+          int? fireflySplitIndex,
+          Value<int?> fireflyJournalId = const Value.absent(),
+          DateTime? dateCreated}) =>
+      FireflySyncMapEntry(
+        syncMapPk: syncMapPk ?? this.syncMapPk,
+        entityType: entityType ?? this.entityType,
+        localPk: localPk ?? this.localPk,
+        fireflyId: fireflyId ?? this.fireflyId,
+        fireflyUpdatedAt: fireflyUpdatedAt.present
+            ? fireflyUpdatedAt.value
+            : this.fireflyUpdatedAt,
+        lastSyncedLocalModified: lastSyncedLocalModified.present
+            ? lastSyncedLocalModified.value
+            : this.lastSyncedLocalModified,
+        isTombstone: isTombstone ?? this.isTombstone,
+        counterpartyFireflyId: counterpartyFireflyId.present
+            ? counterpartyFireflyId.value
+            : this.counterpartyFireflyId,
+        fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+        fireflyJournalId: fireflyJournalId.present
+            ? fireflyJournalId.value
+            : this.fireflyJournalId,
+        dateCreated: dateCreated ?? this.dateCreated,
+      );
+  @override
+  String toString() {
+    return (StringBuffer('FireflySyncMapEntry(')
+          ..write('syncMapPk: $syncMapPk, ')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('fireflyId: $fireflyId, ')
+          ..write('fireflyUpdatedAt: $fireflyUpdatedAt, ')
+          ..write('lastSyncedLocalModified: $lastSyncedLocalModified, ')
+          ..write('isTombstone: $isTombstone, ')
+          ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
+          ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('fireflyJournalId: $fireflyJournalId, ')
+          ..write('dateCreated: $dateCreated')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      syncMapPk,
+      entityType,
+      localPk,
+      fireflyId,
+      fireflyUpdatedAt,
+      lastSyncedLocalModified,
+      isTombstone,
+      counterpartyFireflyId,
+      fireflySplitIndex,
+      fireflyJournalId,
+      dateCreated);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is FireflySyncMapEntry &&
+          other.syncMapPk == this.syncMapPk &&
+          other.entityType == this.entityType &&
+          other.localPk == this.localPk &&
+          other.fireflyId == this.fireflyId &&
+          other.fireflyUpdatedAt == this.fireflyUpdatedAt &&
+          other.lastSyncedLocalModified == this.lastSyncedLocalModified &&
+          other.isTombstone == this.isTombstone &&
+          other.counterpartyFireflyId == this.counterpartyFireflyId &&
+          other.fireflySplitIndex == this.fireflySplitIndex &&
+          other.fireflyJournalId == this.fireflyJournalId &&
+          other.dateCreated == this.dateCreated);
+}
+
+class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
+  final Value<String> syncMapPk;
+  final Value<FireflySyncEntityType> entityType;
+  final Value<String> localPk;
+  final Value<int> fireflyId;
+  final Value<DateTime?> fireflyUpdatedAt;
+  final Value<DateTime?> lastSyncedLocalModified;
+  final Value<bool> isTombstone;
+  final Value<int?> counterpartyFireflyId;
+  final Value<int> fireflySplitIndex;
+  final Value<int?> fireflyJournalId;
+  final Value<DateTime> dateCreated;
+  final Value<int> rowid;
+  const FireflySyncMapCompanion({
+    this.syncMapPk = const Value.absent(),
+    this.entityType = const Value.absent(),
+    this.localPk = const Value.absent(),
+    this.fireflyId = const Value.absent(),
+    this.fireflyUpdatedAt = const Value.absent(),
+    this.lastSyncedLocalModified = const Value.absent(),
+    this.isTombstone = const Value.absent(),
+    this.counterpartyFireflyId = const Value.absent(),
+    this.fireflySplitIndex = const Value.absent(),
+    this.fireflyJournalId = const Value.absent(),
+    this.dateCreated = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  FireflySyncMapCompanion.insert({
+    this.syncMapPk = const Value.absent(),
+    required FireflySyncEntityType entityType,
+    required String localPk,
+    required int fireflyId,
+    this.fireflyUpdatedAt = const Value.absent(),
+    this.lastSyncedLocalModified = const Value.absent(),
+    this.isTombstone = const Value.absent(),
+    this.counterpartyFireflyId = const Value.absent(),
+    this.fireflySplitIndex = const Value.absent(),
+    this.fireflyJournalId = const Value.absent(),
+    this.dateCreated = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : entityType = Value(entityType),
+        localPk = Value(localPk),
+        fireflyId = Value(fireflyId);
+  static Insertable<FireflySyncMapEntry> custom({
+    Expression<String>? syncMapPk,
+    Expression<int>? entityType,
+    Expression<String>? localPk,
+    Expression<int>? fireflyId,
+    Expression<DateTime>? fireflyUpdatedAt,
+    Expression<DateTime>? lastSyncedLocalModified,
+    Expression<bool>? isTombstone,
+    Expression<int>? counterpartyFireflyId,
+    Expression<int>? fireflySplitIndex,
+    Expression<int>? fireflyJournalId,
+    Expression<DateTime>? dateCreated,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (syncMapPk != null) 'sync_map_pk': syncMapPk,
+      if (entityType != null) 'entity_type': entityType,
+      if (localPk != null) 'local_pk': localPk,
+      if (fireflyId != null) 'firefly_id': fireflyId,
+      if (fireflyUpdatedAt != null) 'firefly_updated_at': fireflyUpdatedAt,
+      if (lastSyncedLocalModified != null)
+        'last_synced_local_modified': lastSyncedLocalModified,
+      if (isTombstone != null) 'is_tombstone': isTombstone,
+      if (counterpartyFireflyId != null)
+        'counterparty_firefly_id': counterpartyFireflyId,
+      if (fireflySplitIndex != null) 'firefly_split_index': fireflySplitIndex,
+      if (fireflyJournalId != null) 'firefly_journal_id': fireflyJournalId,
+      if (dateCreated != null) 'date_created': dateCreated,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  FireflySyncMapCompanion copyWith(
+      {Value<String>? syncMapPk,
+      Value<FireflySyncEntityType>? entityType,
+      Value<String>? localPk,
+      Value<int>? fireflyId,
+      Value<DateTime?>? fireflyUpdatedAt,
+      Value<DateTime?>? lastSyncedLocalModified,
+      Value<bool>? isTombstone,
+      Value<int?>? counterpartyFireflyId,
+      Value<int>? fireflySplitIndex,
+      Value<int?>? fireflyJournalId,
+      Value<DateTime>? dateCreated,
+      Value<int>? rowid}) {
+    return FireflySyncMapCompanion(
+      syncMapPk: syncMapPk ?? this.syncMapPk,
+      entityType: entityType ?? this.entityType,
+      localPk: localPk ?? this.localPk,
+      fireflyId: fireflyId ?? this.fireflyId,
+      fireflyUpdatedAt: fireflyUpdatedAt ?? this.fireflyUpdatedAt,
+      lastSyncedLocalModified:
+          lastSyncedLocalModified ?? this.lastSyncedLocalModified,
+      isTombstone: isTombstone ?? this.isTombstone,
+      counterpartyFireflyId:
+          counterpartyFireflyId ?? this.counterpartyFireflyId,
+      fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
+      fireflyJournalId: fireflyJournalId ?? this.fireflyJournalId,
+      dateCreated: dateCreated ?? this.dateCreated,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (syncMapPk.present) {
+      map['sync_map_pk'] = Variable<String>(syncMapPk.value);
+    }
+    if (entityType.present) {
+      map['entity_type'] = Variable<int>(
+          $FireflySyncMapTable.$converterentityType.toSql(entityType.value));
+    }
+    if (localPk.present) {
+      map['local_pk'] = Variable<String>(localPk.value);
+    }
+    if (fireflyId.present) {
+      map['firefly_id'] = Variable<int>(fireflyId.value);
+    }
+    if (fireflyUpdatedAt.present) {
+      map['firefly_updated_at'] = Variable<DateTime>(fireflyUpdatedAt.value);
+    }
+    if (lastSyncedLocalModified.present) {
+      map['last_synced_local_modified'] =
+          Variable<DateTime>(lastSyncedLocalModified.value);
+    }
+    if (isTombstone.present) {
+      map['is_tombstone'] = Variable<bool>(isTombstone.value);
+    }
+    if (counterpartyFireflyId.present) {
+      map['counterparty_firefly_id'] =
+          Variable<int>(counterpartyFireflyId.value);
+    }
+    if (fireflySplitIndex.present) {
+      map['firefly_split_index'] = Variable<int>(fireflySplitIndex.value);
+    }
+    if (fireflyJournalId.present) {
+      map['firefly_journal_id'] = Variable<int>(fireflyJournalId.value);
+    }
+    if (dateCreated.present) {
+      map['date_created'] = Variable<DateTime>(dateCreated.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FireflySyncMapCompanion(')
+          ..write('syncMapPk: $syncMapPk, ')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('fireflyId: $fireflyId, ')
+          ..write('fireflyUpdatedAt: $fireflyUpdatedAt, ')
+          ..write('lastSyncedLocalModified: $lastSyncedLocalModified, ')
+          ..write('isTombstone: $isTombstone, ')
+          ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
+          ..write('fireflySplitIndex: $fireflySplitIndex, ')
+          ..write('fireflyJournalId: $fireflyJournalId, ')
+          ..write('dateCreated: $dateCreated, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$FinanceDatabase extends GeneratedDatabase {
   _$FinanceDatabase(QueryExecutor e) : super(e);
+  _$FinanceDatabaseManager get managers => _$FinanceDatabaseManager(this);
   late final $WalletsTable wallets = $WalletsTable(this);
   late final $CategoriesTable categories = $CategoriesTable(this);
   late final $ObjectivesTable objectives = $ObjectivesTable(this);
@@ -6630,6 +7200,7 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
   late final $ScannerTemplatesTable scannerTemplates =
       $ScannerTemplatesTable(this);
   late final $DeleteLogsTable deleteLogs = $DeleteLogsTable(this);
+  late final $FireflySyncMapTable fireflySyncMap = $FireflySyncMapTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6644,6 +7215,3332 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
         associatedTitles,
         appSettings,
         scannerTemplates,
-        deleteLogs
+        deleteLogs,
+        fireflySyncMap
       ];
+}
+
+typedef $$WalletsTableInsertCompanionBuilder = WalletsCompanion Function({
+  Value<String> walletPk,
+  required String name,
+  Value<String?> colour,
+  Value<String?> iconName,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  required int order,
+  Value<String?> currency,
+  Value<String?> currencyFormat,
+  Value<int> decimals,
+  Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay,
+  Value<int> rowid,
+});
+typedef $$WalletsTableUpdateCompanionBuilder = WalletsCompanion Function({
+  Value<String> walletPk,
+  Value<String> name,
+  Value<String?> colour,
+  Value<String?> iconName,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<int> order,
+  Value<String?> currency,
+  Value<String?> currencyFormat,
+  Value<int> decimals,
+  Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay,
+  Value<int> rowid,
+});
+
+class $$WalletsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $WalletsTable,
+    TransactionWallet,
+    $$WalletsTableFilterComposer,
+    $$WalletsTableOrderingComposer,
+    $$WalletsTableProcessedTableManager,
+    $$WalletsTableInsertCompanionBuilder,
+    $$WalletsTableUpdateCompanionBuilder> {
+  $$WalletsTableTableManager(_$FinanceDatabase db, $WalletsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$WalletsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$WalletsTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) => $$WalletsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> walletPk = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<String?> colour = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<int> order = const Value.absent(),
+            Value<String?> currency = const Value.absent(),
+            Value<String?> currencyFormat = const Value.absent(),
+            Value<int> decimals = const Value.absent(),
+            Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay =
+                const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              WalletsCompanion(
+            walletPk: walletPk,
+            name: name,
+            colour: colour,
+            iconName: iconName,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            currency: currency,
+            currencyFormat: currencyFormat,
+            decimals: decimals,
+            homePageWidgetDisplay: homePageWidgetDisplay,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> walletPk = const Value.absent(),
+            required String name,
+            Value<String?> colour = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            required int order,
+            Value<String?> currency = const Value.absent(),
+            Value<String?> currencyFormat = const Value.absent(),
+            Value<int> decimals = const Value.absent(),
+            Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay =
+                const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              WalletsCompanion.insert(
+            walletPk: walletPk,
+            name: name,
+            colour: colour,
+            iconName: iconName,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            currency: currency,
+            currencyFormat: currencyFormat,
+            decimals: decimals,
+            homePageWidgetDisplay: homePageWidgetDisplay,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$WalletsTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $WalletsTable,
+    TransactionWallet,
+    $$WalletsTableFilterComposer,
+    $$WalletsTableOrderingComposer,
+    $$WalletsTableProcessedTableManager,
+    $$WalletsTableInsertCompanionBuilder,
+    $$WalletsTableUpdateCompanionBuilder> {
+  $$WalletsTableProcessedTableManager(super.$state);
+}
+
+class $$WalletsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $WalletsTable> {
+  $$WalletsTableFilterComposer(super.$state);
+  ColumnFilters<String> get walletPk => $state.composableBuilder(
+      column: $state.table.walletPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get currency => $state.composableBuilder(
+      column: $state.table.currency,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get currencyFormat => $state.composableBuilder(
+      column: $state.table.currencyFormat,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get decimals => $state.composableBuilder(
+      column: $state.table.decimals,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<HomePageWidgetDisplay>?,
+          List<HomePageWidgetDisplay>, String>
+      get homePageWidgetDisplay => $state.composableBuilder(
+          column: $state.table.homePageWidgetDisplay,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ComposableFilter objectivesRefs(
+      ComposableFilter Function($$ObjectivesTableFilterComposer f) f) {
+    final $$ObjectivesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletPk,
+        referencedTable: $state.db.objectives,
+        getReferencedColumn: (t) => t.walletFk,
+        builder: (joinBuilder, parentComposers) =>
+            $$ObjectivesTableFilterComposer(ComposerState($state.db,
+                $state.db.objectives, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter transactionsRefs(
+      ComposableFilter Function($$TransactionsTableFilterComposer f) f) {
+    final $$TransactionsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletPk,
+        referencedTable: $state.db.transactions,
+        getReferencedColumn: (t) => t.walletFk,
+        builder: (joinBuilder, parentComposers) =>
+            $$TransactionsTableFilterComposer(ComposerState($state.db,
+                $state.db.transactions, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter budgetsRefs(
+      ComposableFilter Function($$BudgetsTableFilterComposer f) f) {
+    final $$BudgetsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletPk,
+        referencedTable: $state.db.budgets,
+        getReferencedColumn: (t) => t.walletFk,
+        builder: (joinBuilder, parentComposers) => $$BudgetsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.budgets, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter categoryBudgetLimitsRefs(
+      ComposableFilter Function($$CategoryBudgetLimitsTableFilterComposer f)
+          f) {
+    final $$CategoryBudgetLimitsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.walletPk,
+            referencedTable: $state.db.categoryBudgetLimits,
+            getReferencedColumn: (t) => t.walletFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$CategoryBudgetLimitsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.categoryBudgetLimits,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter scannerTemplatesRefs(
+      ComposableFilter Function($$ScannerTemplatesTableFilterComposer f) f) {
+    final $$ScannerTemplatesTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.walletPk,
+            referencedTable: $state.db.scannerTemplates,
+            getReferencedColumn: (t) => t.walletFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$ScannerTemplatesTableFilterComposer(ComposerState($state.db,
+                    $state.db.scannerTemplates, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+}
+
+class $$WalletsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $WalletsTable> {
+  $$WalletsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get walletPk => $state.composableBuilder(
+      column: $state.table.walletPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get currency => $state.composableBuilder(
+      column: $state.table.currency,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get currencyFormat => $state.composableBuilder(
+      column: $state.table.currencyFormat,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get decimals => $state.composableBuilder(
+      column: $state.table.decimals,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get homePageWidgetDisplay => $state.composableBuilder(
+      column: $state.table.homePageWidgetDisplay,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+typedef $$CategoriesTableInsertCompanionBuilder = CategoriesCompanion Function({
+  Value<String> categoryPk,
+  required String name,
+  Value<String?> colour,
+  Value<String?> iconName,
+  Value<String?> emojiIconName,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  required int order,
+  Value<bool> income,
+  Value<MethodAdded?> methodAdded,
+  Value<String?> mainCategoryPk,
+  Value<int> rowid,
+});
+typedef $$CategoriesTableUpdateCompanionBuilder = CategoriesCompanion Function({
+  Value<String> categoryPk,
+  Value<String> name,
+  Value<String?> colour,
+  Value<String?> iconName,
+  Value<String?> emojiIconName,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<int> order,
+  Value<bool> income,
+  Value<MethodAdded?> methodAdded,
+  Value<String?> mainCategoryPk,
+  Value<int> rowid,
+});
+
+class $$CategoriesTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $CategoriesTable,
+    TransactionCategory,
+    $$CategoriesTableFilterComposer,
+    $$CategoriesTableOrderingComposer,
+    $$CategoriesTableProcessedTableManager,
+    $$CategoriesTableInsertCompanionBuilder,
+    $$CategoriesTableUpdateCompanionBuilder> {
+  $$CategoriesTableTableManager(_$FinanceDatabase db, $CategoriesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$CategoriesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$CategoriesTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$CategoriesTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> categoryPk = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<String?> colour = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<String?> emojiIconName = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<int> order = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<MethodAdded?> methodAdded = const Value.absent(),
+            Value<String?> mainCategoryPk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CategoriesCompanion(
+            categoryPk: categoryPk,
+            name: name,
+            colour: colour,
+            iconName: iconName,
+            emojiIconName: emojiIconName,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            income: income,
+            methodAdded: methodAdded,
+            mainCategoryPk: mainCategoryPk,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> categoryPk = const Value.absent(),
+            required String name,
+            Value<String?> colour = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<String?> emojiIconName = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            required int order,
+            Value<bool> income = const Value.absent(),
+            Value<MethodAdded?> methodAdded = const Value.absent(),
+            Value<String?> mainCategoryPk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CategoriesCompanion.insert(
+            categoryPk: categoryPk,
+            name: name,
+            colour: colour,
+            iconName: iconName,
+            emojiIconName: emojiIconName,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            income: income,
+            methodAdded: methodAdded,
+            mainCategoryPk: mainCategoryPk,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$CategoriesTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $CategoriesTable,
+    TransactionCategory,
+    $$CategoriesTableFilterComposer,
+    $$CategoriesTableOrderingComposer,
+    $$CategoriesTableProcessedTableManager,
+    $$CategoriesTableInsertCompanionBuilder,
+    $$CategoriesTableUpdateCompanionBuilder> {
+  $$CategoriesTableProcessedTableManager(super.$state);
+}
+
+class $$CategoriesTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $CategoriesTable> {
+  $$CategoriesTableFilterComposer(super.$state);
+  ColumnFilters<String> get categoryPk => $state.composableBuilder(
+      column: $state.table.categoryPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get emojiIconName => $state.composableBuilder(
+      column: $state.table.emojiIconName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<MethodAdded?, MethodAdded, int>
+      get methodAdded => $state.composableBuilder(
+          column: $state.table.methodAdded,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  $$CategoriesTableFilterComposer get mainCategoryPk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.mainCategoryPk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  ComposableFilter categoryBudgetLimitsRefs(
+      ComposableFilter Function($$CategoryBudgetLimitsTableFilterComposer f)
+          f) {
+    final $$CategoryBudgetLimitsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.categoryPk,
+            referencedTable: $state.db.categoryBudgetLimits,
+            getReferencedColumn: (t) => t.categoryFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$CategoryBudgetLimitsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.categoryBudgetLimits,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter associatedTitlesRefs(
+      ComposableFilter Function($$AssociatedTitlesTableFilterComposer f) f) {
+    final $$AssociatedTitlesTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.categoryPk,
+            referencedTable: $state.db.associatedTitles,
+            getReferencedColumn: (t) => t.categoryFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$AssociatedTitlesTableFilterComposer(ComposerState($state.db,
+                    $state.db.associatedTitles, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+
+  ComposableFilter scannerTemplatesRefs(
+      ComposableFilter Function($$ScannerTemplatesTableFilterComposer f) f) {
+    final $$ScannerTemplatesTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.categoryPk,
+            referencedTable: $state.db.scannerTemplates,
+            getReferencedColumn: (t) => t.defaultCategoryFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$ScannerTemplatesTableFilterComposer(ComposerState($state.db,
+                    $state.db.scannerTemplates, joinBuilder, parentComposers)));
+    return f(composer);
+  }
+}
+
+class $$CategoriesTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $CategoriesTable> {
+  $$CategoriesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get categoryPk => $state.composableBuilder(
+      column: $state.table.categoryPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get emojiIconName => $state.composableBuilder(
+      column: $state.table.emojiIconName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get methodAdded => $state.composableBuilder(
+      column: $state.table.methodAdded,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableOrderingComposer get mainCategoryPk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.mainCategoryPk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$ObjectivesTableInsertCompanionBuilder = ObjectivesCompanion Function({
+  Value<String> objectivePk,
+  Value<ObjectiveType> type,
+  required String name,
+  required double amount,
+  required int order,
+  Value<String?> colour,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> endDate,
+  Value<DateTime?> dateTimeModified,
+  Value<String?> iconName,
+  Value<String?> emojiIconName,
+  Value<bool> income,
+  Value<bool> pinned,
+  Value<bool> archived,
+  Value<String> walletFk,
+  Value<int> rowid,
+});
+typedef $$ObjectivesTableUpdateCompanionBuilder = ObjectivesCompanion Function({
+  Value<String> objectivePk,
+  Value<ObjectiveType> type,
+  Value<String> name,
+  Value<double> amount,
+  Value<int> order,
+  Value<String?> colour,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> endDate,
+  Value<DateTime?> dateTimeModified,
+  Value<String?> iconName,
+  Value<String?> emojiIconName,
+  Value<bool> income,
+  Value<bool> pinned,
+  Value<bool> archived,
+  Value<String> walletFk,
+  Value<int> rowid,
+});
+
+class $$ObjectivesTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $ObjectivesTable,
+    Objective,
+    $$ObjectivesTableFilterComposer,
+    $$ObjectivesTableOrderingComposer,
+    $$ObjectivesTableProcessedTableManager,
+    $$ObjectivesTableInsertCompanionBuilder,
+    $$ObjectivesTableUpdateCompanionBuilder> {
+  $$ObjectivesTableTableManager(_$FinanceDatabase db, $ObjectivesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$ObjectivesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$ObjectivesTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$ObjectivesTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> objectivePk = const Value.absent(),
+            Value<ObjectiveType> type = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<double> amount = const Value.absent(),
+            Value<int> order = const Value.absent(),
+            Value<String?> colour = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> endDate = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<String?> emojiIconName = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<bool> pinned = const Value.absent(),
+            Value<bool> archived = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              ObjectivesCompanion(
+            objectivePk: objectivePk,
+            type: type,
+            name: name,
+            amount: amount,
+            order: order,
+            colour: colour,
+            dateCreated: dateCreated,
+            endDate: endDate,
+            dateTimeModified: dateTimeModified,
+            iconName: iconName,
+            emojiIconName: emojiIconName,
+            income: income,
+            pinned: pinned,
+            archived: archived,
+            walletFk: walletFk,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> objectivePk = const Value.absent(),
+            Value<ObjectiveType> type = const Value.absent(),
+            required String name,
+            required double amount,
+            required int order,
+            Value<String?> colour = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> endDate = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<String?> iconName = const Value.absent(),
+            Value<String?> emojiIconName = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<bool> pinned = const Value.absent(),
+            Value<bool> archived = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              ObjectivesCompanion.insert(
+            objectivePk: objectivePk,
+            type: type,
+            name: name,
+            amount: amount,
+            order: order,
+            colour: colour,
+            dateCreated: dateCreated,
+            endDate: endDate,
+            dateTimeModified: dateTimeModified,
+            iconName: iconName,
+            emojiIconName: emojiIconName,
+            income: income,
+            pinned: pinned,
+            archived: archived,
+            walletFk: walletFk,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$ObjectivesTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $ObjectivesTable,
+    Objective,
+    $$ObjectivesTableFilterComposer,
+    $$ObjectivesTableOrderingComposer,
+    $$ObjectivesTableProcessedTableManager,
+    $$ObjectivesTableInsertCompanionBuilder,
+    $$ObjectivesTableUpdateCompanionBuilder> {
+  $$ObjectivesTableProcessedTableManager(super.$state);
+}
+
+class $$ObjectivesTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $ObjectivesTable> {
+  $$ObjectivesTableFilterComposer(super.$state);
+  ColumnFilters<String> get objectivePk => $state.composableBuilder(
+      column: $state.table.objectivePk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<ObjectiveType, ObjectiveType, int> get type =>
+      $state.composableBuilder(
+          column: $state.table.type,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get emojiIconName => $state.composableBuilder(
+      column: $state.table.emojiIconName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get pinned => $state.composableBuilder(
+      column: $state.table.pinned,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$WalletsTableFilterComposer get walletFk {
+    final $$WalletsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) => $$WalletsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$ObjectivesTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $ObjectivesTable> {
+  $$ObjectivesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get objectivePk => $state.composableBuilder(
+      column: $state.table.objectivePk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get type => $state.composableBuilder(
+      column: $state.table.type,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get iconName => $state.composableBuilder(
+      column: $state.table.iconName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get emojiIconName => $state.composableBuilder(
+      column: $state.table.emojiIconName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get pinned => $state.composableBuilder(
+      column: $state.table.pinned,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$WalletsTableOrderingComposer get walletFk {
+    final $$WalletsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$WalletsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$TransactionsTableInsertCompanionBuilder = TransactionsCompanion
+    Function({
+  Value<String> transactionPk,
+  Value<String?> pairedTransactionFk,
+  required String name,
+  required double amount,
+  required String note,
+  required String categoryFk,
+  Value<String?> subCategoryFk,
+  Value<String> walletFk,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<DateTime?> originalDateDue,
+  Value<bool> income,
+  Value<int?> periodLength,
+  Value<BudgetReoccurence?> reoccurrence,
+  Value<DateTime?> endDate,
+  Value<bool?> upcomingTransactionNotification,
+  Value<TransactionSpecialType?> type,
+  Value<bool> paid,
+  Value<bool?> createdAnotherFutureTransaction,
+  Value<bool> skipPaid,
+  Value<MethodAdded?> methodAdded,
+  Value<String?> transactionOwnerEmail,
+  Value<String?> transactionOriginalOwnerEmail,
+  Value<String?> sharedKey,
+  Value<String?> sharedOldKey,
+  Value<SharedStatus?> sharedStatus,
+  Value<DateTime?> sharedDateUpdated,
+  Value<String?> sharedReferenceBudgetPk,
+  Value<String?> objectiveFk,
+  Value<String?> objectiveLoanFk,
+  Value<List<String>?> budgetFksExclude,
+  Value<int> rowid,
+});
+typedef $$TransactionsTableUpdateCompanionBuilder = TransactionsCompanion
+    Function({
+  Value<String> transactionPk,
+  Value<String?> pairedTransactionFk,
+  Value<String> name,
+  Value<double> amount,
+  Value<String> note,
+  Value<String> categoryFk,
+  Value<String?> subCategoryFk,
+  Value<String> walletFk,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<DateTime?> originalDateDue,
+  Value<bool> income,
+  Value<int?> periodLength,
+  Value<BudgetReoccurence?> reoccurrence,
+  Value<DateTime?> endDate,
+  Value<bool?> upcomingTransactionNotification,
+  Value<TransactionSpecialType?> type,
+  Value<bool> paid,
+  Value<bool?> createdAnotherFutureTransaction,
+  Value<bool> skipPaid,
+  Value<MethodAdded?> methodAdded,
+  Value<String?> transactionOwnerEmail,
+  Value<String?> transactionOriginalOwnerEmail,
+  Value<String?> sharedKey,
+  Value<String?> sharedOldKey,
+  Value<SharedStatus?> sharedStatus,
+  Value<DateTime?> sharedDateUpdated,
+  Value<String?> sharedReferenceBudgetPk,
+  Value<String?> objectiveFk,
+  Value<String?> objectiveLoanFk,
+  Value<List<String>?> budgetFksExclude,
+  Value<int> rowid,
+});
+
+class $$TransactionsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $TransactionsTable,
+    Transaction,
+    $$TransactionsTableFilterComposer,
+    $$TransactionsTableOrderingComposer,
+    $$TransactionsTableProcessedTableManager,
+    $$TransactionsTableInsertCompanionBuilder,
+    $$TransactionsTableUpdateCompanionBuilder> {
+  $$TransactionsTableTableManager(
+      _$FinanceDatabase db, $TransactionsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$TransactionsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$TransactionsTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$TransactionsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> transactionPk = const Value.absent(),
+            Value<String?> pairedTransactionFk = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<double> amount = const Value.absent(),
+            Value<String> note = const Value.absent(),
+            Value<String> categoryFk = const Value.absent(),
+            Value<String?> subCategoryFk = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<DateTime?> originalDateDue = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<int?> periodLength = const Value.absent(),
+            Value<BudgetReoccurence?> reoccurrence = const Value.absent(),
+            Value<DateTime?> endDate = const Value.absent(),
+            Value<bool?> upcomingTransactionNotification = const Value.absent(),
+            Value<TransactionSpecialType?> type = const Value.absent(),
+            Value<bool> paid = const Value.absent(),
+            Value<bool?> createdAnotherFutureTransaction = const Value.absent(),
+            Value<bool> skipPaid = const Value.absent(),
+            Value<MethodAdded?> methodAdded = const Value.absent(),
+            Value<String?> transactionOwnerEmail = const Value.absent(),
+            Value<String?> transactionOriginalOwnerEmail = const Value.absent(),
+            Value<String?> sharedKey = const Value.absent(),
+            Value<String?> sharedOldKey = const Value.absent(),
+            Value<SharedStatus?> sharedStatus = const Value.absent(),
+            Value<DateTime?> sharedDateUpdated = const Value.absent(),
+            Value<String?> sharedReferenceBudgetPk = const Value.absent(),
+            Value<String?> objectiveFk = const Value.absent(),
+            Value<String?> objectiveLoanFk = const Value.absent(),
+            Value<List<String>?> budgetFksExclude = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              TransactionsCompanion(
+            transactionPk: transactionPk,
+            pairedTransactionFk: pairedTransactionFk,
+            name: name,
+            amount: amount,
+            note: note,
+            categoryFk: categoryFk,
+            subCategoryFk: subCategoryFk,
+            walletFk: walletFk,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            originalDateDue: originalDateDue,
+            income: income,
+            periodLength: periodLength,
+            reoccurrence: reoccurrence,
+            endDate: endDate,
+            upcomingTransactionNotification: upcomingTransactionNotification,
+            type: type,
+            paid: paid,
+            createdAnotherFutureTransaction: createdAnotherFutureTransaction,
+            skipPaid: skipPaid,
+            methodAdded: methodAdded,
+            transactionOwnerEmail: transactionOwnerEmail,
+            transactionOriginalOwnerEmail: transactionOriginalOwnerEmail,
+            sharedKey: sharedKey,
+            sharedOldKey: sharedOldKey,
+            sharedStatus: sharedStatus,
+            sharedDateUpdated: sharedDateUpdated,
+            sharedReferenceBudgetPk: sharedReferenceBudgetPk,
+            objectiveFk: objectiveFk,
+            objectiveLoanFk: objectiveLoanFk,
+            budgetFksExclude: budgetFksExclude,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> transactionPk = const Value.absent(),
+            Value<String?> pairedTransactionFk = const Value.absent(),
+            required String name,
+            required double amount,
+            required String note,
+            required String categoryFk,
+            Value<String?> subCategoryFk = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<DateTime?> originalDateDue = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<int?> periodLength = const Value.absent(),
+            Value<BudgetReoccurence?> reoccurrence = const Value.absent(),
+            Value<DateTime?> endDate = const Value.absent(),
+            Value<bool?> upcomingTransactionNotification = const Value.absent(),
+            Value<TransactionSpecialType?> type = const Value.absent(),
+            Value<bool> paid = const Value.absent(),
+            Value<bool?> createdAnotherFutureTransaction = const Value.absent(),
+            Value<bool> skipPaid = const Value.absent(),
+            Value<MethodAdded?> methodAdded = const Value.absent(),
+            Value<String?> transactionOwnerEmail = const Value.absent(),
+            Value<String?> transactionOriginalOwnerEmail = const Value.absent(),
+            Value<String?> sharedKey = const Value.absent(),
+            Value<String?> sharedOldKey = const Value.absent(),
+            Value<SharedStatus?> sharedStatus = const Value.absent(),
+            Value<DateTime?> sharedDateUpdated = const Value.absent(),
+            Value<String?> sharedReferenceBudgetPk = const Value.absent(),
+            Value<String?> objectiveFk = const Value.absent(),
+            Value<String?> objectiveLoanFk = const Value.absent(),
+            Value<List<String>?> budgetFksExclude = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              TransactionsCompanion.insert(
+            transactionPk: transactionPk,
+            pairedTransactionFk: pairedTransactionFk,
+            name: name,
+            amount: amount,
+            note: note,
+            categoryFk: categoryFk,
+            subCategoryFk: subCategoryFk,
+            walletFk: walletFk,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            originalDateDue: originalDateDue,
+            income: income,
+            periodLength: periodLength,
+            reoccurrence: reoccurrence,
+            endDate: endDate,
+            upcomingTransactionNotification: upcomingTransactionNotification,
+            type: type,
+            paid: paid,
+            createdAnotherFutureTransaction: createdAnotherFutureTransaction,
+            skipPaid: skipPaid,
+            methodAdded: methodAdded,
+            transactionOwnerEmail: transactionOwnerEmail,
+            transactionOriginalOwnerEmail: transactionOriginalOwnerEmail,
+            sharedKey: sharedKey,
+            sharedOldKey: sharedOldKey,
+            sharedStatus: sharedStatus,
+            sharedDateUpdated: sharedDateUpdated,
+            sharedReferenceBudgetPk: sharedReferenceBudgetPk,
+            objectiveFk: objectiveFk,
+            objectiveLoanFk: objectiveLoanFk,
+            budgetFksExclude: budgetFksExclude,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$TransactionsTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $TransactionsTable,
+    Transaction,
+    $$TransactionsTableFilterComposer,
+    $$TransactionsTableOrderingComposer,
+    $$TransactionsTableProcessedTableManager,
+    $$TransactionsTableInsertCompanionBuilder,
+    $$TransactionsTableUpdateCompanionBuilder> {
+  $$TransactionsTableProcessedTableManager(super.$state);
+}
+
+class $$TransactionsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $TransactionsTable> {
+  $$TransactionsTableFilterComposer(super.$state);
+  ColumnFilters<String> get transactionPk => $state.composableBuilder(
+      column: $state.table.transactionPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get note => $state.composableBuilder(
+      column: $state.table.note,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get originalDateDue => $state.composableBuilder(
+      column: $state.table.originalDateDue,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get periodLength => $state.composableBuilder(
+      column: $state.table.periodLength,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<BudgetReoccurence?, BudgetReoccurence, int>
+      get reoccurrence => $state.composableBuilder(
+          column: $state.table.reoccurrence,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get upcomingTransactionNotification =>
+      $state.composableBuilder(
+          column: $state.table.upcomingTransactionNotification,
+          builder: (column, joinBuilders) =>
+              ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<TransactionSpecialType?,
+          TransactionSpecialType, int>
+      get type => $state.composableBuilder(
+          column: $state.table.type,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get paid => $state.composableBuilder(
+      column: $state.table.paid,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get createdAnotherFutureTransaction =>
+      $state.composableBuilder(
+          column: $state.table.createdAnotherFutureTransaction,
+          builder: (column, joinBuilders) =>
+              ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get skipPaid => $state.composableBuilder(
+      column: $state.table.skipPaid,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<MethodAdded?, MethodAdded, int>
+      get methodAdded => $state.composableBuilder(
+          column: $state.table.methodAdded,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get transactionOwnerEmail => $state.composableBuilder(
+      column: $state.table.transactionOwnerEmail,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get transactionOriginalOwnerEmail =>
+      $state.composableBuilder(
+          column: $state.table.transactionOriginalOwnerEmail,
+          builder: (column, joinBuilders) =>
+              ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sharedKey => $state.composableBuilder(
+      column: $state.table.sharedKey,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sharedOldKey => $state.composableBuilder(
+      column: $state.table.sharedOldKey,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<SharedStatus?, SharedStatus, int>
+      get sharedStatus => $state.composableBuilder(
+          column: $state.table.sharedStatus,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get sharedDateUpdated => $state.composableBuilder(
+      column: $state.table.sharedDateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sharedReferenceBudgetPk => $state.composableBuilder(
+      column: $state.table.sharedReferenceBudgetPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get budgetFksExclude => $state.composableBuilder(
+          column: $state.table.budgetFksExclude,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  $$TransactionsTableFilterComposer get pairedTransactionFk {
+    final $$TransactionsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.pairedTransactionFk,
+        referencedTable: $state.db.transactions,
+        getReferencedColumn: (t) => t.transactionPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$TransactionsTableFilterComposer(ComposerState($state.db,
+                $state.db.transactions, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$CategoriesTableFilterComposer get categoryFk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$CategoriesTableFilterComposer get subCategoryFk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.subCategoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableFilterComposer get walletFk {
+    final $$WalletsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) => $$WalletsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$ObjectivesTableFilterComposer get objectiveFk {
+    final $$ObjectivesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.objectiveFk,
+        referencedTable: $state.db.objectives,
+        getReferencedColumn: (t) => t.objectivePk,
+        builder: (joinBuilder, parentComposers) =>
+            $$ObjectivesTableFilterComposer(ComposerState($state.db,
+                $state.db.objectives, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$ObjectivesTableFilterComposer get objectiveLoanFk {
+    final $$ObjectivesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.objectiveLoanFk,
+        referencedTable: $state.db.objectives,
+        getReferencedColumn: (t) => t.objectivePk,
+        builder: (joinBuilder, parentComposers) =>
+            $$ObjectivesTableFilterComposer(ComposerState($state.db,
+                $state.db.objectives, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$TransactionsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $TransactionsTable> {
+  $$TransactionsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get transactionPk => $state.composableBuilder(
+      column: $state.table.transactionPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get note => $state.composableBuilder(
+      column: $state.table.note,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get originalDateDue => $state.composableBuilder(
+      column: $state.table.originalDateDue,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get periodLength => $state.composableBuilder(
+      column: $state.table.periodLength,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get reoccurrence => $state.composableBuilder(
+      column: $state.table.reoccurrence,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get upcomingTransactionNotification =>
+      $state.composableBuilder(
+          column: $state.table.upcomingTransactionNotification,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get type => $state.composableBuilder(
+      column: $state.table.type,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get paid => $state.composableBuilder(
+      column: $state.table.paid,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get createdAnotherFutureTransaction =>
+      $state.composableBuilder(
+          column: $state.table.createdAnotherFutureTransaction,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get skipPaid => $state.composableBuilder(
+      column: $state.table.skipPaid,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get methodAdded => $state.composableBuilder(
+      column: $state.table.methodAdded,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get transactionOwnerEmail => $state.composableBuilder(
+      column: $state.table.transactionOwnerEmail,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get transactionOriginalOwnerEmail =>
+      $state.composableBuilder(
+          column: $state.table.transactionOriginalOwnerEmail,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedKey => $state.composableBuilder(
+      column: $state.table.sharedKey,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedOldKey => $state.composableBuilder(
+      column: $state.table.sharedOldKey,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get sharedStatus => $state.composableBuilder(
+      column: $state.table.sharedStatus,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get sharedDateUpdated => $state.composableBuilder(
+      column: $state.table.sharedDateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedReferenceBudgetPk =>
+      $state.composableBuilder(
+          column: $state.table.sharedReferenceBudgetPk,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get budgetFksExclude => $state.composableBuilder(
+      column: $state.table.budgetFksExclude,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$TransactionsTableOrderingComposer get pairedTransactionFk {
+    final $$TransactionsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.pairedTransactionFk,
+        referencedTable: $state.db.transactions,
+        getReferencedColumn: (t) => t.transactionPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$TransactionsTableOrderingComposer(ComposerState($state.db,
+                $state.db.transactions, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$CategoriesTableOrderingComposer get categoryFk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$CategoriesTableOrderingComposer get subCategoryFk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.subCategoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableOrderingComposer get walletFk {
+    final $$WalletsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$WalletsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$ObjectivesTableOrderingComposer get objectiveFk {
+    final $$ObjectivesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.objectiveFk,
+        referencedTable: $state.db.objectives,
+        getReferencedColumn: (t) => t.objectivePk,
+        builder: (joinBuilder, parentComposers) =>
+            $$ObjectivesTableOrderingComposer(ComposerState($state.db,
+                $state.db.objectives, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$ObjectivesTableOrderingComposer get objectiveLoanFk {
+    final $$ObjectivesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.objectiveLoanFk,
+        referencedTable: $state.db.objectives,
+        getReferencedColumn: (t) => t.objectivePk,
+        builder: (joinBuilder, parentComposers) =>
+            $$ObjectivesTableOrderingComposer(ComposerState($state.db,
+                $state.db.objectives, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$BudgetsTableInsertCompanionBuilder = BudgetsCompanion Function({
+  Value<String> budgetPk,
+  required String name,
+  required double amount,
+  Value<String?> colour,
+  required DateTime startDate,
+  required DateTime endDate,
+  Value<List<String>?> walletFks,
+  Value<List<String>?> categoryFks,
+  Value<List<String>?> categoryFksExclude,
+  Value<bool> income,
+  Value<bool> archived,
+  Value<bool> addedTransactionsOnly,
+  required int periodLength,
+  Value<BudgetReoccurence?> reoccurrence,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<bool> pinned,
+  required int order,
+  Value<String> walletFk,
+  Value<List<BudgetTransactionFilters>?> budgetTransactionFilters,
+  Value<List<String>?> memberTransactionFilters,
+  Value<String?> sharedKey,
+  Value<SharedOwnerMember?> sharedOwnerMember,
+  Value<DateTime?> sharedDateUpdated,
+  Value<List<String>?> sharedMembers,
+  Value<List<String>?> sharedAllMembersEver,
+  Value<bool> isAbsoluteSpendingLimit,
+  Value<int> rowid,
+});
+typedef $$BudgetsTableUpdateCompanionBuilder = BudgetsCompanion Function({
+  Value<String> budgetPk,
+  Value<String> name,
+  Value<double> amount,
+  Value<String?> colour,
+  Value<DateTime> startDate,
+  Value<DateTime> endDate,
+  Value<List<String>?> walletFks,
+  Value<List<String>?> categoryFks,
+  Value<List<String>?> categoryFksExclude,
+  Value<bool> income,
+  Value<bool> archived,
+  Value<bool> addedTransactionsOnly,
+  Value<int> periodLength,
+  Value<BudgetReoccurence?> reoccurrence,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<bool> pinned,
+  Value<int> order,
+  Value<String> walletFk,
+  Value<List<BudgetTransactionFilters>?> budgetTransactionFilters,
+  Value<List<String>?> memberTransactionFilters,
+  Value<String?> sharedKey,
+  Value<SharedOwnerMember?> sharedOwnerMember,
+  Value<DateTime?> sharedDateUpdated,
+  Value<List<String>?> sharedMembers,
+  Value<List<String>?> sharedAllMembersEver,
+  Value<bool> isAbsoluteSpendingLimit,
+  Value<int> rowid,
+});
+
+class $$BudgetsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $BudgetsTable,
+    Budget,
+    $$BudgetsTableFilterComposer,
+    $$BudgetsTableOrderingComposer,
+    $$BudgetsTableProcessedTableManager,
+    $$BudgetsTableInsertCompanionBuilder,
+    $$BudgetsTableUpdateCompanionBuilder> {
+  $$BudgetsTableTableManager(_$FinanceDatabase db, $BudgetsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$BudgetsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$BudgetsTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) => $$BudgetsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> budgetPk = const Value.absent(),
+            Value<String> name = const Value.absent(),
+            Value<double> amount = const Value.absent(),
+            Value<String?> colour = const Value.absent(),
+            Value<DateTime> startDate = const Value.absent(),
+            Value<DateTime> endDate = const Value.absent(),
+            Value<List<String>?> walletFks = const Value.absent(),
+            Value<List<String>?> categoryFks = const Value.absent(),
+            Value<List<String>?> categoryFksExclude = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<bool> archived = const Value.absent(),
+            Value<bool> addedTransactionsOnly = const Value.absent(),
+            Value<int> periodLength = const Value.absent(),
+            Value<BudgetReoccurence?> reoccurrence = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<bool> pinned = const Value.absent(),
+            Value<int> order = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<List<BudgetTransactionFilters>?> budgetTransactionFilters =
+                const Value.absent(),
+            Value<List<String>?> memberTransactionFilters =
+                const Value.absent(),
+            Value<String?> sharedKey = const Value.absent(),
+            Value<SharedOwnerMember?> sharedOwnerMember = const Value.absent(),
+            Value<DateTime?> sharedDateUpdated = const Value.absent(),
+            Value<List<String>?> sharedMembers = const Value.absent(),
+            Value<List<String>?> sharedAllMembersEver = const Value.absent(),
+            Value<bool> isAbsoluteSpendingLimit = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              BudgetsCompanion(
+            budgetPk: budgetPk,
+            name: name,
+            amount: amount,
+            colour: colour,
+            startDate: startDate,
+            endDate: endDate,
+            walletFks: walletFks,
+            categoryFks: categoryFks,
+            categoryFksExclude: categoryFksExclude,
+            income: income,
+            archived: archived,
+            addedTransactionsOnly: addedTransactionsOnly,
+            periodLength: periodLength,
+            reoccurrence: reoccurrence,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            pinned: pinned,
+            order: order,
+            walletFk: walletFk,
+            budgetTransactionFilters: budgetTransactionFilters,
+            memberTransactionFilters: memberTransactionFilters,
+            sharedKey: sharedKey,
+            sharedOwnerMember: sharedOwnerMember,
+            sharedDateUpdated: sharedDateUpdated,
+            sharedMembers: sharedMembers,
+            sharedAllMembersEver: sharedAllMembersEver,
+            isAbsoluteSpendingLimit: isAbsoluteSpendingLimit,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> budgetPk = const Value.absent(),
+            required String name,
+            required double amount,
+            Value<String?> colour = const Value.absent(),
+            required DateTime startDate,
+            required DateTime endDate,
+            Value<List<String>?> walletFks = const Value.absent(),
+            Value<List<String>?> categoryFks = const Value.absent(),
+            Value<List<String>?> categoryFksExclude = const Value.absent(),
+            Value<bool> income = const Value.absent(),
+            Value<bool> archived = const Value.absent(),
+            Value<bool> addedTransactionsOnly = const Value.absent(),
+            required int periodLength,
+            Value<BudgetReoccurence?> reoccurrence = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<bool> pinned = const Value.absent(),
+            required int order,
+            Value<String> walletFk = const Value.absent(),
+            Value<List<BudgetTransactionFilters>?> budgetTransactionFilters =
+                const Value.absent(),
+            Value<List<String>?> memberTransactionFilters =
+                const Value.absent(),
+            Value<String?> sharedKey = const Value.absent(),
+            Value<SharedOwnerMember?> sharedOwnerMember = const Value.absent(),
+            Value<DateTime?> sharedDateUpdated = const Value.absent(),
+            Value<List<String>?> sharedMembers = const Value.absent(),
+            Value<List<String>?> sharedAllMembersEver = const Value.absent(),
+            Value<bool> isAbsoluteSpendingLimit = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              BudgetsCompanion.insert(
+            budgetPk: budgetPk,
+            name: name,
+            amount: amount,
+            colour: colour,
+            startDate: startDate,
+            endDate: endDate,
+            walletFks: walletFks,
+            categoryFks: categoryFks,
+            categoryFksExclude: categoryFksExclude,
+            income: income,
+            archived: archived,
+            addedTransactionsOnly: addedTransactionsOnly,
+            periodLength: periodLength,
+            reoccurrence: reoccurrence,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            pinned: pinned,
+            order: order,
+            walletFk: walletFk,
+            budgetTransactionFilters: budgetTransactionFilters,
+            memberTransactionFilters: memberTransactionFilters,
+            sharedKey: sharedKey,
+            sharedOwnerMember: sharedOwnerMember,
+            sharedDateUpdated: sharedDateUpdated,
+            sharedMembers: sharedMembers,
+            sharedAllMembersEver: sharedAllMembersEver,
+            isAbsoluteSpendingLimit: isAbsoluteSpendingLimit,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$BudgetsTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $BudgetsTable,
+    Budget,
+    $$BudgetsTableFilterComposer,
+    $$BudgetsTableOrderingComposer,
+    $$BudgetsTableProcessedTableManager,
+    $$BudgetsTableInsertCompanionBuilder,
+    $$BudgetsTableUpdateCompanionBuilder> {
+  $$BudgetsTableProcessedTableManager(super.$state);
+}
+
+class $$BudgetsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $BudgetsTable> {
+  $$BudgetsTableFilterComposer(super.$state);
+  ColumnFilters<String> get budgetPk => $state.composableBuilder(
+      column: $state.table.budgetPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get startDate => $state.composableBuilder(
+      column: $state.table.startDate,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get walletFks => $state.composableBuilder(
+          column: $state.table.walletFks,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get categoryFks => $state.composableBuilder(
+          column: $state.table.categoryFks,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get categoryFksExclude => $state.composableBuilder(
+          column: $state.table.categoryFksExclude,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get addedTransactionsOnly => $state.composableBuilder(
+      column: $state.table.addedTransactionsOnly,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get periodLength => $state.composableBuilder(
+      column: $state.table.periodLength,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<BudgetReoccurence?, BudgetReoccurence, int>
+      get reoccurrence => $state.composableBuilder(
+          column: $state.table.reoccurrence,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get pinned => $state.composableBuilder(
+      column: $state.table.pinned,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<BudgetTransactionFilters>?,
+          List<BudgetTransactionFilters>, String>
+      get budgetTransactionFilters => $state.composableBuilder(
+          column: $state.table.budgetTransactionFilters,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get memberTransactionFilters => $state.composableBuilder(
+          column: $state.table.memberTransactionFilters,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get sharedKey => $state.composableBuilder(
+      column: $state.table.sharedKey,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<SharedOwnerMember?, SharedOwnerMember, int>
+      get sharedOwnerMember => $state.composableBuilder(
+          column: $state.table.sharedOwnerMember,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get sharedDateUpdated => $state.composableBuilder(
+      column: $state.table.sharedDateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get sharedMembers => $state.composableBuilder(
+          column: $state.table.sharedMembers,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get sharedAllMembersEver => $state.composableBuilder(
+          column: $state.table.sharedAllMembersEver,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isAbsoluteSpendingLimit => $state.composableBuilder(
+      column: $state.table.isAbsoluteSpendingLimit,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$WalletsTableFilterComposer get walletFk {
+    final $$WalletsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) => $$WalletsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  ComposableFilter categoryBudgetLimitsRefs(
+      ComposableFilter Function($$CategoryBudgetLimitsTableFilterComposer f)
+          f) {
+    final $$CategoryBudgetLimitsTableFilterComposer composer =
+        $state.composerBuilder(
+            composer: this,
+            getCurrentColumn: (t) => t.budgetPk,
+            referencedTable: $state.db.categoryBudgetLimits,
+            getReferencedColumn: (t) => t.budgetFk,
+            builder: (joinBuilder, parentComposers) =>
+                $$CategoryBudgetLimitsTableFilterComposer(ComposerState(
+                    $state.db,
+                    $state.db.categoryBudgetLimits,
+                    joinBuilder,
+                    parentComposers)));
+    return f(composer);
+  }
+}
+
+class $$BudgetsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $BudgetsTable> {
+  $$BudgetsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get budgetPk => $state.composableBuilder(
+      column: $state.table.budgetPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get name => $state.composableBuilder(
+      column: $state.table.name,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get colour => $state.composableBuilder(
+      column: $state.table.colour,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get startDate => $state.composableBuilder(
+      column: $state.table.startDate,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get endDate => $state.composableBuilder(
+      column: $state.table.endDate,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get walletFks => $state.composableBuilder(
+      column: $state.table.walletFks,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get categoryFks => $state.composableBuilder(
+      column: $state.table.categoryFks,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get categoryFksExclude => $state.composableBuilder(
+      column: $state.table.categoryFksExclude,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get income => $state.composableBuilder(
+      column: $state.table.income,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get addedTransactionsOnly => $state.composableBuilder(
+      column: $state.table.addedTransactionsOnly,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get periodLength => $state.composableBuilder(
+      column: $state.table.periodLength,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get reoccurrence => $state.composableBuilder(
+      column: $state.table.reoccurrence,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get pinned => $state.composableBuilder(
+      column: $state.table.pinned,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get budgetTransactionFilters =>
+      $state.composableBuilder(
+          column: $state.table.budgetTransactionFilters,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get memberTransactionFilters =>
+      $state.composableBuilder(
+          column: $state.table.memberTransactionFilters,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedKey => $state.composableBuilder(
+      column: $state.table.sharedKey,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get sharedOwnerMember => $state.composableBuilder(
+      column: $state.table.sharedOwnerMember,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get sharedDateUpdated => $state.composableBuilder(
+      column: $state.table.sharedDateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedMembers => $state.composableBuilder(
+      column: $state.table.sharedMembers,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get sharedAllMembersEver => $state.composableBuilder(
+      column: $state.table.sharedAllMembersEver,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isAbsoluteSpendingLimit => $state.composableBuilder(
+      column: $state.table.isAbsoluteSpendingLimit,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$WalletsTableOrderingComposer get walletFk {
+    final $$WalletsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$WalletsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$CategoryBudgetLimitsTableInsertCompanionBuilder
+    = CategoryBudgetLimitsCompanion Function({
+  Value<String> categoryLimitPk,
+  required String categoryFk,
+  required String budgetFk,
+  required double amount,
+  Value<DateTime?> dateTimeModified,
+  Value<String> walletFk,
+  Value<int> rowid,
+});
+typedef $$CategoryBudgetLimitsTableUpdateCompanionBuilder
+    = CategoryBudgetLimitsCompanion Function({
+  Value<String> categoryLimitPk,
+  Value<String> categoryFk,
+  Value<String> budgetFk,
+  Value<double> amount,
+  Value<DateTime?> dateTimeModified,
+  Value<String> walletFk,
+  Value<int> rowid,
+});
+
+class $$CategoryBudgetLimitsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $CategoryBudgetLimitsTable,
+    CategoryBudgetLimit,
+    $$CategoryBudgetLimitsTableFilterComposer,
+    $$CategoryBudgetLimitsTableOrderingComposer,
+    $$CategoryBudgetLimitsTableProcessedTableManager,
+    $$CategoryBudgetLimitsTableInsertCompanionBuilder,
+    $$CategoryBudgetLimitsTableUpdateCompanionBuilder> {
+  $$CategoryBudgetLimitsTableTableManager(
+      _$FinanceDatabase db, $CategoryBudgetLimitsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer: $$CategoryBudgetLimitsTableFilterComposer(
+              ComposerState(db, table)),
+          orderingComposer: $$CategoryBudgetLimitsTableOrderingComposer(
+              ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$CategoryBudgetLimitsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> categoryLimitPk = const Value.absent(),
+            Value<String> categoryFk = const Value.absent(),
+            Value<String> budgetFk = const Value.absent(),
+            Value<double> amount = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CategoryBudgetLimitsCompanion(
+            categoryLimitPk: categoryLimitPk,
+            categoryFk: categoryFk,
+            budgetFk: budgetFk,
+            amount: amount,
+            dateTimeModified: dateTimeModified,
+            walletFk: walletFk,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> categoryLimitPk = const Value.absent(),
+            required String categoryFk,
+            required String budgetFk,
+            required double amount,
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              CategoryBudgetLimitsCompanion.insert(
+            categoryLimitPk: categoryLimitPk,
+            categoryFk: categoryFk,
+            budgetFk: budgetFk,
+            amount: amount,
+            dateTimeModified: dateTimeModified,
+            walletFk: walletFk,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$CategoryBudgetLimitsTableProcessedTableManager
+    extends ProcessedTableManager<
+        _$FinanceDatabase,
+        $CategoryBudgetLimitsTable,
+        CategoryBudgetLimit,
+        $$CategoryBudgetLimitsTableFilterComposer,
+        $$CategoryBudgetLimitsTableOrderingComposer,
+        $$CategoryBudgetLimitsTableProcessedTableManager,
+        $$CategoryBudgetLimitsTableInsertCompanionBuilder,
+        $$CategoryBudgetLimitsTableUpdateCompanionBuilder> {
+  $$CategoryBudgetLimitsTableProcessedTableManager(super.$state);
+}
+
+class $$CategoryBudgetLimitsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $CategoryBudgetLimitsTable> {
+  $$CategoryBudgetLimitsTableFilterComposer(super.$state);
+  ColumnFilters<String> get categoryLimitPk => $state.composableBuilder(
+      column: $state.table.categoryLimitPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableFilterComposer get categoryFk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$BudgetsTableFilterComposer get budgetFk {
+    final $$BudgetsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.budgetFk,
+        referencedTable: $state.db.budgets,
+        getReferencedColumn: (t) => t.budgetPk,
+        builder: (joinBuilder, parentComposers) => $$BudgetsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.budgets, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableFilterComposer get walletFk {
+    final $$WalletsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) => $$WalletsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$CategoryBudgetLimitsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $CategoryBudgetLimitsTable> {
+  $$CategoryBudgetLimitsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get categoryLimitPk => $state.composableBuilder(
+      column: $state.table.categoryLimitPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get amount => $state.composableBuilder(
+      column: $state.table.amount,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableOrderingComposer get categoryFk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$BudgetsTableOrderingComposer get budgetFk {
+    final $$BudgetsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.budgetFk,
+        referencedTable: $state.db.budgets,
+        getReferencedColumn: (t) => t.budgetPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$BudgetsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.budgets, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableOrderingComposer get walletFk {
+    final $$WalletsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$WalletsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$AssociatedTitlesTableInsertCompanionBuilder
+    = AssociatedTitlesCompanion Function({
+  Value<String> associatedTitlePk,
+  required String categoryFk,
+  required String title,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  required int order,
+  Value<bool> isExactMatch,
+  Value<int> rowid,
+});
+typedef $$AssociatedTitlesTableUpdateCompanionBuilder
+    = AssociatedTitlesCompanion Function({
+  Value<String> associatedTitlePk,
+  Value<String> categoryFk,
+  Value<String> title,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<int> order,
+  Value<bool> isExactMatch,
+  Value<int> rowid,
+});
+
+class $$AssociatedTitlesTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $AssociatedTitlesTable,
+    TransactionAssociatedTitle,
+    $$AssociatedTitlesTableFilterComposer,
+    $$AssociatedTitlesTableOrderingComposer,
+    $$AssociatedTitlesTableProcessedTableManager,
+    $$AssociatedTitlesTableInsertCompanionBuilder,
+    $$AssociatedTitlesTableUpdateCompanionBuilder> {
+  $$AssociatedTitlesTableTableManager(
+      _$FinanceDatabase db, $AssociatedTitlesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$AssociatedTitlesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$AssociatedTitlesTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$AssociatedTitlesTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> associatedTitlePk = const Value.absent(),
+            Value<String> categoryFk = const Value.absent(),
+            Value<String> title = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<int> order = const Value.absent(),
+            Value<bool> isExactMatch = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AssociatedTitlesCompanion(
+            associatedTitlePk: associatedTitlePk,
+            categoryFk: categoryFk,
+            title: title,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            isExactMatch: isExactMatch,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> associatedTitlePk = const Value.absent(),
+            required String categoryFk,
+            required String title,
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            required int order,
+            Value<bool> isExactMatch = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AssociatedTitlesCompanion.insert(
+            associatedTitlePk: associatedTitlePk,
+            categoryFk: categoryFk,
+            title: title,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            order: order,
+            isExactMatch: isExactMatch,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$AssociatedTitlesTableProcessedTableManager
+    extends ProcessedTableManager<
+        _$FinanceDatabase,
+        $AssociatedTitlesTable,
+        TransactionAssociatedTitle,
+        $$AssociatedTitlesTableFilterComposer,
+        $$AssociatedTitlesTableOrderingComposer,
+        $$AssociatedTitlesTableProcessedTableManager,
+        $$AssociatedTitlesTableInsertCompanionBuilder,
+        $$AssociatedTitlesTableUpdateCompanionBuilder> {
+  $$AssociatedTitlesTableProcessedTableManager(super.$state);
+}
+
+class $$AssociatedTitlesTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $AssociatedTitlesTable> {
+  $$AssociatedTitlesTableFilterComposer(super.$state);
+  ColumnFilters<String> get associatedTitlePk => $state.composableBuilder(
+      column: $state.table.associatedTitlePk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get title => $state.composableBuilder(
+      column: $state.table.title,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isExactMatch => $state.composableBuilder(
+      column: $state.table.isExactMatch,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableFilterComposer get categoryFk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$AssociatedTitlesTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $AssociatedTitlesTable> {
+  $$AssociatedTitlesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get associatedTitlePk => $state.composableBuilder(
+      column: $state.table.associatedTitlePk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get title => $state.composableBuilder(
+      column: $state.table.title,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get order => $state.composableBuilder(
+      column: $state.table.order,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isExactMatch => $state.composableBuilder(
+      column: $state.table.isExactMatch,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableOrderingComposer get categoryFk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.categoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$AppSettingsTableInsertCompanionBuilder = AppSettingsCompanion
+    Function({
+  Value<int> settingsPk,
+  required String settingsJSON,
+  Value<DateTime> dateUpdated,
+});
+typedef $$AppSettingsTableUpdateCompanionBuilder = AppSettingsCompanion
+    Function({
+  Value<int> settingsPk,
+  Value<String> settingsJSON,
+  Value<DateTime> dateUpdated,
+});
+
+class $$AppSettingsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $AppSettingsTable,
+    AppSetting,
+    $$AppSettingsTableFilterComposer,
+    $$AppSettingsTableOrderingComposer,
+    $$AppSettingsTableProcessedTableManager,
+    $$AppSettingsTableInsertCompanionBuilder,
+    $$AppSettingsTableUpdateCompanionBuilder> {
+  $$AppSettingsTableTableManager(_$FinanceDatabase db, $AppSettingsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$AppSettingsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$AppSettingsTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$AppSettingsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<int> settingsPk = const Value.absent(),
+            Value<String> settingsJSON = const Value.absent(),
+            Value<DateTime> dateUpdated = const Value.absent(),
+          }) =>
+              AppSettingsCompanion(
+            settingsPk: settingsPk,
+            settingsJSON: settingsJSON,
+            dateUpdated: dateUpdated,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<int> settingsPk = const Value.absent(),
+            required String settingsJSON,
+            Value<DateTime> dateUpdated = const Value.absent(),
+          }) =>
+              AppSettingsCompanion.insert(
+            settingsPk: settingsPk,
+            settingsJSON: settingsJSON,
+            dateUpdated: dateUpdated,
+          ),
+        ));
+}
+
+class $$AppSettingsTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $AppSettingsTable,
+    AppSetting,
+    $$AppSettingsTableFilterComposer,
+    $$AppSettingsTableOrderingComposer,
+    $$AppSettingsTableProcessedTableManager,
+    $$AppSettingsTableInsertCompanionBuilder,
+    $$AppSettingsTableUpdateCompanionBuilder> {
+  $$AppSettingsTableProcessedTableManager(super.$state);
+}
+
+class $$AppSettingsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $AppSettingsTable> {
+  $$AppSettingsTableFilterComposer(super.$state);
+  ColumnFilters<int> get settingsPk => $state.composableBuilder(
+      column: $state.table.settingsPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get settingsJSON => $state.composableBuilder(
+      column: $state.table.settingsJSON,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateUpdated => $state.composableBuilder(
+      column: $state.table.dateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$AppSettingsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $AppSettingsTable> {
+  $$AppSettingsTableOrderingComposer(super.$state);
+  ColumnOrderings<int> get settingsPk => $state.composableBuilder(
+      column: $state.table.settingsPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get settingsJSON => $state.composableBuilder(
+      column: $state.table.settingsJSON,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateUpdated => $state.composableBuilder(
+      column: $state.table.dateUpdated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+typedef $$ScannerTemplatesTableInsertCompanionBuilder
+    = ScannerTemplatesCompanion Function({
+  Value<String> scannerTemplatePk,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  required String templateName,
+  required String contains,
+  required String titleTransactionBefore,
+  required String titleTransactionAfter,
+  required String amountTransactionBefore,
+  required String amountTransactionAfter,
+  required String defaultCategoryFk,
+  Value<String> walletFk,
+  Value<bool> ignore,
+  Value<int> rowid,
+});
+typedef $$ScannerTemplatesTableUpdateCompanionBuilder
+    = ScannerTemplatesCompanion Function({
+  Value<String> scannerTemplatePk,
+  Value<DateTime> dateCreated,
+  Value<DateTime?> dateTimeModified,
+  Value<String> templateName,
+  Value<String> contains,
+  Value<String> titleTransactionBefore,
+  Value<String> titleTransactionAfter,
+  Value<String> amountTransactionBefore,
+  Value<String> amountTransactionAfter,
+  Value<String> defaultCategoryFk,
+  Value<String> walletFk,
+  Value<bool> ignore,
+  Value<int> rowid,
+});
+
+class $$ScannerTemplatesTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $ScannerTemplatesTable,
+    ScannerTemplate,
+    $$ScannerTemplatesTableFilterComposer,
+    $$ScannerTemplatesTableOrderingComposer,
+    $$ScannerTemplatesTableProcessedTableManager,
+    $$ScannerTemplatesTableInsertCompanionBuilder,
+    $$ScannerTemplatesTableUpdateCompanionBuilder> {
+  $$ScannerTemplatesTableTableManager(
+      _$FinanceDatabase db, $ScannerTemplatesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$ScannerTemplatesTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$ScannerTemplatesTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$ScannerTemplatesTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> scannerTemplatePk = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            Value<String> templateName = const Value.absent(),
+            Value<String> contains = const Value.absent(),
+            Value<String> titleTransactionBefore = const Value.absent(),
+            Value<String> titleTransactionAfter = const Value.absent(),
+            Value<String> amountTransactionBefore = const Value.absent(),
+            Value<String> amountTransactionAfter = const Value.absent(),
+            Value<String> defaultCategoryFk = const Value.absent(),
+            Value<String> walletFk = const Value.absent(),
+            Value<bool> ignore = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              ScannerTemplatesCompanion(
+            scannerTemplatePk: scannerTemplatePk,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            templateName: templateName,
+            contains: contains,
+            titleTransactionBefore: titleTransactionBefore,
+            titleTransactionAfter: titleTransactionAfter,
+            amountTransactionBefore: amountTransactionBefore,
+            amountTransactionAfter: amountTransactionAfter,
+            defaultCategoryFk: defaultCategoryFk,
+            walletFk: walletFk,
+            ignore: ignore,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> scannerTemplatePk = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<DateTime?> dateTimeModified = const Value.absent(),
+            required String templateName,
+            required String contains,
+            required String titleTransactionBefore,
+            required String titleTransactionAfter,
+            required String amountTransactionBefore,
+            required String amountTransactionAfter,
+            required String defaultCategoryFk,
+            Value<String> walletFk = const Value.absent(),
+            Value<bool> ignore = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              ScannerTemplatesCompanion.insert(
+            scannerTemplatePk: scannerTemplatePk,
+            dateCreated: dateCreated,
+            dateTimeModified: dateTimeModified,
+            templateName: templateName,
+            contains: contains,
+            titleTransactionBefore: titleTransactionBefore,
+            titleTransactionAfter: titleTransactionAfter,
+            amountTransactionBefore: amountTransactionBefore,
+            amountTransactionAfter: amountTransactionAfter,
+            defaultCategoryFk: defaultCategoryFk,
+            walletFk: walletFk,
+            ignore: ignore,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$ScannerTemplatesTableProcessedTableManager
+    extends ProcessedTableManager<
+        _$FinanceDatabase,
+        $ScannerTemplatesTable,
+        ScannerTemplate,
+        $$ScannerTemplatesTableFilterComposer,
+        $$ScannerTemplatesTableOrderingComposer,
+        $$ScannerTemplatesTableProcessedTableManager,
+        $$ScannerTemplatesTableInsertCompanionBuilder,
+        $$ScannerTemplatesTableUpdateCompanionBuilder> {
+  $$ScannerTemplatesTableProcessedTableManager(super.$state);
+}
+
+class $$ScannerTemplatesTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $ScannerTemplatesTable> {
+  $$ScannerTemplatesTableFilterComposer(super.$state);
+  ColumnFilters<String> get scannerTemplatePk => $state.composableBuilder(
+      column: $state.table.scannerTemplatePk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get templateName => $state.composableBuilder(
+      column: $state.table.templateName,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get contains => $state.composableBuilder(
+      column: $state.table.contains,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get titleTransactionBefore => $state.composableBuilder(
+      column: $state.table.titleTransactionBefore,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get titleTransactionAfter => $state.composableBuilder(
+      column: $state.table.titleTransactionAfter,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get amountTransactionBefore => $state.composableBuilder(
+      column: $state.table.amountTransactionBefore,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get amountTransactionAfter => $state.composableBuilder(
+      column: $state.table.amountTransactionAfter,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get ignore => $state.composableBuilder(
+      column: $state.table.ignore,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableFilterComposer get defaultCategoryFk {
+    final $$CategoriesTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.defaultCategoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableFilterComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableFilterComposer get walletFk {
+    final $$WalletsTableFilterComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) => $$WalletsTableFilterComposer(
+            ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+class $$ScannerTemplatesTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $ScannerTemplatesTable> {
+  $$ScannerTemplatesTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get scannerTemplatePk => $state.composableBuilder(
+      column: $state.table.scannerTemplatePk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get templateName => $state.composableBuilder(
+      column: $state.table.templateName,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get contains => $state.composableBuilder(
+      column: $state.table.contains,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get titleTransactionBefore =>
+      $state.composableBuilder(
+          column: $state.table.titleTransactionBefore,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get titleTransactionAfter => $state.composableBuilder(
+      column: $state.table.titleTransactionAfter,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get amountTransactionBefore =>
+      $state.composableBuilder(
+          column: $state.table.amountTransactionBefore,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get amountTransactionAfter =>
+      $state.composableBuilder(
+          column: $state.table.amountTransactionAfter,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get ignore => $state.composableBuilder(
+      column: $state.table.ignore,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  $$CategoriesTableOrderingComposer get defaultCategoryFk {
+    final $$CategoriesTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.defaultCategoryFk,
+        referencedTable: $state.db.categories,
+        getReferencedColumn: (t) => t.categoryPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$CategoriesTableOrderingComposer(ComposerState($state.db,
+                $state.db.categories, joinBuilder, parentComposers)));
+    return composer;
+  }
+
+  $$WalletsTableOrderingComposer get walletFk {
+    final $$WalletsTableOrderingComposer composer = $state.composerBuilder(
+        composer: this,
+        getCurrentColumn: (t) => t.walletFk,
+        referencedTable: $state.db.wallets,
+        getReferencedColumn: (t) => t.walletPk,
+        builder: (joinBuilder, parentComposers) =>
+            $$WalletsTableOrderingComposer(ComposerState(
+                $state.db, $state.db.wallets, joinBuilder, parentComposers)));
+    return composer;
+  }
+}
+
+typedef $$DeleteLogsTableInsertCompanionBuilder = DeleteLogsCompanion Function({
+  Value<String> deleteLogPk,
+  required String entryPk,
+  required DeleteLogType type,
+  Value<DateTime> dateTimeModified,
+  Value<int> rowid,
+});
+typedef $$DeleteLogsTableUpdateCompanionBuilder = DeleteLogsCompanion Function({
+  Value<String> deleteLogPk,
+  Value<String> entryPk,
+  Value<DeleteLogType> type,
+  Value<DateTime> dateTimeModified,
+  Value<int> rowid,
+});
+
+class $$DeleteLogsTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $DeleteLogsTable,
+    DeleteLog,
+    $$DeleteLogsTableFilterComposer,
+    $$DeleteLogsTableOrderingComposer,
+    $$DeleteLogsTableProcessedTableManager,
+    $$DeleteLogsTableInsertCompanionBuilder,
+    $$DeleteLogsTableUpdateCompanionBuilder> {
+  $$DeleteLogsTableTableManager(_$FinanceDatabase db, $DeleteLogsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$DeleteLogsTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$DeleteLogsTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$DeleteLogsTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> deleteLogPk = const Value.absent(),
+            Value<String> entryPk = const Value.absent(),
+            Value<DeleteLogType> type = const Value.absent(),
+            Value<DateTime> dateTimeModified = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DeleteLogsCompanion(
+            deleteLogPk: deleteLogPk,
+            entryPk: entryPk,
+            type: type,
+            dateTimeModified: dateTimeModified,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> deleteLogPk = const Value.absent(),
+            required String entryPk,
+            required DeleteLogType type,
+            Value<DateTime> dateTimeModified = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              DeleteLogsCompanion.insert(
+            deleteLogPk: deleteLogPk,
+            entryPk: entryPk,
+            type: type,
+            dateTimeModified: dateTimeModified,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$DeleteLogsTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $DeleteLogsTable,
+    DeleteLog,
+    $$DeleteLogsTableFilterComposer,
+    $$DeleteLogsTableOrderingComposer,
+    $$DeleteLogsTableProcessedTableManager,
+    $$DeleteLogsTableInsertCompanionBuilder,
+    $$DeleteLogsTableUpdateCompanionBuilder> {
+  $$DeleteLogsTableProcessedTableManager(super.$state);
+}
+
+class $$DeleteLogsTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $DeleteLogsTable> {
+  $$DeleteLogsTableFilterComposer(super.$state);
+  ColumnFilters<String> get deleteLogPk => $state.composableBuilder(
+      column: $state.table.deleteLogPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get entryPk => $state.composableBuilder(
+      column: $state.table.entryPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<DeleteLogType, DeleteLogType, int> get type =>
+      $state.composableBuilder(
+          column: $state.table.type,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$DeleteLogsTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $DeleteLogsTable> {
+  $$DeleteLogsTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get deleteLogPk => $state.composableBuilder(
+      column: $state.table.deleteLogPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get entryPk => $state.composableBuilder(
+      column: $state.table.entryPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get type => $state.composableBuilder(
+      column: $state.table.type,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateTimeModified => $state.composableBuilder(
+      column: $state.table.dateTimeModified,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+typedef $$FireflySyncMapTableInsertCompanionBuilder = FireflySyncMapCompanion
+    Function({
+  Value<String> syncMapPk,
+  required FireflySyncEntityType entityType,
+  required String localPk,
+  required int fireflyId,
+  Value<DateTime?> fireflyUpdatedAt,
+  Value<DateTime?> lastSyncedLocalModified,
+  Value<bool> isTombstone,
+  Value<int?> counterpartyFireflyId,
+  Value<int> fireflySplitIndex,
+  Value<int?> fireflyJournalId,
+  Value<DateTime> dateCreated,
+  Value<int> rowid,
+});
+typedef $$FireflySyncMapTableUpdateCompanionBuilder = FireflySyncMapCompanion
+    Function({
+  Value<String> syncMapPk,
+  Value<FireflySyncEntityType> entityType,
+  Value<String> localPk,
+  Value<int> fireflyId,
+  Value<DateTime?> fireflyUpdatedAt,
+  Value<DateTime?> lastSyncedLocalModified,
+  Value<bool> isTombstone,
+  Value<int?> counterpartyFireflyId,
+  Value<int> fireflySplitIndex,
+  Value<int?> fireflyJournalId,
+  Value<DateTime> dateCreated,
+  Value<int> rowid,
+});
+
+class $$FireflySyncMapTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $FireflySyncMapTable,
+    FireflySyncMapEntry,
+    $$FireflySyncMapTableFilterComposer,
+    $$FireflySyncMapTableOrderingComposer,
+    $$FireflySyncMapTableProcessedTableManager,
+    $$FireflySyncMapTableInsertCompanionBuilder,
+    $$FireflySyncMapTableUpdateCompanionBuilder> {
+  $$FireflySyncMapTableTableManager(
+      _$FinanceDatabase db, $FireflySyncMapTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$FireflySyncMapTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$FireflySyncMapTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$FireflySyncMapTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<String> syncMapPk = const Value.absent(),
+            Value<FireflySyncEntityType> entityType = const Value.absent(),
+            Value<String> localPk = const Value.absent(),
+            Value<int> fireflyId = const Value.absent(),
+            Value<DateTime?> fireflyUpdatedAt = const Value.absent(),
+            Value<DateTime?> lastSyncedLocalModified = const Value.absent(),
+            Value<bool> isTombstone = const Value.absent(),
+            Value<int?> counterpartyFireflyId = const Value.absent(),
+            Value<int> fireflySplitIndex = const Value.absent(),
+            Value<int?> fireflyJournalId = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FireflySyncMapCompanion(
+            syncMapPk: syncMapPk,
+            entityType: entityType,
+            localPk: localPk,
+            fireflyId: fireflyId,
+            fireflyUpdatedAt: fireflyUpdatedAt,
+            lastSyncedLocalModified: lastSyncedLocalModified,
+            isTombstone: isTombstone,
+            counterpartyFireflyId: counterpartyFireflyId,
+            fireflySplitIndex: fireflySplitIndex,
+            fireflyJournalId: fireflyJournalId,
+            dateCreated: dateCreated,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            Value<String> syncMapPk = const Value.absent(),
+            required FireflySyncEntityType entityType,
+            required String localPk,
+            required int fireflyId,
+            Value<DateTime?> fireflyUpdatedAt = const Value.absent(),
+            Value<DateTime?> lastSyncedLocalModified = const Value.absent(),
+            Value<bool> isTombstone = const Value.absent(),
+            Value<int?> counterpartyFireflyId = const Value.absent(),
+            Value<int> fireflySplitIndex = const Value.absent(),
+            Value<int?> fireflyJournalId = const Value.absent(),
+            Value<DateTime> dateCreated = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FireflySyncMapCompanion.insert(
+            syncMapPk: syncMapPk,
+            entityType: entityType,
+            localPk: localPk,
+            fireflyId: fireflyId,
+            fireflyUpdatedAt: fireflyUpdatedAt,
+            lastSyncedLocalModified: lastSyncedLocalModified,
+            isTombstone: isTombstone,
+            counterpartyFireflyId: counterpartyFireflyId,
+            fireflySplitIndex: fireflySplitIndex,
+            fireflyJournalId: fireflyJournalId,
+            dateCreated: dateCreated,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$FireflySyncMapTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $FireflySyncMapTable,
+    FireflySyncMapEntry,
+    $$FireflySyncMapTableFilterComposer,
+    $$FireflySyncMapTableOrderingComposer,
+    $$FireflySyncMapTableProcessedTableManager,
+    $$FireflySyncMapTableInsertCompanionBuilder,
+    $$FireflySyncMapTableUpdateCompanionBuilder> {
+  $$FireflySyncMapTableProcessedTableManager(super.$state);
+}
+
+class $$FireflySyncMapTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $FireflySyncMapTable> {
+  $$FireflySyncMapTableFilterComposer(super.$state);
+  ColumnFilters<String> get syncMapPk => $state.composableBuilder(
+      column: $state.table.syncMapPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<FireflySyncEntityType, FireflySyncEntityType,
+          int>
+      get entityType => $state.composableBuilder(
+          column: $state.table.entityType,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get localPk => $state.composableBuilder(
+      column: $state.table.localPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get fireflyId => $state.composableBuilder(
+      column: $state.table.fireflyId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get fireflyUpdatedAt => $state.composableBuilder(
+      column: $state.table.fireflyUpdatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get lastSyncedLocalModified =>
+      $state.composableBuilder(
+          column: $state.table.lastSyncedLocalModified,
+          builder: (column, joinBuilders) =>
+              ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get isTombstone => $state.composableBuilder(
+      column: $state.table.isTombstone,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get counterpartyFireflyId => $state.composableBuilder(
+      column: $state.table.counterpartyFireflyId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get fireflySplitIndex => $state.composableBuilder(
+      column: $state.table.fireflySplitIndex,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get fireflyJournalId => $state.composableBuilder(
+      column: $state.table.fireflyJournalId,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$FireflySyncMapTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $FireflySyncMapTable> {
+  $$FireflySyncMapTableOrderingComposer(super.$state);
+  ColumnOrderings<String> get syncMapPk => $state.composableBuilder(
+      column: $state.table.syncMapPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get entityType => $state.composableBuilder(
+      column: $state.table.entityType,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get localPk => $state.composableBuilder(
+      column: $state.table.localPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get fireflyId => $state.composableBuilder(
+      column: $state.table.fireflyId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get fireflyUpdatedAt => $state.composableBuilder(
+      column: $state.table.fireflyUpdatedAt,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get lastSyncedLocalModified => $state
+      .composableBuilder(
+          column: $state.table.lastSyncedLocalModified,
+          builder: (column, joinBuilders) =>
+              ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get isTombstone => $state.composableBuilder(
+      column: $state.table.isTombstone,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get counterpartyFireflyId => $state.composableBuilder(
+      column: $state.table.counterpartyFireflyId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get fireflySplitIndex => $state.composableBuilder(
+      column: $state.table.fireflySplitIndex,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get fireflyJournalId => $state.composableBuilder(
+      column: $state.table.fireflyJournalId,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateCreated => $state.composableBuilder(
+      column: $state.table.dateCreated,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+class _$FinanceDatabaseManager {
+  final _$FinanceDatabase _db;
+  _$FinanceDatabaseManager(this._db);
+  $$WalletsTableTableManager get wallets =>
+      $$WalletsTableTableManager(_db, _db.wallets);
+  $$CategoriesTableTableManager get categories =>
+      $$CategoriesTableTableManager(_db, _db.categories);
+  $$ObjectivesTableTableManager get objectives =>
+      $$ObjectivesTableTableManager(_db, _db.objectives);
+  $$TransactionsTableTableManager get transactions =>
+      $$TransactionsTableTableManager(_db, _db.transactions);
+  $$BudgetsTableTableManager get budgets =>
+      $$BudgetsTableTableManager(_db, _db.budgets);
+  $$CategoryBudgetLimitsTableTableManager get categoryBudgetLimits =>
+      $$CategoryBudgetLimitsTableTableManager(_db, _db.categoryBudgetLimits);
+  $$AssociatedTitlesTableTableManager get associatedTitles =>
+      $$AssociatedTitlesTableTableManager(_db, _db.associatedTitles);
+  $$AppSettingsTableTableManager get appSettings =>
+      $$AppSettingsTableTableManager(_db, _db.appSettings);
+  $$ScannerTemplatesTableTableManager get scannerTemplates =>
+      $$ScannerTemplatesTableTableManager(_db, _db.scannerTemplates);
+  $$DeleteLogsTableTableManager get deleteLogs =>
+      $$DeleteLogsTableTableManager(_db, _db.deleteLogs);
+  $$FireflySyncMapTableTableManager get fireflySyncMap =>
+      $$FireflySyncMapTableTableManager(_db, _db.fireflySyncMap);
 }

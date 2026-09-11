@@ -3,6 +3,7 @@ import 'package:budget/main.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/pages/exchangeRatesPage.dart';
 import 'package:budget/struct/defaultPreferences.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
@@ -552,6 +553,7 @@ class _SyncButtonState extends State<SyncButton> {
 }
 
 DateTime? getTimeLastSynced() {
+  if (fireflyEnabled) return fireflyLastSyncedAt;
   DateTime? timeLastSynced = null;
   try {
     if (appStateSettings["lastSynced"] == null) throw ("lastSynced is null!");

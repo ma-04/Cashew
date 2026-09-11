@@ -1,0 +1,422 @@
+# Firefly III Sync — Findings
+
+Date: 2026-09-08, revised 2026-09-09. Branch: `feature/firefly-iii-sync`
+(HEAD `e46aef13`; originally written against `367105fe`).
+Scope: `budget/lib/struct/firefly/`, `budget/lib/database/tables.dart`,
+`budget/lib/database/schema_versions.dart`, `budget/test/firefly/`.
+Companion: `budget/todo.md`. This file verified that file's items against the
+code and proposes the better fix. todo.md has since absorbed the verification
+results and carries the current status of every item, including a second round
+of findings (10-18) not covered here; where the two overlap, todo.md wins.
+
+## Status, 2026-09-11
+
+The second data divergence. The user reported a cross-currency transfer whose
+foreign amount was overwritten (22.98 USD became 2,850.00, the amount of the
+source side), and wrong totals on the Cash wallet, the Bkash wallet and the
+MTB credit card. Read against `https://money.onku.dev` with the live token:
+the full resync of 2026-09-10 23:16 created a second Firefly record for 30
+rows that the app had held since before the link, and each of those records
+carried a new expense account named after the description of the row
+("Lunch", "3500", "Atm Withdrawal"). Firefly was repaired by hand; these are
+the three faults behind it, and the repair of the fourth.
+
+- **A push of a transfer sent the local destination leg over a correct
+  foreign amount.** `transferPairToFireflySplit` always read
+  `toTransaction.amount`. An edit to the source leg alone therefore rewrote
+  the foreign amount with the source amount, because the local destination
+  leg still held the pre-foreign-amount value. `_pushTransfer` now reads the
+  remote split first: for a cross-currency pair, a side that did not change
+  locally keeps what Firefly holds (`sourceAmountOverride`,
+  `destinationAmountOverride`, compared with a tolerance of half a cent), and
+  the local row is healed with that value in the same transaction, before the
+  PUT. The map then carries the post-heal stamp, thus the next cycle does not
+  read the heal as an edit.
+- **A local row that is wrong and unchanged was never read again.**
+  `decideSyncDirection` answered `none` when neither side had changed, thus a
+  value that had already diverged stayed wrong for ever. It takes
+  `healUnchanged` now, and a full resync passes it: the neither-changed case
+  then pulls. A routine cycle is unchanged, so the cheap path stays cheap.
+- **A bulk operation of this app made old rows look new.**
+  `convertToPrimaryWallet` → `transferTransactionsOnly` stamps
+  `dateTimeModified = now` onto every row it moves. Rows booked years before
+  the link then read as new work and went up as creates, next to the records
+  Firefly already held. A push now skips an unmapped row whose `dateCreated`
+  is before `fireflyLinkedAt`, counts it in `skippedPreLinkHistory` and warns
+  once per cycle pointing at "Push local history", which is the deliberate
+  way to upload it. The gate reads `dateCreated` and not `dateTimeModified`
+  precisely because the bulk operation rewrites the latter; the cost is that
+  a row entered today with an old date counts as history, which the warning
+  covers.
+- **Firefly grew one expense account per description.**
+  `transactionToFireflySplit` passed the description as `sourceName` /
+  `destinationName`, and Firefly makes an account for a name it does not
+  know. The name is the caller's choice now, and the new setting
+  `fireflyCounterpartyNaming` decides it: `generic` (the default) sends the
+  built-in cash account of the instance, by id when the instance has one and
+  as the name "Cash account" when it does not; `category` names the account
+  after the category of the row, for a user who wants the Firefly expense
+  accounts to mirror the categories. An account the row is already linked to
+  wins in both modes.
+
+`test/firefly/firefly_divergence_test.dart` holds ten tests over the three
+faults and the heal.
+
+## Status, 2026-09-10 (fourth)
+
+A five-agent review of the whole branch (API client, mapper, engine, database,
+settings page, tests) gave 4 high, 24 medium and 11 low findings. The high
+ones and eleven of the medium ones are closed here.
+
+- **The currency of a wallet cannot be sent.** `TransactionJournalFactory::
+  getCurrency` reads the currency preference of the asset account first, then
+  the submitted `currency_code`, then the default of the user group. A wallet
+  in BDT linked to an account in USD therefore books 1,200 BDT as 1,200 USD,
+  and no field of the request stops it. The push is held back instead:
+  `_pushBlockedByCurrencyMismatch` counts it in `skippedCurrencyMismatch`,
+  warns once per account, and holds the watermark at the row. The link picker
+  also warns before the link is made, so the user learns it there and not
+  after a cycle that pushed nothing.
+- **No request had a timeout.** `package:http` waits forever, thus one
+  request that never answers held the engine lock and no later cycle could
+  run. Each request now ends after `kFireflyRequestTimeout` (30 s) with a
+  network error, which ends that one cycle and releases the lock.
+- **A create whose answer is lost was imported a second time.** Firefly
+  writes the record, the answer does not arrive, the app has no id, and the
+  next pull reads the record as new. Each create and each update now carries
+  the local key as `external_id`, and the pull adopts a record whose external
+  id names a local row with no link: it writes the link and leaves the row.
+  The next push then sends the current content as an update. The counter is
+  `recoveredCreates`. This costs no extra request, which a search per created
+  row would.
+- **The fake server hid three contracts of the real one.** `PUT
+  /transactions/{id}` now deletes each split that the request does not name,
+  gives a new journal id to a split that comes with none, and answers 401 for
+  a journal id that the group does not hold. `DELETE
+  /transaction-journals/{id}` removes one split, removes an emptied group and
+  answers 404 for an unknown id. `GET` collections honour `limit` and `page`
+  and report the real `total_pages`, and `GET /transactions` filters by the
+  date window. Every test of the branch passed against the stricter fake,
+  which is itself the finding: those paths had no test. The new file
+  `test/firefly/firefly_sync_hardening_test.dart` covers them.
+
+Closed with the same round: a split with no type, date or amount is refused
+instead of filled in with a made-up value; a record that cannot be read is
+skipped with a warning in place of ending the cycle; a 429 with a short
+`Retry-After` waits once and tries again; a 404 on an update closes the link;
+the update path of a transfer pull runs in one transaction and keeps
+`counterpartyFireflyId`; `deleteWallet` runs in one transaction; a balance
+anchor whose Firefly account is not in the answer warns in place of holding
+the old total in silence; a missing token switches Firefly off and says why;
+a change of host asks before it forgets the links; and an empty currency is
+no currency in the account mapper as well.
+
+Left open on purpose: the `dateTimeModified` bump when the user reorders
+accounts (removing it breaks the device-to-device sync of this app; the safe
+variant is to skip the account PUT when the payload did not change), the
+same-second edit that the watermark cannot see (a `>=` there re-pushes for
+ever; the real fix is a column with more precision), the two shipped
+migrations (a migration that a build already ran must not be edited), and the
+shape items that need a design pass.
+
+## Status, 2026-09-10 (third)
+
+An adversarial review of the fix above found that it closed the way into the
+incident but not the mechanism of it. `_pushOneTransaction` builds the split
+from the link that the wallet holds now, and sends it to the group id that the
+map row holds. A map row that points at a group on another Firefly account
+therefore still moves that group, and the manual link picker makes exactly
+such a row: it points the wallet at another account and leaves the rows of the
+old account mapped.
+
+Closed with a guard on each write path. Before a push writes to a group, it
+reads the asset account of that group. If the account is not the account of
+the wallet, and no local account is linked to it, the write is held back, the
+change stays in front of the watermark and one warning names the account. A
+transaction that the user moved to another wallet by hand still moves on
+Firefly, because the account it came from is still linked to the wallet it
+came from. The new counter `skippedMovedRemoteRow` carries this in the report.
+
+The other findings of that review, each closed:
+
+- The rule "nothing is pushed into an inactive account" held for new and
+  changed transactions only. It now holds for the removal of a row that is no
+  longer paid, for the removal of one split of a group, and for the rename of
+  the account itself. The report of such a cycle no longer says that nothing
+  was pushed while a rename went out.
+- An id that the account list of the cycle does not carry now holds the push
+  back as well. It used to go on and take the same 422 in every cycle.
+- A wallet with no currency made `"" != "USD"` true, thus a transfer carried a
+  foreign amount with no currency of its own. An empty code is now no code.
+- `convertToPrimaryWallet` ran its four steps one after the other. A sync
+  cycle between two of them saw two copies of one account, or an account whose
+  rows had moved and whose link had not. The four steps are one transaction.
+- The settings page: a refresh that overlaps another one is queued instead of
+  dropped, the loading flag cannot stick, a link that fails tells the user, the
+  confirm dialog names the local account that loses the link, an account list
+  that could not be read no longer reads as "not linked", and a second sync
+  during a cycle says that a sync is running in place of "sync failed".
+
+## Status, 2026-09-10 (second)
+
+The first push after the fix above moved 38 transactions of the "Cash wallet"
+into the account "Bank", which the user had deactivated and removed: the
+Firefly balance of "Cash wallet" fell from 1,700 to -28,290 BDT and "Bank"
+rose to 29,990. Nothing was created or duplicated on Firefly; every one of the
+38 groups was an update that named the other account. One transfer
+(1,200 BDT -> 9.68 USD) also lifted "EBL Credit USD" from -4.57 to 1,185.75,
+because the push sent no currency and no foreign amount, thus Firefly counted
+1,200 on the USD account.
+
+The cause was the removal of the primary wallet. Cashew cannot delete the pk
+`"0"`, thus `deleteWallet("0")` copies another wallet onto that key
+(`convertToPrimaryWallet`) and removes the old key. The Firefly link did not
+move with it: `"0"` kept the link of the removed wallet, and the delete log of
+the old key unlinked the account of the wallet that had just moved. Every row
+of the wallet was then pushed into the account of the removed wallet. Until
+the fix above, the 422 of the rename ("This account name is already in use.")
+stopped the cycle before the transactions, which is why this only appeared
+now.
+
+Closed with: the link follows the wallet in `convertToPrimaryWallet`
+(`swapFireflyWalletLinks`); the push never writes into an inactive Firefly
+account and says so once per account; a refused rename is one warning and the
+link stays; a refused split group is attempted once per cycle, not once per
+row of the group; a transfer sends `currency_code` and, between two
+currencies, `foreign_amount` and `foreign_currency_code`, and a pulled
+transfer puts the foreign amount on the destination row; and the settings page
+has "Linked accounts", where the user names the Firefly account of each local
+account by hand. The 38 groups and the transfer were repaired on the server
+with a one-off script. The write-up is in `todo.md`, "Follow the link when the
+primary wallet changes".
+
+## Status, 2026-09-10
+
+One wallet stopped each sync. `_pushAccounts` had no catch around
+`createAccount`, thus the HTTP 422 for a name that Firefly already holds went
+out of `fireflySyncNow` in front of the transactions, the deletes and the
+balance anchors, and the watermark stayed, thus the next cycle failed the same
+way. That is the report "new transactions are not pushed, nothing pushes by
+itself, and the balance differs". The push loops now isolate each row, a
+refused name links to the remote record, an edit during an on-demand fetch is
+pushed afterwards, the anchor counts each row dated today, an update keeps a
+deactivated Firefly account deactivated, and the settings page has "Push
+unsynced changes" for the rows that the failed cycles left behind. The
+write-up is in `todo.md`, "Keep the cycle alive when Firefly refuses one
+row". Item 7 of the table below is now half closed: the engine has tests for
+the push side.
+
+## Status, 2026-09-09 (second revision)
+
+A second review ran on 2026-09-09, after the fixes below. Two agents read the
+branch against a written brief, and a third pass ran next to them. It gave
+twelve findings, of which three are in this file's own answers: the count-only
+guard of item 1, the group-level reconciliation that item 4 did not reach, and
+the tombstone precedence of item 2. All twelve are closed. The write-up is in
+`todo.md`, section "Close the twelve findings of the adversarial review", which
+carries the current state.
+
+## Status, 2026-09-09
+
+Section 0 records the code as it was at `e46aef13`. It stays as written, as the
+record of the review. Each item of it is now closed, but for the parts that
+this list names:
+
+| Item | State |
+| --- | --- |
+| 0 migration blocker | Fixed. Tested from v46, v47, v48, v49. |
+| 1 position match | Fixed by a guard on the shape of the group, not by a repair of the rows. |
+| 2 tombstone index | Fixed. A tombstone row does not get an id; see below. |
+| 3 stale journal id | Fixed. Each push reads the id from the response. |
+| 4 backfill behind exits | Fixed. The write is in front of each exit. |
+| 5 PUT contract | Answered, and the code follows it. |
+| 6 count-mismatch refusal | Now unlink-and-push, for a row that has an id. |
+| 7 test gaps | Half closed, 2026-09-10. The push side has engine tests; the pull side is still mapper-level. |
+| 8, 9 branches and PR #5 | Open. Both need a hand. |
+
+Two deviations from what section 2 asks for:
+
+- A tombstone row does not get a journal id. A tombstone stands for a split
+  that the server no longer holds, thus each id that a live split could give
+  belongs to a different split.
+- No row is repaired by a match on content. A group that the guard cannot
+  resolve is not matched and not imported: it gets one warning that names the
+  repair, and the user runs "Reset Firefly links" to rebuild them. To guess
+  which local record is which split can put a remote change on the wrong
+  record, and that is the failure that this branch set out to remove.
+
+## 0. Verification of `todo.md` items
+
+### 0 — BLOCKER: upgrade from an existing install fails to open the database. CONFIRMED, NOW FIXED.
+
+Fixed in `e46aef13`; the write-up lives in todo.md's Done section.
+`onUpgrade` asked the generated `migrationSteps()` to step to `to` (49) while
+`drift_schemas/` stops at v46, so every upgrade threw
+`ArgumentError("Unknown migration from N")` outside any try/catch, before the
+hand-rolled Firefly blocks could run. Fresh installs worked via `onCreate`,
+which is why it went unnoticed. `to` is now clamped to
+`_lastGeneratedMigrationSchema`, and `test/database/migration_test.dart`
+upgrades a real on-disk database from v46, v47 and v48.
+
+Still outstanding, tracked in todo.md: generate `drift_schema_v47.json`,
+`v48.json` and `v49.json`, regenerate `schema_versions.dart`, and convert the
+hand-rolled blocks into real `from46To47` / `from47To48` / `from48To49` steps.
+
+### 1 — Position fallback can mismatch once, backfill cements it. CONFIRMED.
+
+- Non-transfer pull at `fireflySyncEngine.dart:787-805` backfills
+  `fireflyJournalId` on the first position match, before the direction check.
+- If that first pull coincides with a mid-journal remote delete, the wrong id
+  is stored and identity matching then defends the wrong pairing permanently.
+- The existing "middle split deleted" test only uses rows that already carry
+  journal ids, so it does not cover this path.
+
+### 2 — Tombstone index matching reintroduces the position bug. CONFIRMED (two defects).
+
+- `fireflySyncEngine.dart:693-695`: the skip condition is
+  `tombstonedSplitIndexes.contains(splitIndex) || journalId-match`. The index
+  set is consulted outright, not as a fallback, so a live split that merely
+  reuses an old index is skipped.
+- Tombstoned splits `continue` before any backfill runs, and
+  `matchSplitToSyncMap` is only called for non-tombstone rows, so a
+  pre-column tombstone keeps `fireflyJournalId == null` forever.
+
+### 3 — Push paths store a stale journal id. CONFIRMED (3 sites), but not equally severe.
+
+- `_pushTransactions` (`:1533-1543`), `_pushExistingMultiSplitGroup`
+  (`:1670-1680`), `_removeSplitFromRemoteGroup` (`:2019-2028`) all write
+  `fireflyJournalId: map.fireflyJournalId` (the value already stored).
+- Only `_pushTransfer` (`:1810-1815`) prefers the PUT response's id with a
+  stored-value fallback.
+- `toRequestJson()` (`fireflyModels.dart:171-194`) never sends
+  `transaction_journal_id`, and `_splitForMappedLocalRow` (`:1549`) builds
+  id-less splits, so a multi-split PUT destroys and recreates every journal in
+  the group. Stored ids go stale, `_matchesSplit` then refuses the position
+  fallback (the row *has* an id), finds no match, and inserts duplicates.
+- Correction to the original text, from item 5: this is **not** uniform.
+  `_pushTransactions` only ever pushes a group it holds a single split for,
+  and Firefly updates a single-split group in place, keeping the journal id.
+  It is not exposed to the churn - it merely misses a free backfill from a
+  response it already holds. The other two sites are the real damage.
+
+### 4 — Backfill skipped by early exits. CONFIRMED.
+
+- Transfer path: `_pullTransferSplit:914-916` (`first == null`) returns before
+  the `937-952` backfill; `:860-862` (`sourcePk/destPk == null`) likewise.
+- Non-transfer path: the unmapped-wallet skip (`:728-737`) plus the
+  type-skip and balance-correction `continue`s all run before the `:787`
+  backfill.
+- Rows behind any of these stay position-matched indefinitely (exposed to 1).
+
+### 5 — Whether PUT honours `transaction_journal_id`. ANSWERED, FROM DOCS AND SOURCE.
+
+The full answer, with quotes, is todo.md item 5. In short, the
+["API special endpoints" doc](https://docs.firefly-iii.org/references/firefly-iii/api/specials/)
+(readable via the `firefly-iii/docs` repo, since the rendered site refuses
+WebFetch and curl alike) states the PUT contract for *split* transactions:
+
+- Every split should carry its `transaction_journal_id`, even unchanged ones
+  (send id-only `{"transaction_journal_id": N}`).
+- A split omitted from the PUT **is deleted**.
+- A changed split submitted **without** its id is created anew; the old one
+  is deleted.
+
+`GroupUpdateService.php` agrees and adds what the docs omit: a single
+submitted transaction against a single-journal group is updated in place,
+returning before the delete pass, with any submitted id ignored. Two
+consequences the original text did not draw:
+
+- Sending `transaction_journal_id` unconditionally is safe, so no split-count
+  branching is needed in `toRequestJson()`.
+- It is only safe while the stored ids are *correct*: `find()` is scoped to the
+  group and returns null rather than erroring, so a stale or foreign id
+  silently creates a new split and destroys the original. That makes the
+  legacy repair a **prerequisite** of the PUT change, which reverses the order
+  originally suggested in section 3 below.
+
+A live round-trip against a pinned `fireflyiii/core` tag is still worth doing,
+but nothing here is guesswork any more.
+
+### 6/7/8/9. AGREED.
+
+- 6: the count-mismatch refusal in `_pushExistingMultiSplitGroup` must stay
+  until items 1–2 are fixed; afterwards it can become tombstone-and-allow.
+  todo.md item 10 adds that the refusal currently loses the edit outright.
+- 7: the suite in `test/firefly/firefly_mapper_test.dart` is mapper-level
+  only, so findings 1–4 were unreachable by it; several tests pass under both
+  position and identity matching.
+- 8: since verified. The four local branches are deleted; `fix/ci-flutter-version`
+  and `fix/disable-firebase-workflow` are still on origin, both with trees
+  identical to `origin/main`.
+- 9: PR #5 (`fix/ci-artifact-names`) is still open.
+
+## 1. Why the filed fixes are band-aids
+
+Items 1–4 accept the premise "PUTs recreate journals, so pull must cope with
+churning ids plus legacy null-id rows via position fallback + perpetual
+backfill" (count guard, tombstone condition ordering, hoisting backfill,
+response-id propagation). That leaves a permanently dual-identity system in
+which every new early-exit or push site can reintroduce the bug — which is
+exactly the history items 2 and 4 describe.
+
+## 2. Better solution: stabilise journals, then delete position matching
+
+1. **Send `transaction_journal_id` on every PUT; include untouched splits
+   id-only.** Add the field to `toRequestJson()` (emit when non-null), thread
+   it through `_splitForMappedLocalRow`, and send id-only placeholders for
+   siblings not being edited, per the docs. Firefly then preserves ids across
+   rewrites; pushes stop churning identity and item 3 disappears at the
+   source. Response-id handling stays as a sanity check only.
+2. **Delete splits via `DELETE /v1/transaction-journals/{id}`, not group
+   rewrite.** The API exposes per-split delete
+   (`DestroyController@destroyJournal`). `_removeSplitFromRemoteGroup`
+   (`:1966-2032`, including the `fireflySplitIndex: i` renumbering that
+   assumes order preservation) collapses to one call — no completeness check,
+   no sibling rebuild, no index shifting. Its comment at `:2011-2015`, that
+   "Firefly keeps them across the rewrite", is false and goes with it.
+3. **One-time legacy repair, then remove the position branch entirely.**
+   Resolve null-`fireflyJournalId` rows once, deterministically: match within
+   group by content fingerprint (amount/date/description/counterparty); where
+   ambiguous, quarantine the group (delete its local rows, re-pull clean)
+   rather than guess. Then delete `_matchesSplit`'s position branch, the
+   count guard, and all backfill code. `fireflySplitIndex` returns to pure
+   ordering. Kills the root cause of items 1, 4, 7.
+4. **Tombstones keyed by `(fireflyId, fireflyJournalId)` only.** An "old
+   index 1" tombstone is meaningless after renumbering; null-id tombstones
+   pre-dating the repair are unrecoverable by index and should retire with
+   the repair in (3).
+5. **Enforce identity in the DB; extract a pure reconciler.** Add an index on
+   `(entityType, fireflyId, fireflyJournalId)` — non-unique, since transfer
+   pairs share one journal across two `localPk`s — keep
+   `(entityType, localPk)` unique (it already is, as of schema 48). Replace
+   the scattered per-split DB reads/writes with one pure
+   `reconcileGroup(remoteGroup, maps) -> actions` function so engine behaviour
+   becomes unit-testable (item 7's gap). This also closes todo.md item 18's
+   missing `(entityType, fireflyId)` index.
+
+## 3. Order taken
+
+1. Legacy rows first, as item 5 requires: the pull writes the journal id on
+   each row that it matches, and the count guard stops a match that the
+   positions cannot support. Done.
+2. PUT identity: each split of a group goes into the request with its id, and
+   an untouched split goes as the id alone. Done.
+3. One `DELETE /v1/transaction-journals/{id}` for a split, and the group delete
+   for a group with one split. Done.
+4. The index on `(entity_type, firefly_id)`, from schema 50. Done.
+
+Left, in the order to take:
+
+1. The pure `reconcileGroup()` of section 2.5, and the engine tests that it
+   makes possible. The pull loop still reads and writes for each split.
+2. The removal of the position branch. It needs the repair of section 2.3,
+   which this branch does not take: a group that the guard cannot resolve waits
+   for the user in place of a guess.
+3. The snapshots of the schema, and the hand-rolled blocks as generated steps.
+4. A live round trip against a pinned `fireflyiii/core` tag.
+
+todo.md items 10-18 (a push that the watermark loses, a wallet delete that
+destroys remote history, rows that are not paid, the conflict test of the push,
+the links after a change of host, the balance anchor, the extra cycle) are
+independent of the identity work. Each of them is closed; todo.md carries the
+write-up.
