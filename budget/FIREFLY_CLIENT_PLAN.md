@@ -252,6 +252,39 @@ Not done in phase B:
   shown or edited here.
 - The asset role is kept but cannot be changed here.
 
+- UI: payee and tags fields on the transaction page (Firefly mode); a
+  read-only row shows a lock and cannot be saved or deleted; a mirrored row
+  cannot be marked unpaid; archived wallets are hidden in the wallet lists
+  and pickers (the edit wallets page shows them as inactive). Bulk delete and
+  bulk actions are not blocked; the engine undoes them.
+- Upgrade: client version 1 fills payee, tags, archived and account kind from
+  the snapshots before any push, then reads the full history once.
+
+## 3c. State of phase C (2026-10-13)
+
+Facts: a split `budget_id` of `null` or `"0"` clears the budget; Firefly
+drops a budget given on a deposit. `/budgets/{id}/limits?start=&end=` gives
+the limit of a period; an auto budget makes its limit itself. A piggy bank
+create needs `accounts: [{account_id}]` and `transaction_currency_code`.
+`/bills?start=&end=` gives `pay_dates` and `paid_dates` in that range.
+
+Done (client version 3, no schema change; new map types budget, piggyBank,
+bill):
+
+- A Firefly budget is a Cashew budget of the type "added transactions only".
+  Name, amount (the limit of this month, else the auto-budget amount), period
+  and active state come from Firefly on each pull and are read-only here.
+- The budget of a withdrawal is Transaction.sharedReferenceBudgetPk, sent as
+  `budget_id` with the three-way merge. A local-only budget on a row is no
+  budget on Firefly.
+- Piggy banks and bills are cached in the map rows (snapshots) on each pull.
+  There is no screen for them yet.
+- Upgrade from version 2: a forced full pull, then the budget link of each
+  row with a queued change from its snapshot.
+
+Not done in phase C: screens for piggy banks and bills, recurrences,
+attachments, writing budget limits.
+
 ## 4. Phases
 
 Each phase ends with its tests green on the real server and the fake server.

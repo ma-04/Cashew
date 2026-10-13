@@ -49,8 +49,8 @@ class HomePageWalletList extends StatelessWidget {
                 children: [
                   StreamBuilder<List<WalletWithDetails>>(
                     stream: database.watchAllWalletsWithDetails(
-                        homePageWidgetDisplay:
-                            HomePageWidgetDisplay.WalletList),
+                        homePageWidgetDisplay: HomePageWidgetDisplay.WalletList,
+                        hideArchived: true),
                     builder: (context, snapshot) {
                       if (snapshot.hasData) {
                         return Column(

@@ -3,6 +3,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:budget/widgets/fireflyTransactionFields.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/struct/initializeNotifications.dart';
 import 'package:budget/widgets/navigationFramework.dart';
@@ -543,6 +544,12 @@ Future openUnpayPopup(
   Transaction transaction, {
   Function? runBefore,
 }) async {
+  if ((await fireflyRowStateOf(transaction.transactionPk)).mirrored) {
+    // Firefly has no unpaid state. This action would delete the Firefly
+    // record and make a local row.
+    openFireflyCannotMarkUnpaidSnackbar();
+    return false;
+  }
   String transactionName = await getTransactionLabel(transaction);
   return await openPopup(context,
       icon: appStateSettings["outlinedIcons"]

@@ -146,6 +146,11 @@ Future<void> _restoreServerState(
         await fireflyApplyGroup(ctx.apply,
             await ctx.client.getRaw("/transactions/${map.fireflyId}"));
         break;
+      case FireflySyncEntityType.budget:
+      case FireflySyncEntityType.piggyBank:
+      case FireflySyncEntityType.bill:
+        // Read-only here: the queue holds no change of these.
+        return;
     }
     ctx.report.reverted++;
   } on FireflyNotFoundException {
@@ -413,6 +418,17 @@ int? _categoryIdOf(FireflyPushContext ctx, Transaction row) {
   throw _Held("A transaction waits for its category to reach Firefly.");
 }
 
+// The Firefly budget of a row, or null. A local budget that Firefly does not
+// have is no budget there.
+int? _budgetIdOf(FireflyPushContext ctx, Transaction row) {
+  String? pk = row.sharedReferenceBudgetPk;
+  if (pk == null) return null;
+  for (MapEntry<int, String> entry in ctx.apply.budgetPkById.entries) {
+    if (entry.value == pk) return entry.key;
+  }
+  return null;
+}
+
 // The tag of the subcategory of a row ("Parent/Child"), or null.
 Future<String?> _subcategoryTagOf(Transaction row) async {
   if (row.subCategoryFk == null) return null;
@@ -490,6 +506,7 @@ Future<void> _pushTransactionCreate(
       assetAccountId: _accountOf(ctx, row.walletFk),
       categoryId: _categoryIdOf(ctx, row),
       subcategoryTag: await _subcategoryTagOf(row),
+      budgetId: _budgetIdOf(ctx, row),
     ));
     String otherSide = row.amount > 0 ? "source" : "destination";
     if (fireflyLocalPayee(row) == null &&
@@ -579,6 +596,7 @@ Future<void> _pushTransactionUpdate(
       assetAccountId: _accountOf(ctx, row.walletFk),
       categoryId: _categoryIdOf(ctx, row),
       subcategoryTag: await _subcategoryTagOf(row),
+      budgetId: _budgetIdOf(ctx, row),
     );
   }
   if (fireflyDiff(local, base).isEmpty) return;

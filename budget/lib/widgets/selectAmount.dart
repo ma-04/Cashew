@@ -615,7 +615,7 @@ class _SelectAmountState extends State<SelectAmount> {
           ),
         ),
         widget.enableWalletPicker == false ||
-                Provider.of<AllWallets>(context).list.length <= 1 ||
+                Provider.of<AllWallets>(context).activeList.length <= 1 ||
                 (widget.hideWalletPickerIfOneCurrency &&
                     Provider.of<AllWallets>(context).allContainSameCurrency())
             ? SizedBox.shrink()
@@ -790,7 +790,7 @@ class _SelectAmountState extends State<SelectAmount> {
                   }),
                 ),
               widget.enableWalletPicker == false ||
-                      Provider.of<AllWallets>(context).list.length <= 1 ||
+                      Provider.of<AllWallets>(context).activeList.length <= 1 ||
                       (widget.hideWalletPickerIfOneCurrency &&
                           Provider.of<AllWallets>(context)
                               .allContainSameCurrency())
@@ -799,7 +799,7 @@ class _SelectAmountState extends State<SelectAmount> {
                       padding: const EdgeInsetsDirectional.only(top: 3),
                       child: SelectChips(
                         allowMultipleSelected: false,
-                        items: Provider.of<AllWallets>(context).list,
+                        items: Provider.of<AllWallets>(context).activeList,
                         onLongPress: (TransactionWallet? item) {
                           pushRoute(
                             context,

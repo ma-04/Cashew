@@ -44,6 +44,7 @@ class FireflyPullContext {
   final Map<int, String> walletPkByAccount = {};
   final Map<String, int> accountByWalletPk = {};
   final Map<int, String> categoryPkById = {};
+  final Map<int, String> budgetPkById = {};
   final Map<int, Map<String, dynamic>> assetAccounts = {};
 
   FireflyPullContext({
@@ -61,6 +62,11 @@ class FireflyPullContext {
     walletPkByAccount.clear();
     accountByWalletPk.clear();
     categoryPkById.clear();
+    budgetPkById.clear();
+    for (FireflySyncMapEntry map
+        in await fireflyMapsOfType(FireflySyncEntityType.budget)) {
+      budgetPkById[map.fireflyId] = map.localPk;
+    }
     for (FireflySyncMapEntry map in await fireflyMapsOfType(_wallet)) {
       walletPkByAccount[map.fireflyId] = map.localPk;
       accountByWalletPk[map.localPk] = map.fireflyId;
@@ -697,6 +703,17 @@ Future<void> _applySplit(
     payee: fireflyRemotePayee(split),
     tags: tags.$2,
   );
+  if (type == "withdrawal") {
+    // The Firefly budget, or none. A local budget that Firefly does not have
+    // stays on a row that has no Firefly budget.
+    String? budgetPk = ctx.budgetPkById[fireflyParseInt(split["budget_id"])];
+    String? current = local?.sharedReferenceBudgetPk;
+    bool currentIsLocal =
+        current != null && !ctx.budgetPkById.containsValue(current);
+    row = row.copyWith(
+        sharedReferenceBudgetPk:
+            Value(budgetPk ?? (currentIsLocal ? current : null)));
+  }
   if (local?.pairedTransactionFk != null) {
     await _deleteRow(local!.pairedTransactionFk!);
     await fireflyDeleteMap(_transaction, local.pairedTransactionFk!);

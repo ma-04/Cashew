@@ -505,7 +505,7 @@ class _AddEmailTemplateState extends State<AddEmailTemplate> {
             },
             items: <TransactionWallet?>[
               null,
-              ...Provider.of<AllWallets>(context).list
+              ...Provider.of<AllWallets>(context).activeList
             ],
             getSelected: (TransactionWallet? wallet) {
               return selectedWalletPk == wallet?.walletPk;

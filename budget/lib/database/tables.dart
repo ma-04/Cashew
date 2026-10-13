@@ -263,7 +263,17 @@ class DeleteLogs extends Table {
 // Maps a local UUID-keyed row (Wallet/Transaction/Category) to the numeric id
 // of the corresponding resource on a linked Firefly III instance, so pull/push
 // sync can resolve either direction without touching the core tables.
-enum FireflySyncEntityType { wallet, transaction, category }
+// Stored by index: a new value goes at the end. budget, piggyBank and bill
+// came with client version 3; a piggy bank or a bill has no local row, its map
+// row only holds the record (see fireflyPlanning.dart).
+enum FireflySyncEntityType {
+  wallet,
+  transaction,
+  category,
+  budget,
+  piggyBank,
+  bill,
+}
 
 @DataClassName('FireflySyncMapEntry')
 class FireflySyncMap extends Table {
@@ -700,6 +710,12 @@ class AllWallets {
   final List<TransactionWallet> list;
   final Map<String, TransactionWallet> indexedByPk;
   AllWallets({required this.list, required this.indexedByPk});
+
+  // The wallets that the wallet pickers show. An archived wallet (an
+  // inactive Firefly account) is not in this list. It stays in `list` and
+  // `indexedByPk` for its history.
+  late final List<TransactionWallet> activeList =
+      list.where((wallet) => wallet.archived != true).toList();
 
   bool allContainSameCurrency() {
     if (list.isEmpty) {
@@ -2663,12 +2679,18 @@ class FinanceDatabase extends _$FinanceDatabase {
     });
   }
 
+  // The filter of the wallets that are not archived. The column is nullable;
+  // null is not archived.
+  Expression<bool> _walletIsActive($WalletsTable w) =>
+      w.archived.isNull() | w.archived.equals(false);
+
   Stream<List<TransactionWallet>> watchAllWallets(
-      {String? searchFor, int? limit, int? offset}) {
+      {String? searchFor, int? limit, int? offset, bool hideArchived = false}) {
     return (select(wallets)
           ..where((w) => (searchFor == null
               ? Constant(true)
               : w.name.collate(Collate.noCase).like("%" + (searchFor) + "%")))
+          ..where((w) => hideArchived ? _walletIsActive(w) : Constant(true))
           ..orderBy([(w) => OrderingTerm.asc(w.order)])
           ..limit(limit ?? DEFAULT_LIMIT, offset: offset ?? DEFAULT_OFFSET))
         .watch();
@@ -2677,7 +2699,8 @@ class FinanceDatabase extends _$FinanceDatabase {
   Stream<List<WalletWithDetails>> watchAllWalletsWithDetails(
       {String? searchFor,
       HomePageWidgetDisplay? homePageWidgetDisplay,
-      bool mergeLikeCurrencies = false}) {
+      bool mergeLikeCurrencies = false,
+      bool hideArchived = false}) {
     JoinedSelectStatement<HasResultSet, dynamic> query;
     final totalCount = transactions.transactionPk.count();
     final totalSpent =
@@ -2691,7 +2714,8 @@ class FinanceDatabase extends _$FinanceDatabase {
                   ? Constant(true)
                   : w.name
                       .collate(Collate.noCase)
-                      .like("%" + (searchFor) + "%"))))
+                      .like("%" + (searchFor) + "%")) &
+              (hideArchived ? _walletIsActive(w) : Constant(true))))
           ..orderBy([(w) => OrderingTerm.asc(w.order)]))
         .join([
       leftOuterJoin(
@@ -2739,6 +2763,41 @@ class FinanceDatabase extends _$FinanceDatabase {
           ..orderBy([(w) => OrderingTerm.asc(w.order)])
           ..limit(limit ?? DEFAULT_LIMIT, offset: offset ?? DEFAULT_OFFSET))
         .get();
+  }
+
+  // The payees of the transactions, the most used first. For the payee
+  // suggestions in Firefly mode.
+  Future<List<String>> getDistinctPayees({String? search, int limit = 20}) {
+    return customSelect(
+      'SELECT payee, COUNT(*) AS "count" FROM transactions '
+      'WHERE payee IS NOT NULL AND TRIM(payee) != \'\' '
+      'AND INSTR(LOWER(payee), LOWER(?)) > 0 '
+      'GROUP BY payee ORDER BY count DESC, payee COLLATE NOCASE ASC LIMIT ?',
+      variables: [
+        Variable.withString((search ?? "").trim()),
+        Variable.withInt(limit),
+      ],
+      readsFrom: {transactions},
+    ).map((row) => row.read<String>('payee')).get();
+  }
+
+  // The tags of the transactions, the most used first. For the tag
+  // suggestions in Firefly mode.
+  Future<List<String>> getDistinctTags({String? search, int limit = 20}) {
+    return customSelect(
+      'SELECT json_each.value AS tag, COUNT(*) AS "count" '
+      'FROM transactions, json_each(transactions.tags) '
+      'WHERE transactions.tags IS NOT NULL '
+      'AND TRIM(json_each.value) != \'\' '
+      'AND INSTR(LOWER(json_each.value), LOWER(?)) > 0 '
+      'GROUP BY json_each.value ORDER BY count DESC, tag COLLATE NOCASE ASC '
+      'LIMIT ?',
+      variables: [
+        Variable.withString((search ?? "").trim()),
+        Variable.withInt(limit),
+      ],
+      readsFrom: {transactions},
+    ).map((row) => row.read<String>('tag')).get();
   }
 
   Future<List<TransactionWallet>> getAllNewWallets(DateTime lastSynced) {

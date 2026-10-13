@@ -31,7 +31,8 @@ class HomePageWalletSwitcher extends StatelessWidget {
         padding: const EdgeInsetsDirectional.only(bottom: 13.0),
         child: StreamBuilder<List<WalletWithDetails>>(
           stream: database.watchAllWalletsWithDetails(
-              homePageWidgetDisplay: HomePageWidgetDisplay.WalletSwitcher),
+              homePageWidgetDisplay: HomePageWidgetDisplay.WalletSwitcher,
+              hideArchived: true),
           builder: (context, snapshot) {
             if (snapshot.hasData) {
               return SingleChildScrollView(

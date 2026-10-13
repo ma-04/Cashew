@@ -583,7 +583,7 @@ class AddMoreThingsPopup extends StatelessWidget {
           widgetAfter: SelectChips(
             padding: EdgeInsetsDirectional.symmetric(horizontal: 13),
             items: [
-              if (Provider.of<AllWallets>(context).list.length > 1)
+              if (Provider.of<AllWallets>(context).activeList.length > 1)
                 "transfer-balance",
               "correct-total-balance"
             ],

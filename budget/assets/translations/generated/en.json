@@ -1236,5 +1236,12 @@
   "firefly-entity-account": "Account",
   "firefly-entity-transaction": "Transaction",
   "firefly-entity-category": "Category",
-  "firefly-merge-refused": "Accounts with different currencies cannot be merged while Firefly sync is on"
+  "firefly-merge-refused": "Accounts with different currencies cannot be merged while Firefly sync is on",
+  "firefly-payee": "Payee",
+  "firefly-payee-cash": "Payee (none: cash account)",
+  "firefly-tags": "Tags",
+  "firefly-add-tag": "Add tag",
+  "firefly-read-only": "Read-only",
+  "firefly-read-only-description": "This transaction is reconciled, an opening balance, or a reconciliation on Firefly. Change it on Firefly.",
+  "firefly-cannot-mark-unpaid": "A transaction on Firefly cannot be marked as unpaid"
 }

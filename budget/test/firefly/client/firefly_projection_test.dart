@@ -1,4 +1,5 @@
 import 'package:budget/database/tables.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart';
 import 'package:budget/struct/firefly/client/fireflyProjection.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -50,7 +51,7 @@ Map<String, dynamic> _split({
     "destination_id": destinationId,
     "destination_name": "Shop",
     "destination_type": "Expense account",
-    "budget_id": "5",
+    "budget_id": null,
     "tags": ["food"],
   };
 }
@@ -388,5 +389,26 @@ void main() {
     expect(fireflyPairType("debt", null), "deposit");
     expect(fireflyPairType("loan", "debt"), "transfer");
     expect(fireflyPairType(null, null), "transfer");
+  });
+
+  test("the budget of a withdrawal goes by id, a deposit has none", () {
+    Map<String, dynamic> split = _split()..["budget_id"] = "5";
+    FireflyProjection base = fireflyProjectRemoteSplit(split);
+    FireflyProjection local = fireflyProjectLocalRow(_row(),
+        assetAccountId: 3, categoryId: 7, budgetId: 6);
+    expect(
+        fireflySplitRequestFields(
+            fireflyMerge(base: base, local: local, live: base).send,
+            live: split),
+        {"budget_id": "6"});
+    FireflyProjection deposit = fireflyProjectLocalRow(_row(amount: 5),
+        assetAccountId: 3, categoryId: 7, budgetId: 6);
+    expect(deposit.containsKey(kFieldBudget), isFalse);
+    expect(fireflyBudgetPeriod("quarterly", null, null),
+        (BudgetReoccurence.monthly, 3));
+    expect(
+        fireflyBudgetPeriod(
+            null, DateTime(2026, 10, 5), DateTime(2026, 10, 11, 23, 59)),
+        (BudgetReoccurence.weekly, 1));
   });
 }

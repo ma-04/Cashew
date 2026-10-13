@@ -276,6 +276,14 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                             fontWeight: FontWeight.bold,
                             fontSize: 21,
                           ),
+                          // An archived wallet is an inactive Firefly
+                          // account. The other lists do not show it.
+                          if (wallet.archived == true)
+                            TextFont(
+                              text: "firefly-inactive".tr().capitalizeFirst,
+                              fontSize: 14,
+                              textColor: getColor(context, "textLight"),
+                            ),
                           Container(height: 2),
                           TextFont(
                             textAlign: TextAlign.start,
@@ -528,7 +536,10 @@ Future<TransactionWallet?> selectWalletPopup(
       title: title ?? "select-account".tr(),
       subtitle: subtitle,
       child: StreamBuilder<List<WalletWithDetails>>(
-        stream: database.watchAllWalletsWithDetails(),
+        // An archived wallet is not a choice. The currency list keeps it,
+        // because it can be the only wallet of its currency.
+        stream: database.watchAllWalletsWithDetails(
+            hideArchived: currencyOnly == false),
         builder: (context, snapshot) {
           if (snapshot.hasData) {
             List<WalletWithDetails> walletsWithoutOneDeleted = snapshot.data!;

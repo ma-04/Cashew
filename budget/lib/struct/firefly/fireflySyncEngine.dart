@@ -25,6 +25,7 @@ import 'dart:io' show Directory, File;
 
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart';
 import 'package:budget/struct/firefly/client/fireflyProjection.dart';
 import 'package:budget/struct/firefly/client/fireflyPull.dart';
 import 'package:budget/struct/firefly/client/fireflyPush.dart';
@@ -57,8 +58,9 @@ final ValueNotifier<FireflySyncReport?> fireflySyncReportNotifier =
 // two-way sync of earlier builds has no snapshots, thus it needs a rebuild.
 // Version 1 has snapshots but not the columns of schema 52: the next cycle
 // fills them from the snapshots (see fireflyBackfillFromSnapshots) and reads
-// the full history once.
-const int kFireflyClientVersion = 2;
+// the full history once. Version 2 has no Firefly budgets: the next cycle
+// reads the full history once, and links each row to its budget.
+const int kFireflyClientVersion = 3;
 
 // How far back a routine pull looks for a deleted transaction. Firefly keeps
 // no record of a delete, thus a delete shows only as a record that a list no
@@ -127,7 +129,7 @@ Future<String> fireflyBackupDatabaseTo(String folder) async {
 
 Future<bool> fireflyNeedsRebuild() async {
   Object? version = appStateSettings["fireflyClientVersion"];
-  return version != 1 && version != kFireflyClientVersion;
+  return version != 1 && version != 2 && version != kFireflyClientVersion;
 }
 
 Future<FireflyApiClient> _clientOrThrow() async {
@@ -183,11 +185,10 @@ Future<bool> fireflySyncNow({
     } else {
       // An upgrade from client version 1. It runs before the push, thus no
       // push sees the empty columns.
-      bool upgrade = appStateSettings["fireflyClientVersion"] == 1;
-      if (upgrade) {
-        await fireflyBackfillFromSnapshots();
-        pushOnly = false;
-      }
+      Object? version = appStateSettings["fireflyClientVersion"];
+      bool upgrade = version != kFireflyClientVersion;
+      if (version == 1) await fireflyBackfillFromSnapshots();
+      if (upgrade) pushOnly = false;
       await _queueLocalChanges(_scanFrom());
       bool full = fullResync || upgrade || _fullPullIsDue(started);
       if (!pushOnly) {
@@ -196,6 +197,9 @@ Future<bool> fireflySyncNow({
         await _pull(client, report,
             full: full, started: started, force: upgrade);
       }
+      // A row with a queued change was not written by the pull above. Its
+      // budget link comes from its snapshot, before the push compares it.
+      if (upgrade) await fireflyBackfillBudgetLinks();
       if (upgrade) {
         await updateSettings("fireflyClientVersion", kFireflyClientVersion,
             updateGlobalState: false);
@@ -261,10 +265,12 @@ Future<void> _rebuild(FireflyApiClient client, FireflySyncReport report) async {
   await ctx.loadLinks();
   await fireflyPullCategories(ctx);
   await fireflyPullAccounts(ctx);
+  await fireflyPullBudgets(ctx, DateTime.now());
   DateTime pulled = DateTime.now();
   Set<int> seen =
       await fireflyApplyGroups(ctx, await client.getAllRaw("/transactions", kFireflyAllTypes));
   await fireflyRemoveMissingGroups(ctx, seen);
+  await fireflyPullPiggyBanksAndBills(ctx, pulled);
 
   // A paid local row of a mirrored wallet that Firefly does not have. The
   // server is the truth, and the backup above holds the row. An unpaid row
@@ -383,6 +389,7 @@ Future<void> _pull(FireflyApiClient client, FireflySyncReport report,
   await ctx.loadLinks();
   await fireflyPullCategories(ctx);
   await fireflyPullAccounts(ctx);
+  await fireflyPullBudgets(ctx, started);
 
   if (full || _lastPull == null) {
     Set<int> seen =
@@ -408,6 +415,7 @@ Future<void> _pull(FireflyApiClient client, FireflySyncReport report,
             {...kFireflyAllTypes, "start": client.formatQueryDate(start)}));
     await fireflyRemoveMissingGroups(ctx, seen, since: start);
   }
+  await fireflyPullPiggyBanksAndBills(ctx, started);
   await _setLastPull(started, full: full || _lastPull == null);
 }
 

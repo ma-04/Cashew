@@ -28,6 +28,9 @@ const String kFieldForeignAmount = "foreign_amount";
 const String kFieldPayee = "payee";
 // The tags of the split, in order of name.
 const String kFieldTags = "tags";
+// The Firefly budget of a withdrawal. Firefly keeps no budget on a deposit
+// (it drops one that a request gives), thus a deposit has no such key.
+const String kFieldBudget = "budget_id";
 
 // The other account types that a payee can name. Firefly finds or makes an
 // expense or a revenue account for a name; a split whose other account is a
@@ -166,6 +169,7 @@ FireflyProjection fireflyProjectRemoteSplit(Map<String, dynamic> split) {
         : fireflyParseInt(split["source_id"]),
     kFieldPayee: fireflyRemotePayee(split),
     kFieldTags: fireflyRemoteTags(split),
+    if (type == "withdrawal") kFieldBudget: fireflyParseInt(split["budget_id"]),
   };
 }
 
@@ -213,12 +217,14 @@ String? fireflyLocalPayee(Transaction row) {
 // The projection of a local withdrawal or deposit. `assetAccountId` is the
 // Firefly id of the account of the wallet of the row, `categoryId` the Firefly
 // id of its category, or null for no category. `subcategoryTag` is the tag of
-// the subcategory of the row, or null.
+// the subcategory of the row, or null. `budgetId` is the Firefly id of the
+// budget that the row is added to, or null.
 FireflyProjection fireflyProjectLocalRow(
   Transaction row, {
   required int assetAccountId,
   required int? categoryId,
   String? subcategoryTag,
+  int? budgetId,
 }) {
   return {
     kFieldType: row.amount > 0 ? "deposit" : "withdrawal",
@@ -230,6 +236,7 @@ FireflyProjection fireflyProjectLocalRow(
     kFieldAsset: assetAccountId,
     kFieldPayee: fireflyLocalPayee(row),
     kFieldTags: fireflyLocalTags(row, subcategoryTag),
+    if (row.amount <= 0) kFieldBudget: budgetId,
   };
 }
 
@@ -332,6 +339,10 @@ Map<String, dynamic> fireflySplitRequestFields(
       case kFieldTags:
         body["tags"] = List<String>.from(value as List);
         break;
+      case kFieldBudget:
+        // A null clears the budget.
+        body["budget_id"] = value?.toString();
+        break;
       case kFieldType:
       case kFieldAsset:
       case kFieldPayee:
@@ -409,6 +420,7 @@ Map<String, dynamic> fireflyCreateRequestFields(FireflyProjection local) {
     body["type"] = local[kFieldType];
   }
   if (body["category_id"] == null) body.remove("category_id");
+  if (body["budget_id"] == null) body.remove("budget_id");
   if ((body["notes"] ?? "") == "") body.remove("notes");
   if ((body["tags"] as List?)?.isEmpty ?? false) body.remove("tags");
   return body;

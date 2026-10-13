@@ -103,6 +103,11 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         return "firefly-entity-transaction".tr();
       case FireflySyncEntityType.category:
         return "firefly-entity-category".tr();
+      // Read-only types: the queue holds no change of these.
+      case FireflySyncEntityType.budget:
+      case FireflySyncEntityType.piggyBank:
+      case FireflySyncEntityType.bill:
+        return type.name;
     }
   }
 

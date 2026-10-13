@@ -48,6 +48,8 @@ import 'package:budget/widgets/transactionEntry/transactionLabel.dart';
 import 'package:budget/widgets/util/contextMenu.dart';
 import 'package:budget/widgets/util/showDatePicker.dart';
 import 'package:budget/widgets/viewAllTransactionsButton.dart';
+import 'package:budget/widgets/fireflyTransactionFields.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:drift/drift.dart' hide Column;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
@@ -160,6 +162,16 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   late bool isAddedToLoanObjective =
       widget.selectedObjective?.type == ObjectiveType.loan ||
           widget.transaction?.objectiveLoanFk != null;
+  // Firefly mode: the payee and the tags of the row. The page keeps the
+  // values of an edited row, thus an edit that does not touch them keeps
+  // them. Replace the tags list, do not change it in place: the row compare
+  // uses the identity of the list.
+  late String? selectedPayee = widget.transaction?.payee;
+  late List<String> selectedTags = widget.transaction?.tags ?? [];
+  // Firefly mode: the row has a Firefly record, and that record cannot
+  // change here. See fireflyRowStateOf.
+  bool fireflyMirrored = false;
+  bool fireflyReadOnly = false;
   // bool isSettingUpBalanceTransfer = false;
 
   String? textAddTransaction = "add-transaction".tr();
@@ -403,6 +415,12 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   }
 
   Future<bool> addTransactionLocked() async {
+    if (widget.transaction != null &&
+        (await fireflyRowStateOf(widget.transaction!.transactionPk)).readOnly) {
+      // Firefly would not take the change. The sync engine would undo it.
+      openFireflyReadOnlySnackbar();
+      return false;
+    }
     if (appStateSettings["canShowTransactionActionButtonTip"] == true &&
         selectedType != null) {
       await openBottomSheet(
@@ -701,6 +719,8 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       objectiveLoanFk: selectedObjectiveLoanPk,
       budgetFksExclude:
           selectedExcludedBudgetPks.isEmpty ? null : selectedExcludedBudgetPks,
+      payee: selectedPayee,
+      tags: selectedTags.isEmpty ? null : selectedTags,
     );
 
     return createdTransaction;
@@ -767,6 +787,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         updateInitial();
       });
+      if (fireflyEnabled) updateFireflyRowState();
     } else {
       if (widget.selectedType != null) {
         setSelectedType(transactionTypeDisplayToEnum[widget.selectedType]);
@@ -861,6 +882,16 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     }
 
     setState(() {});
+  }
+
+  Future<void> updateFireflyRowState() async {
+    FireflyRowState state =
+        await fireflyRowStateOf(widget.transaction!.transactionPk);
+    if (!mounted) return;
+    setState(() {
+      fireflyMirrored = state.mirrored;
+      fireflyReadOnly = state.readOnly;
+    });
   }
 
   updateInitial() async {
@@ -1127,78 +1158,81 @@ class _AddTransactionPageState extends State<AddTransactionPage>
               enableDoubleColumn(context) == false
                   ? SizedBox(height: 5)
                   : SizedBox.shrink(),
-              HorizontalBreakAbove(
-                enabled: enableDoubleColumn(context),
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.only(top: 5),
-                  child: SelectChips(
-                    allowMultipleSelected: false,
-                    wrapped: enableDoubleColumn(context),
-                    onLongPress: (item) {
-                      openSelectSpecialTransactionTypeInfo();
-                    },
-                    extraWidgetBefore: Transform.scale(
-                      scale: 1.3,
-                      child: IconButton(
-                        padding: EdgeInsetsDirectional.zero,
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(
-                          appStateSettings["outlinedIcons"]
-                              ? Icons.info_outlined
-                              : Icons.info_outline_rounded,
-                          size: 19,
+              // A Firefly row keeps its type: the other types are unpaid
+              // planning rows, and a Firefly row cannot be marked unpaid.
+              if (fireflyMirrored == false)
+                HorizontalBreakAbove(
+                  enabled: enableDoubleColumn(context),
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(top: 5),
+                    child: SelectChips(
+                      allowMultipleSelected: false,
+                      wrapped: enableDoubleColumn(context),
+                      onLongPress: (item) {
+                        openSelectSpecialTransactionTypeInfo();
+                      },
+                      extraWidgetBefore: Transform.scale(
+                        scale: 1.3,
+                        child: IconButton(
+                          padding: EdgeInsetsDirectional.zero,
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(
+                            appStateSettings["outlinedIcons"]
+                                ? Icons.info_outlined
+                                : Icons.info_outline_rounded,
+                            size: 19,
+                          ),
+                          onPressed: openSelectSpecialTransactionTypeInfo,
                         ),
-                        onPressed: openSelectSpecialTransactionTypeInfo,
                       ),
+                      items:
+                          getTransactionSpecialTypesToShowGivenInitialTypeWhenAddingTransaction(
+                              widget.selectedType, isAddedToLoanObjective),
+                      getLabel: (item) {
+                        if (item is TransactionSpecialType || item == null) {
+                          return transactionTypeDisplayToEnum[item]
+                                  ?.toString()
+                                  .toLowerCase()
+                                  .tr() ??
+                              "";
+                        } else {
+                          return "installments".tr();
+                        }
+                      },
+                      onSelected: (item) async {
+                        if (item == "installments") {
+                          openPopup(
+                            context,
+                            title: "track-installments".tr(),
+                            description: "track-installments-description".tr(),
+                            icon: navBarIconsData["goals"]!.iconData,
+                            onSubmit: () async {
+                              popRoute(context);
+                              dynamic result = await startCreatingInstallment(
+                                  context: context);
+                              if (result == true) popRoute(context);
+                            },
+                            onSubmitLabel: "ok".tr(),
+                            onCancel: () {
+                              popRoute(context);
+                            },
+                            onCancelLabel: "cancel".tr(),
+                          );
+                        } else if (item is TransactionSpecialType ||
+                            item == null) {
+                          setSelectedType(transactionTypeDisplayToEnum[item]);
+                        }
+                      },
+                      getSelected: (item) {
+                        if (item is TransactionSpecialType || item == null) {
+                          return selectedType == item;
+                        } else {
+                          return false;
+                        }
+                      },
                     ),
-                    items:
-                        getTransactionSpecialTypesToShowGivenInitialTypeWhenAddingTransaction(
-                            widget.selectedType, isAddedToLoanObjective),
-                    getLabel: (item) {
-                      if (item is TransactionSpecialType || item == null) {
-                        return transactionTypeDisplayToEnum[item]
-                                ?.toString()
-                                .toLowerCase()
-                                .tr() ??
-                            "";
-                      } else {
-                        return "installments".tr();
-                      }
-                    },
-                    onSelected: (item) async {
-                      if (item == "installments") {
-                        openPopup(
-                          context,
-                          title: "track-installments".tr(),
-                          description: "track-installments-description".tr(),
-                          icon: navBarIconsData["goals"]!.iconData,
-                          onSubmit: () async {
-                            popRoute(context);
-                            dynamic result = await startCreatingInstallment(
-                                context: context);
-                            if (result == true) popRoute(context);
-                          },
-                          onSubmitLabel: "ok".tr(),
-                          onCancel: () {
-                            popRoute(context);
-                          },
-                          onCancelLabel: "cancel".tr(),
-                        );
-                      } else if (item is TransactionSpecialType ||
-                          item == null) {
-                        setSelectedType(transactionTypeDisplayToEnum[item]);
-                      }
-                    },
-                    getSelected: (item) {
-                      if (item is TransactionSpecialType || item == null) {
-                        return selectedType == item;
-                      } else {
-                        return false;
-                      }
-                    },
                   ),
                 ),
-              ),
               AnimatedExpanded(
                 expand: selectedType == TransactionSpecialType.repetitive ||
                     selectedType == TransactionSpecialType.subscription,
@@ -1393,7 +1427,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                 ),
               ),
               // Wallet picker is in Select Amount... consider removing?
-              Provider.of<AllWallets>(context).list.length <= 1
+              Provider.of<AllWallets>(context).activeList.length <= 1
                   ? SizedBox.shrink()
                   : HorizontalBreakAbove(
                       enabled: enableDoubleColumn(context),
@@ -1413,7 +1447,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                               ),
                             );
                           },
-                          items: Provider.of<AllWallets>(context).list,
+                          items: Provider.of<AllWallets>(context).activeList,
                           getSelected: (TransactionWallet wallet) {
                             return getSelectedWallet(listen: false)?.walletPk ==
                                 wallet.walletPk;
@@ -1475,6 +1509,37 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                         ),
                       ),
                     ),
+              // Firefly mode: the payee and the tags of a withdrawal or a
+              // deposit. A transfer (category "0") has no payee.
+              if (fireflyEnabled && selectedCategory?.categoryPk != "0")
+                HorizontalBreakAbove(
+                  enabled: enableDoubleColumn(context),
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(top: 10),
+                    child: Column(
+                      children: [
+                        FireflyPayeeField(
+                          payee: selectedPayee,
+                          onChanged: (String? payee) {
+                            setState(() {
+                              selectedPayee = payee;
+                            });
+                          },
+                        ),
+                        StickyLabelDivider(info: "firefly-tags".tr()),
+                        FireflyTagsField(
+                          tags: selectedTags,
+                          wrapped: enableDoubleColumn(context),
+                          onChanged: (List<String> tags) {
+                            setState(() {
+                              selectedTags = tags;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               SelectAddedBudget(
                 selectedBudgetPk: selectedBudgetPk,
                 setSelectedBudget: setSelectedBudgetPk,
@@ -1528,7 +1593,8 @@ class _AddTransactionPageState extends State<AddTransactionPage>
               AnimatedExpanded(
                 expand: showMoreOptions == false &&
                     selectedType == null &&
-                    widget.transaction?.paid == false,
+                    widget.transaction?.paid == false &&
+                    fireflyMirrored == false,
                 child: Column(
                   children: [
                     HorizontalBreakAbove(
@@ -1594,7 +1660,9 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                                     widget.transaction != null),
                             child: Column(
                               children: [
-                                if (selectedType == null)
+                                // A Firefly row cannot be marked unpaid.
+                                if (selectedType == null &&
+                                    fireflyMirrored == false)
                                   Padding(
                                     padding: const EdgeInsetsDirectional.only(
                                       start: 22,
@@ -1730,7 +1798,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     );
 
     bool enableBalanceTransferTab = widget.transaction == null &&
-        Provider.of<AllWallets>(context).indexedByPk.keys.length > 1;
+        Provider.of<AllWallets>(context).activeList.length > 1;
 
     Widget transactionAmountAndCategoryHeader = AnimatedContainer(
       curve: Curves.easeInOut,
@@ -2118,16 +2186,25 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                                 selectAmountPopup();
                               },
                             )
-                          : Button(
-                              hasBottomExtraSafeArea: true,
-                              label: widget.transaction != null
-                                  ? "save-changes".tr()
-                                  : textAddTransaction ?? "",
-                              onTap: () async {
-                                bool result = await addTransaction();
-                                if (result) popRoute(context);
-                              },
-                            ),
+                          : fireflyReadOnly
+                              ? Button(
+                                  hasBottomExtraSafeArea: true,
+                                  label: "firefly-read-only".tr(),
+                                  icon: appStateSettings["outlinedIcons"]
+                                      ? Icons.lock_outlined
+                                      : Icons.lock_rounded,
+                                  onTap: openFireflyReadOnlySnackbar,
+                                )
+                              : Button(
+                                  hasBottomExtraSafeArea: true,
+                                  label: widget.transaction != null
+                                      ? "save-changes".tr()
+                                      : textAddTransaction ?? "",
+                                  onTap: () async {
+                                    bool result = await addTransaction();
+                                    if (result) popRoute(context);
+                                  },
+                                ),
                 ),
                 AnimatedSizeSwitcher(
                   clipBehavior: Clip.none,
@@ -2178,40 +2255,48 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           ),
         ),
         listWidgets: [
-          enableDoubleColumn(context) == false
-              ? transactionAmountAndCategoryHeader
-              : SizedBox.shrink(),
+          if (fireflyReadOnly) FireflyReadOnlyNotice(),
+          // A read-only Firefly row: the fields take no input.
+          AbsorbPointer(
+            absorbing: fireflyReadOnly,
+            child: enableDoubleColumn(context) == false
+                ? transactionAmountAndCategoryHeader
+                : SizedBox.shrink(),
+          ),
           enableDoubleColumn(context)
               ? SizedBox(height: 50)
               : SizedBox.shrink(),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              enableDoubleColumn(context) == false
-                  ? SizedBox.shrink()
-                  : Flexible(
-                      child: Container(
-                        constraints: BoxConstraints(maxWidth: 900),
-                        padding: const EdgeInsets.only(bottom: 80),
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsetsDirectional.symmetric(
-                                  horizontal: 13),
-                              child: ClipRRect(
-                                child: transactionAmountAndCategoryHeader,
-                                borderRadius:
-                                    BorderRadiusDirectional.circular(15),
+          AbsorbPointer(
+            absorbing: fireflyReadOnly,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                enableDoubleColumn(context) == false
+                    ? SizedBox.shrink()
+                    : Flexible(
+                        child: Container(
+                          constraints: BoxConstraints(maxWidth: 900),
+                          padding: const EdgeInsets.only(bottom: 80),
+                          child: Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsetsDirectional.symmetric(
+                                    horizontal: 13),
+                                child: ClipRRect(
+                                  child: transactionAmountAndCategoryHeader,
+                                  borderRadius:
+                                      BorderRadiusDirectional.circular(15),
+                                ),
                               ),
-                            ),
-                            transactionTextInput,
-                          ],
+                              transactionTextInput,
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-              transactionDetailsParameters,
-            ],
+                transactionDetailsParameters,
+              ],
+            ),
           ),
         ],
       ),
@@ -3441,6 +3526,11 @@ void deleteTransactionPopup(
   required TransactionCategory? category,
   required RoutesToPopAfterDelete routesToPopAfterDelete,
 }) async {
+  if ((await fireflyRowStateOf(transaction.transactionPk)).readOnly) {
+    // Firefly would keep the record. The sync engine would bring it back.
+    openFireflyReadOnlySnackbar();
+    return;
+  }
   String? transactionName =
       await getTransactionLabel(transaction, category: category);
   DeletePopupAction? action = await openDeletePopup(

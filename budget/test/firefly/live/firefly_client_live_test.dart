@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart';
 import 'package:budget/struct/firefly/client/fireflyStore.dart';
 import 'package:budget/struct/firefly/fireflyMapper.dart'
     show kFireflyUncategorizedCategoryPk;
@@ -1001,7 +1002,7 @@ void main() {
       await editLocally(row.copyWith(name: "Team lunch"));
       FireflySyncReport report = await sync(pushOnly: true);
       expect(report.failed, 0, reason: report.warnings.join("\n"));
-      expect(appStateSettings["fireflyClientVersion"], 2);
+      expect(appStateSettings["fireflyClientVersion"], kFireflyClientVersion);
       Map<String, dynamic> after = await remoteSplit(live, lunch);
       expect(after["description"], "Team lunch");
       expect(after["destination_name"], "Cafe");
@@ -1020,6 +1021,105 @@ void main() {
               .localPk);
       expect(loanAgain.accountKind, "loan");
       expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
+    });
+
+    test('a Firefly budget is an added-only budget, and the budget of a '
+        'withdrawal goes both ways', () async {
+      LiveResponse groceries = await live.post("/budgets", {"name": "Groceries"});
+      expect(groceries.status, 200, reason: groceries.toString());
+      DateTime now = DateTime.now();
+      String day(DateTime d) =>
+          "${d.year}-${d.month.toString().padLeft(2, "0")}-${d.day.toString().padLeft(2, "0")}";
+      LiveResponse limit = await live.post("/budgets/${groceries.id}/limits", {
+        "start": day(DateTime(now.year, now.month, 1)),
+        "end": day(DateTime(now.year, now.month + 1, 0)),
+        "amount": "300",
+        "currency_code": "EUR",
+      });
+      expect(limit.status, 200, reason: limit.toString());
+      LiveResponse fun = await live.post("/budgets", {
+        "name": "Fun",
+        "auto_budget_type": "reset",
+        "auto_budget_amount": "200",
+        "auto_budget_period": "weekly",
+        "auto_budget_currency_code": "EUR",
+      });
+      expect(fun.status, 200, reason: fun.toString());
+      Map<String, dynamic> split = await remoteSplit(live, lunch);
+      LiveResponse web = await live.put("/transactions/$lunch", {
+        "transactions": [
+          {
+            "transaction_journal_id": split["transaction_journal_id"],
+            "budget_id": groceries.id.toString(),
+          }
+        ]
+      });
+      expect(web.status, 200, reason: web.toString());
+      await live.post("/piggy-banks", {
+        "name": "Holiday",
+        "accounts": [
+          {"account_id": checking.toString()}
+        ],
+        "target_amount": "1000",
+        "start_date": "2026-01-01",
+        "transaction_currency_code": "EUR",
+      });
+      await live.post("/bills", {
+        "name": "Rent",
+        "amount_min": "900",
+        "amount_max": "1000",
+        "date": "2026-01-01",
+        "repeat_freq": "monthly",
+        "currency_code": "EUR",
+        "active": true,
+      });
+      await sync();
+
+      String groceriesPk = (await fireflyMapsOfRemote(
+              FireflySyncEntityType.budget, groceries.id))
+          .single
+          .localPk;
+      Budget budget = await database.getBudgetInstance(groceriesPk);
+      expect(budget.name, "Groceries");
+      expect(budget.addedTransactionsOnly, isTrue);
+      expect(budget.amount, closeTo(300, 1e-9));
+      expect(budget.reoccurrence, BudgetReoccurence.monthly);
+      Budget weekly = await database.getBudgetInstance((await fireflyMapsOfRemote(
+              FireflySyncEntityType.budget, fun.id))
+          .single
+          .localPk);
+      expect(weekly.reoccurrence, BudgetReoccurence.weekly);
+      expect(weekly.amount, closeTo(200, 1e-9));
+      Transaction row = await localRowOfGroup(lunch);
+      expect(row.sharedReferenceBudgetPk, groceriesPk);
+      expect(await fireflyCachedRecords(FireflySyncEntityType.piggyBank),
+          hasLength(1));
+      expect(await fireflyCachedRecords(FireflySyncEntityType.bill),
+          hasLength(1));
+
+      // A move to the other budget sends the budget only.
+      Map<String, dynamic> before = await remoteSplit(live, lunch);
+      await editLocally(
+          row.copyWith(sharedReferenceBudgetPk: Value(weekly.budgetPk)));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["budget_id"], fun.id.toString());
+      expect(without(after, {"budget_id", "budget_name"}),
+          without(before, {"budget_id", "budget_name"}));
+
+      // No budget clears it.
+      row = await localRowOfGroup(lunch);
+      await editLocally(row.copyWith(sharedReferenceBudgetPk: const Value(null)));
+      await sync(pushOnly: true);
+      expect((await remoteSplit(live, lunch))["budget_id"], isNull);
+
+      // A sync writes the budget back over a local edit of it.
+      await database.into(database.budgets).insertOnConflictUpdate(
+          budget.copyWith(amount: 5).toCompanion(true));
+      await sync();
+      expect((await database.getBudgetInstance(groceriesPk)).amount,
+          closeTo(300, 1e-9));
     });
   }, reset: FireflyLiveReset.eachTest);
 }
