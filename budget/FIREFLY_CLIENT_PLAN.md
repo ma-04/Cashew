@@ -103,6 +103,25 @@ Facts read from the server (2026-10-13):
 - Categories have `color` and `notes`. The asset account list includes
   inactive accounts.
 
+Facts for phase B (2026-10-13):
+
+- A transaction PUT with `tags: [...]` replaces the tags; `tags: []` clears
+  them. A tag that does not exist is made, also "Parent/Child".
+- `destination_name` (withdrawal) or `source_name` (deposit) finds the
+  expense or revenue account of that name, or makes one. It never finds a
+  liability or an asset account: the name "Car loan" makes an expense
+  account "Car loan". An empty name or a null id puts the split on the cash
+  account.
+- Liabilities (`type=liabilities`): a withdrawal can go from a liability to
+  an expense account and from an asset account to a liability; a deposit can
+  go from a revenue account or a liability. A transfer between an asset
+  account and a liability gets 422; a transfer between two liabilities is
+  accepted. `current_balance` of a liability is the sum of its flows, like an
+  asset account (a payment of 100 into a credit loan gives 100.00).
+  `liability_amount` on a create made no opening transaction.
+- An account PUT of `{"name"}` or `{"active": false}` on a liability keeps
+  its liability fields. `account_role` can be changed by a PUT.
+
 ## 3. Architecture
 
 Keep: `fireflyApiClient.dart`, most of `fireflyMapper.dart` and
@@ -195,12 +214,43 @@ Done, with tests against Firefly 6.7.9:
 
 Not done in phase A:
 
-- A wallet that the user deleted stays visible (inactive on Firefly). The
-  wallet lists need a filter for inactive accounts.
 - Edits of a multi-split group work one split at a time; there is no split
   editor, and a new multi-split group cannot be made here.
 - The UI does not stop an edit of a read-only row; the push undoes it and
   says so.
+
+## 3b. State of phase B (2026-10-13)
+
+Done, with tests against Firefly 6.7.9 (schema 52):
+
+- `Transactions.payee`: the name of the expense account of a withdrawal or
+  the revenue account of a deposit; null is the cash account. A change sends
+  the name only; a payee change on a split whose other account is a
+  liability or an asset account is undone (a name cannot find such an
+  account). A new row with a payee names it; with no payee it names no other
+  account (or the category, in "category" naming mode).
+- `Transactions.tags`: the tags, sent as the full list when they change.
+- A subcategory is the tag "Parent/Child" (the name of the category, a
+  slash, the name of the subcategory). The pull makes the local subcategory
+  when it does not exist. A local subcategory that was never on Firefly
+  stays, and its tag goes with the next change of the row; a tag removed on
+  Firefly removes the subcategory.
+- `Wallets.archived`: an inactive Firefly account is hidden in the wallet
+  lists; its history stays.
+- Liabilities are wallets (`Wallets.accountKind` = loan, debt or mortgage).
+  A split between two wallets is two local rows (a transfer pair) whatever
+  its Firefly type; a new pair is a transfer between two asset accounts or
+  two liabilities, a withdrawal from an asset account to a liability, and a
+  deposit from a liability to an asset account.
+- Fixed: the create of a transfer from Cashew sent `source_id: "null"`.
+
+Not done in phase B:
+
+- A rename of a subcategory does not rename its tag on Firefly; the next
+  pull of a row with the old tag makes a subcategory of the old name again.
+- Foreign amounts of withdrawals and deposits are kept on the server but not
+  shown or edited here.
+- The asset role is kept but cannot be changed here.
 
 ## 4. Phases
 

@@ -925,5 +925,101 @@ void main() {
       expect(created["destination_id"], loan.id.toString());
       expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
     });
+
+    test('a phone from client version 1 keeps the payee and the tags on its '
+        'first edit', () async {
+      LiveResponse loan = await live.post("/accounts", {
+        "name": "Car loan",
+        "type": "liability",
+        "liability_type": "loan",
+        "liability_direction": "credit",
+        "interest": "0",
+        "interest_period": "monthly",
+        "currency_code": "EUR",
+      });
+      LiveResponse payment = await live.post("/transactions", {
+        "transactions": [
+          {
+            "type": "withdrawal",
+            "date": "2024-05-03T09:00:00Z",
+            "amount": "100",
+            "description": "Loan payment",
+            "source_id": checking.toString(),
+            "destination_id": loan.id.toString(),
+          }
+        ]
+      });
+      expect(payment.status, 200, reason: payment.toString());
+      await sync();
+
+      // What schema 52 and a build of client version 1 leave: the new
+      // columns are empty, the liability is no wallet and its payment is one
+      // row.
+      await database.customStatement(
+          "UPDATE transactions SET payee = NULL, tags = NULL");
+      await database.customStatement(
+          "UPDATE wallets SET archived = 0, account_kind = NULL");
+      String loanWallet =
+          (await fireflyMapsOfRemote(FireflySyncEntityType.wallet, loan.id))
+              .single
+              .localPk;
+      List<FireflySyncMapEntry> legs = await fireflyMapsOfRemote(
+          FireflySyncEntityType.transaction, payment.id);
+      for (FireflySyncMapEntry leg in legs) {
+        Transaction row = await (database.select(database.transactions)
+              ..where((t) => t.transactionPk.equals(leg.localPk)))
+            .getSingle();
+        if (row.walletFk == loanWallet) {
+          await (database.delete(database.transactions)
+                ..where((t) => t.transactionPk.equals(leg.localPk)))
+              .go();
+          await fireflyDeleteMap(
+              FireflySyncEntityType.transaction, leg.localPk);
+        } else {
+          await database.customStatement(
+              "UPDATE transactions SET paired_transaction_fk = NULL, "
+              "category_fk = ? WHERE transaction_pk = ?",
+              [kFireflyUncategorizedCategoryPk, leg.localPk]);
+          await database.customStatement(
+              "UPDATE firefly_sync_map SET remote_snapshot = "
+              "json_remove(remote_snapshot, '\$.leg') WHERE local_pk = ?",
+              [leg.localPk]);
+        }
+      }
+      await (database.delete(database.fireflySyncMap)
+            ..where((m) => m.localPk.equals(loanWallet)))
+          .go();
+      await (database.delete(database.wallets)
+            ..where((w) => w.walletPk.equals(loanWallet)))
+          .go();
+      appStateSettings["fireflyClientVersion"] = 1;
+      expect(await fireflyNeedsRebuild(), isFalse);
+
+      // The first edit after the upgrade changes the description only.
+      Map<String, dynamic> before = await remoteSplit(live, lunch);
+      Transaction row = await localRowOfGroup(lunch);
+      await editLocally(row.copyWith(name: "Team lunch"));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      expect(appStateSettings["fireflyClientVersion"], 2);
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["description"], "Team lunch");
+      expect(after["destination_name"], "Cafe");
+      expect(after["tags"], ["work"]);
+      expect(without(after, {"description"}), without(before, {"description"}));
+      expect((await localRowOfGroup(lunch)).payee, "Cafe");
+
+      // The payment to the loan is two rows again, and the loan a wallet.
+      expect(
+          await fireflyMapsOfRemote(
+              FireflySyncEntityType.transaction, payment.id),
+          hasLength(2));
+      TransactionWallet loanAgain = await database.getWalletInstance(
+          (await fireflyMapsOfRemote(FireflySyncEntityType.wallet, loan.id))
+              .single
+              .localPk);
+      expect(loanAgain.accountKind, "loan");
+      expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
+    });
   }, reset: FireflyLiveReset.eachTest);
 }

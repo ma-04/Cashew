@@ -55,7 +55,10 @@ final ValueNotifier<FireflySyncReport?> fireflySyncReportNotifier =
 
 // The client version that the local copy was built for. A database from the
 // two-way sync of earlier builds has no snapshots, thus it needs a rebuild.
-const int kFireflyClientVersion = 1;
+// Version 1 has snapshots but not the columns of schema 52: the next cycle
+// fills them from the snapshots (see fireflyBackfillFromSnapshots) and reads
+// the full history once.
+const int kFireflyClientVersion = 2;
 
 // How far back a routine pull looks for a deleted transaction. Firefly keeps
 // no record of a delete, thus a delete shows only as a record that a list no
@@ -124,8 +127,7 @@ Future<String> fireflyBackupDatabaseTo(String folder) async {
 
 Future<bool> fireflyNeedsRebuild() async {
   Object? version = appStateSettings["fireflyClientVersion"];
-  if (version != kFireflyClientVersion) return true;
-  return false;
+  return version != 1 && version != kFireflyClientVersion;
 }
 
 Future<FireflyApiClient> _clientOrThrow() async {
@@ -179,9 +181,25 @@ Future<bool> fireflySyncNow({
       await _rebuild(client, report);
       await _checkBalances(client, report);
     } else {
+      // An upgrade from client version 1. It runs before the push, thus no
+      // push sees the empty columns.
+      bool upgrade = appStateSettings["fireflyClientVersion"] == 1;
+      if (upgrade) {
+        await fireflyBackfillFromSnapshots();
+        pushOnly = false;
+      }
       await _queueLocalChanges(_scanFrom());
-      bool full = fullResync || _fullPullIsDue(started);
-      if (!pushOnly) await _pull(client, report, full: full, started: started);
+      bool full = fullResync || upgrade || _fullPullIsDue(started);
+      if (!pushOnly) {
+        // The upgrade writes each record again: a split between an asset
+        // account and a liability becomes two rows, and a liability a wallet.
+        await _pull(client, report,
+            full: full, started: started, force: upgrade);
+      }
+      if (upgrade) {
+        await updateSettings("fireflyClientVersion", kFireflyClientVersion,
+            updateGlobalState: false);
+      }
       await fireflyPushQueuedChanges(FireflyPushContext(
         client: client,
         report: report,
@@ -355,11 +373,12 @@ Future<void> _setLastPull(DateTime started, {required bool full}) async {
 }
 
 Future<void> _pull(FireflyApiClient client, FireflySyncReport report,
-    {required bool full, required DateTime started}) async {
+    {required bool full, required DateTime started, bool force = false}) async {
   FireflyPullContext ctx = FireflyPullContext(
     client: client,
     report: report,
     openOps: await fireflyOpenOpKeys(),
+    force: force,
   );
   await ctx.loadLinks();
   await fireflyPullCategories(ctx);

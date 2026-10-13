@@ -269,6 +269,44 @@ Future<void> fireflyRemoveLocalCategory(String categoryPk) async {
   }
 }
 
+// --- Upgrade ----------------------------------------------------------------
+
+// Client version 2 added Transactions.payee, Transactions.tags,
+// Wallets.archived and Wallets.accountKind (schema 52). The migration leaves
+// them empty, but the snapshots hold the server values. Without this step the
+// first edit of a row would send an empty payee (the cash account) and no
+// tags, because the merge sees them as changes of the user. Each value comes
+// from the snapshot; dateTimeModified does not change, thus nothing is queued
+// and nothing goes to the server.
+Future<void> fireflyBackfillFromSnapshots() async {
+  for (FireflySyncMapEntry map in await fireflyMapsOfType(_transaction)) {
+    Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
+    if (snapshot == null || snapshot[kSnapSplit] == null) continue;
+    Map<String, dynamic> split = Map<String, dynamic>.from(snapshot[kSnapSplit]);
+    String type = fireflySplitType(split);
+    bool single =
+        snapshot[kSnapLeg] == null && (type == "withdrawal" || type == "deposit");
+    List<String> tags = fireflyRemoteTags(split);
+    await (database.update(database.transactions)
+          ..where((t) => t.transactionPk.equals(map.localPk)))
+        .write(TransactionsCompanion(
+      payee: Value(single ? fireflyRemotePayee(split) : null),
+      tags: Value(tags.isEmpty ? null : tags),
+    ));
+  }
+  for (FireflySyncMapEntry map in await fireflyMapsOfType(_wallet)) {
+    Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
+    if (snapshot == null) continue;
+    Map<String, dynamic> attributes = _attributes(snapshot);
+    await (database.update(database.wallets)
+          ..where((w) => w.walletPk.equals(map.localPk)))
+        .write(WalletsCompanion(
+      archived: Value(attributes["active"] == false),
+      accountKind: Value(fireflyAccountKind(attributes)),
+    ));
+  }
+}
+
 // --- Accounts ---------------------------------------------------------------
 
 Future<void> fireflyPullAccounts(FireflyPullContext ctx) async {
