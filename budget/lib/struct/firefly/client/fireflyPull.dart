@@ -3,6 +3,8 @@
 // queued change is not touched; the push merges that change with the server
 // record when it sends it (fireflyPush.dart).
 
+import 'dart:convert';
+
 import 'package:budget/database/tables.dart';
 import 'package:budget/pages/addWalletPage.dart'
     show initializeBalanceCorrectionCategory;
@@ -79,12 +81,18 @@ String _sameName(String name) => name.trim().toLowerCase();
 DateTime? _updatedAt(Map<String, dynamic> record) =>
     fireflyParseDate(_attributes(record)["updated_at"]);
 
+// `updated_at` has a precision of one second, thus a change in the same
+// second as the last write has the same value. The `fields` that the client
+// reads are compared too.
 bool _snapshotIsCurrent(
-    FireflySyncMapEntry? map, Map<String, dynamic> remoteRecord) {
+    FireflySyncMapEntry? map, Map<String, dynamic> remoteRecord,
+    {List<String> fields = const []}) {
   Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
   if (snapshot == null) return false;
-  return _attributes(snapshot)["updated_at"] ==
-      _attributes(remoteRecord)["updated_at"];
+  Map<String, dynamic> before = _attributes(snapshot);
+  Map<String, dynamic> now = _attributes(remoteRecord);
+  if (before["updated_at"] != now["updated_at"]) return false;
+  return fields.every((f) => before[f] == now[f]);
 }
 
 // --- Categories -------------------------------------------------------------
@@ -151,7 +159,9 @@ Future<void> fireflyPullCategories(FireflyPullContext ctx) async {
       }
     } else if (local != null && ctx.hasOpenOp(_category, local.categoryPk)) {
       continue;
-    } else if (local != null && _snapshotIsCurrent(map, record)) {
+    } else if (local != null &&
+        _snapshotIsCurrent(map, record,
+            fields: const ["name", "notes", "color"])) {
       continue;
     }
 
@@ -184,11 +194,16 @@ Future<void> fireflyApplyCategoryRecord(
   int id = _id(record)!;
   String name = (_attributes(record)["name"] ?? "").toString();
   DateTime stamp = fireflyEngineStamp(_updatedAt(record));
+  // The colour of the notes, or the local colour when the notes have none: a
+  // colour that only Cashew has stays.
+  String? colour = fireflyCategoryColour(record) ?? onto?.colour;
   TransactionCategory row = onto != null
-      ? onto.copyWith(name: name, dateTimeModified: Value(stamp))
+      ? onto.copyWith(
+          name: name, colour: Value(colour), dateTimeModified: Value(stamp))
       : TransactionCategory(
           categoryPk: localPk ?? uuid.v4(),
           name: name,
+          colour: colour,
           dateCreated: DateTime.now(),
           dateTimeModified: stamp,
           order: order,
@@ -201,7 +216,7 @@ Future<void> fireflyApplyCategoryRecord(
     type: _category,
     localPk: row.categoryPk,
     fireflyId: id,
-    snapshot: record,
+    snapshot: {...record, kSnapshotLocalColour: row.colour},
     localModified: stamp,
     remoteUpdatedAt: _updatedAt(record),
   );
@@ -282,7 +297,9 @@ Future<void> fireflyPullAccounts(FireflyPullContext ctx) async {
       local = await _unlinkedWalletFor(name, locals, ctx);
     } else if (local != null && ctx.hasOpenOp(_wallet, local.walletPk)) {
       continue;
-    } else if (local != null && _snapshotIsCurrent(map, record)) {
+    } else if (local != null &&
+        _snapshotIsCurrent(map, record,
+            fields: const ["name", "currency_code", "active"])) {
       continue;
     }
 
@@ -422,6 +439,48 @@ Map<String, dynamic> _transactionSnapshot(
   };
 }
 
+// The keys of a split that Firefly computes on each read.
+const Set<String> _computedSplitKeys = {
+  "source_balance_after",
+  "destination_balance_after",
+  "pc_source_balance_after",
+  "pc_destination_balance_after",
+  "source_balance_dirty",
+  "destination_balance_dirty",
+};
+
+// True when the snapshot has this version of the split. `updated_at` has a
+// precision of one second, thus the split itself is compared too.
+bool _groupSnapshotIsCurrent(FireflySyncMapEntry? map,
+    Map<String, dynamic> group, Map<String, dynamic> split) {
+  Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
+  if (snapshot == null) return false;
+  if (snapshot[kSnapUpdatedAt] != _attributes(group)["updated_at"]) {
+    return false;
+  }
+  Map<String, dynamic> stripped(Map<String, dynamic> s) => {
+        for (MapEntry<String, dynamic> e in s.entries)
+          if (!_computedSplitKeys.contains(e.key)) e.key: e.value,
+      };
+  return _canonical(
+          stripped(Map<String, dynamic>.from(snapshot[kSnapSplit] ?? {}))) ==
+      _canonical(stripped(split));
+}
+
+// JSON text with the keys of each map in order, for a compare of two records.
+String _canonical(Object? value) {
+  Object? sorted(Object? v) {
+    if (v is Map) {
+      List<String> keys = v.keys.map((k) => k.toString()).toList()..sort();
+      return {for (String k in keys) k: sorted(v[k])};
+    }
+    if (v is List) return v.map(sorted).toList();
+    return v;
+  }
+
+  return jsonEncode(sorted(value));
+}
+
 // Applies each group and gives the ids of the groups that it read.
 Future<Set<int>> fireflyApplyGroups(
     FireflyPullContext ctx, List<Map<String, dynamic>> groups) async {
@@ -534,8 +593,7 @@ Future<void> _applySplit(
       local != null &&
       map != null &&
       maps.length == 1 &&
-      fireflySnapshotOf(map)?[kSnapUpdatedAt] ==
-          _attributes(group)["updated_at"]) {
+      _groupSnapshotIsCurrent(map, group, split)) {
     return;
   }
 
@@ -619,8 +677,7 @@ Future<void> _applyTransfer(
   if (!ctx.force &&
       source != null &&
       destination != null &&
-      fireflySnapshotOf(sourceMap)?[kSnapUpdatedAt] ==
-          _attributes(group)["updated_at"]) {
+      _groupSnapshotIsCurrent(sourceMap, group, split)) {
     return;
   }
 

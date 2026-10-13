@@ -180,6 +180,13 @@ Done, with tests against Firefly 6.7.9:
   corrections and unpaid planning rows stay local.
 - Every rule of table 2. A new withdrawal or deposit in "generic" payee mode
   names no other account, thus Firefly books it on its own cash account.
+- Category colour in the notes of the Firefly category: a "color: #rrggbb"
+  label or a bare "#rrggbb" is read; a colour changed in Cashew replaces
+  only the hex digits (or adds a "color: #rrggbb" line). A rename does not
+  touch the notes. The `color` field of Firefly 6 is read when the notes have
+  no colour, and is never written.
+- A record that changed in the same second as the last write of the client
+  is still pulled: the pull compares the fields too, not only `updated_at`.
 - Category delete (server first, rows uncategorized), category merge
   (moves, then the delete), wallet delete (account inactive, history kept),
   wallet merge refused between two currencies.
@@ -188,7 +195,6 @@ Done, with tests against Firefly 6.7.9:
 
 Not done in phase A:
 
-- Category colour and notes are not synced.
 - A wallet that the user deleted stays visible (inactive on Firefly). The
   wallet lists need a filter for inactive accounts.
 - Edits of a multi-split group work one split at a time; there is no split

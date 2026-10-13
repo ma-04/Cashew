@@ -323,3 +323,58 @@ Map<String, dynamic> fireflyCreateRequestFields(FireflyProjection local) {
   if ((body["notes"] ?? "") == "") body.remove("notes");
   return body;
 }
+
+// --- Category colour ---------------------------------------------------------
+
+// The colour of a category is in the notes of the Firefly category, as a hex
+// colour such as "color: #ff8800" or "#ff8800". A "color:" or "colour:" label
+// has priority over a bare hex value. Firefly 6 also has a `color` field: the
+// client reads it only when the notes have no colour, and never writes it.
+final RegExp _labelledColour =
+    RegExp(r"colou?r\s*[:=]\s*#?([0-9a-f]{6})\b", caseSensitive: false);
+final RegExp _bareColour = RegExp(r"#([0-9a-f]{6})\b", caseSensitive: false);
+
+// The key in a category snapshot that holds the local colour at the time of
+// the last apply. A colour that differs from it is a change of the user.
+const String kSnapshotLocalColour = "cashew_colour";
+
+RegExpMatch? _colourMatch(String? notes) {
+  if (notes == null) return null;
+  return _labelledColour.firstMatch(notes) ?? _bareColour.firstMatch(notes);
+}
+
+// Returns the six lowercase hex digits of a colour value of Cashew
+// ("0xffrrggbb") or of Firefly ("#rrggbb", "rrggbb"), or null.
+String? fireflyColourDigits(String? colour) {
+  if (colour == null) return null;
+  String value = colour.trim().toLowerCase().replaceAll("#", "");
+  if (value.startsWith("0x")) value = value.substring(2);
+  if (value.length == 8) value = value.substring(2);
+  if (!RegExp(r"^[0-9a-f]{6}$").hasMatch(value)) return null;
+  return value;
+}
+
+// The local colour ("0xffrrggbb") of a Firefly category record, or null when
+// the record has no colour.
+String? fireflyCategoryColour(Map<String, dynamic> record) {
+  Map attributes = record["attributes"] ?? {};
+  String? digits = _colourMatch(attributes["notes"]?.toString())?.group(1) ??
+      fireflyColourDigits(attributes["color"]?.toString());
+  if (digits == null) return null;
+  return "0xff" + digits.toLowerCase();
+}
+
+// Returns the notes with the colour `colour` (a local colour value). The hex
+// digits of a colour that the notes have are replaced in place, thus the rest
+// of the text and the format stay. Notes with no colour get a "color: #rrggbb"
+// line at the end.
+String fireflyNotesWithColour(String? notes, String colour) {
+  String digits = fireflyColourDigits(colour)!;
+  String text = notes ?? "";
+  RegExpMatch? match = _colourMatch(text);
+  if (match == null) {
+    return text.trim().isEmpty ? "color: #$digits" : "$text\ncolor: #$digits";
+  }
+  // The six digits are the last characters of each pattern.
+  return text.replaceRange(match.end - 6, match.end, digits);
+}

@@ -255,4 +255,33 @@ void main() {
       "destination_id": "3",
     });
   });
+
+  group("category colour in the notes", () {
+    Map<String, dynamic> record(String? notes, [String? color]) => {
+          "attributes": {"notes": notes, "color": color}
+        };
+
+    test("is read from a label, a bare hex value or the color field", () {
+      expect(fireflyCategoryColour(record("Food\ncolor: #12AB34")),
+          "0xff12ab34");
+      expect(fireflyCategoryColour(record("colour=ff8800")), "0xffff8800");
+      expect(fireflyCategoryColour(record("see #ff8800 here")), "0xffff8800");
+      expect(fireflyCategoryColour(record("#000000 color: #ffffff")),
+          "0xffffffff");
+      expect(fireflyCategoryColour(record("no colour", "00ff00")),
+          "0xff00ff00");
+      expect(fireflyCategoryColour(record(null)), isNull);
+      expect(fireflyCategoryColour(record("issue #1234567")), isNull);
+    });
+
+    test("is written in place, and keeps the rest of the text", () {
+      expect(fireflyNotesWithColour("Trips\ncolor: #12ab34", "0xffff8800"),
+          "Trips\ncolor: #ff8800");
+      expect(fireflyNotesWithColour("Colour: FF0000.", "0xff00ff00"),
+          "Colour: 00ff00.");
+      expect(fireflyNotesWithColour("Trips", "0xffff8800"),
+          "Trips\ncolor: #ff8800");
+      expect(fireflyNotesWithColour(null, "0xffff8800"), "color: #ff8800");
+    });
+  });
 }

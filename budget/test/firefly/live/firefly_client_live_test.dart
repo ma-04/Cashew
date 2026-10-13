@@ -172,7 +172,12 @@ void main() {
       Map<String, dynamic> before = await remoteSplit(live, lunch);
       String groupUpdated =
           (await live.get("/transactions/$lunch")).attributes["updated_at"];
-      await sync();
+      // The records of today come again in the incremental pull. Each one
+      // matches its snapshot, thus no local row is written again.
+      FireflySyncReport again = await sync();
+      expect(again.pulledTransactions, 0, reason: again.toString());
+      expect(again.pulledCategories, 0);
+      expect(again.pulledWallets, 0);
       await sync(pushOnly: true);
       expect((await live.get("/transactions/$lunch")).attributes["updated_at"],
           groupUpdated);
@@ -665,6 +670,54 @@ void main() {
       expect(report.failed, 0, reason: report.warnings.join("\n"));
       expect((await live.get("/categories/$drinks")).status, 404);
       expect((await remoteSplit(live, beer.id))["category_id"], "$food");
+    });
+
+    test('a category colour comes from the notes, and goes back there',
+        () async {
+      int travel = (await live.post("/categories", {
+        "name": "Travel",
+        "notes": "Trips and fares\ncolor: #12ab34",
+      }))
+          .id;
+      await sync();
+      TransactionCategory category = await database.getCategoryInstance(
+          (await fireflyMapsOfRemote(FireflySyncEntityType.category, travel))
+              .single
+              .localPk);
+      expect(category.colour, "0xff12ab34");
+
+      // A rename does not touch the notes.
+      await database.createOrUpdateCategory(category.copyWith(name: "Trips"));
+      await sync(pushOnly: true);
+      Map<String, dynamic> renamed =
+          (await live.get("/categories/$travel")).attributes;
+      expect(renamed["name"], "Trips");
+      expect(renamed["notes"], "Trips and fares\ncolor: #12ab34");
+
+      // A new colour replaces the hex digits and keeps the rest of the text.
+      category = await database.getCategoryInstance(category.categoryPk);
+      await database
+          .createOrUpdateCategory(category.copyWith(colour: Value("0xffff8800")));
+      await sync(pushOnly: true);
+      Map<String, dynamic> recoloured =
+          (await live.get("/categories/$travel")).attributes;
+      expect(recoloured["notes"], "Trips and fares\ncolor: #ff8800");
+      expect(recoloured["name"], "Trips");
+
+      // A colour set on the web comes here.
+      LiveResponse web =
+          await live.put("/categories/$travel", {"notes": "color: #0000ff"});
+      expect(web.status, 200, reason: web.toString());
+      await sync();
+      expect((await database.getCategoryInstance(category.categoryPk)).colour,
+          "0xff0000ff");
+
+      // A category with no colour in the notes gets no notes from a sync.
+      Map<String, dynamic> foodBefore =
+          (await live.get("/categories/$food")).attributes;
+      await sync();
+      expect((await live.get("/categories/$food")).attributes["updated_at"],
+          foodBefore["updated_at"]);
     });
   }, reset: FireflyLiveReset.eachTest);
 }

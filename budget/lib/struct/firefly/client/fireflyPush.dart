@@ -183,7 +183,11 @@ Future<void> _pushCategory(
     }
     Map<String, dynamic> record;
     try {
-      record = await ctx.client.postRaw("/categories", {"name": local.name});
+      record = await ctx.client.postRaw("/categories", {
+        "name": local.name,
+        if (fireflyColourDigits(local.colour) != null)
+          "notes": fireflyNotesWithColour(null, local.colour!),
+      });
     } on FireflyValidationException catch (e) {
       // A category is a name only. The server has one of this name: it is
       // the same category.
@@ -223,20 +227,43 @@ Future<void> _pushCategory(
   Map<String, dynamic>? base = fireflySnapshotOf(map);
   if (base == null) throw _Held("A category waits for its first pull.");
   String baseName = _attributes(base)["name"]?.toString() ?? "";
-  if (local.name == baseName) {
+  bool nameChanged = local.name != baseName;
+  // A colour change goes into the notes. A removed colour does not change the
+  // notes: the text of the notes belongs to the user.
+  bool colourChanged = fireflyColourDigits(local.colour) != null &&
+      fireflyColourDigits(local.colour) !=
+          fireflyColourDigits(base[kSnapshotLocalColour]?.toString());
+  if (!nameChanged && !colourChanged) {
     await fireflyFinishOp(_category, pk);
     return;
   }
   Map<String, dynamic> live =
       await ctx.client.getRaw("/categories/${map.fireflyId}");
-  if (!_sameText(_attributes(live)["name"], baseName)) {
-    ctx.report.conflicts++;
-    ctx.report.warn("A category was renamed on Firefly and here. The name "
-        "of Firefly stays.");
+  Map<String, dynamic> body = {};
+  if (nameChanged) {
+    if (_sameText(_attributes(live)["name"], baseName)) {
+      body["name"] = local.name;
+    } else {
+      ctx.report.conflicts++;
+      ctx.report.warn("A category was renamed on Firefly and here. The name "
+          "of Firefly stays.");
+    }
+  }
+  if (colourChanged) {
+    if (fireflyCategoryColour(live) == fireflyCategoryColour(base)) {
+      body["notes"] =
+          fireflyNotesWithColour(_attributes(live)["notes"], local.colour!);
+    } else {
+      ctx.report.conflicts++;
+      ctx.report.warn("A category colour was changed on Firefly and here. "
+          "The colour of Firefly stays.");
+    }
+  }
+  if (body.isEmpty) {
     await fireflyApplyCategoryRecord(ctx.apply, live, onto: local);
   } else {
-    Map<String, dynamic> record = await ctx.client
-        .putRaw("/categories/${map.fireflyId}", {"name": local.name});
+    Map<String, dynamic> record =
+        await ctx.client.putRaw("/categories/${map.fireflyId}", body);
     await fireflyApplyCategoryRecord(ctx.apply, record, onto: local);
     ctx.report.pushedUpdates++;
   }
