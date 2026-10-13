@@ -4,6 +4,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart' show isFireflyBudget;
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/shareBudget.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -467,6 +468,15 @@ Future<DeletePopupAction?> deleteBudgetPopup(
   required Budget budget,
   required RoutesToPopAfterDelete routesToPopAfterDelete,
 }) async {
+  if (await isFireflyBudget(budget.budgetPk)) {
+    // A Firefly budget is deleted on Firefly. Here the delete would remove
+    // the budget from each of its transactions on the server.
+    openSnackbar(SnackbarMessage(
+      title: "firefly-budget-delete-refused".tr(),
+      icon: Icons.lock_outline,
+    ));
+    return null;
+  }
   DeletePopupAction? action = await openDeletePopup(
     context,
     title: "delete-budget-question".tr(),

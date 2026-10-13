@@ -16,6 +16,7 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/firefly/client/fireflyProjection.dart';
 import 'package:budget/struct/firefly/client/fireflyPull.dart';
 import 'package:budget/struct/firefly/client/fireflyStore.dart';
+import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:drift/drift.dart';
 
 const FireflySyncEntityType _budget = FireflySyncEntityType.budget;
@@ -32,6 +33,12 @@ String _date(DateTime day) =>
     "${day.day.toString().padLeft(2, "0")}";
 
 // --- Budgets ----------------------------------------------------------------
+
+// True for a budget that mirrors a Firefly budget, while the sync is on.
+Future<bool> isFireflyBudget(String budgetPk) async {
+  if (!fireflyEnabled) return false;
+  return await fireflyMapOf(_budget, budgetPk) != null;
+}
 
 // The Cashew period of a Firefly budget: from its auto-budget period, else
 // from the length of its budget limit of this month.

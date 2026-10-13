@@ -1237,6 +1237,7 @@
   "firefly-entity-transaction": "Transaction",
   "firefly-entity-category": "Category",
   "firefly-merge-refused": "Accounts with different currencies cannot be merged while Firefly sync is on",
+  "firefly-budget-delete-refused": "Delete this budget on Firefly. It comes from Firefly and is read-only here",
   "firefly-payee": "Payee",
   "firefly-payee-cash": "Payee (none: cash account)",
   "firefly-tags": "Tags",

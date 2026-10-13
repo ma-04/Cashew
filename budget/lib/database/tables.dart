@@ -4,6 +4,7 @@ import 'package:budget/pages/homePage/homePageLineGraph.dart';
 import 'package:budget/pages/objectivesListPage.dart';
 import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart' show isFireflyBudget;
 import 'package:budget/struct/firefly/client/fireflyStore.dart'
     show fireflyQueueDeleteIfLinked;
 import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
@@ -5169,6 +5170,8 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   // delete budget given key
   Future<int> deleteBudget(context, Budget budget) async {
+    // Firefly budgets are deleted on Firefly only; see deleteBudgetPopup.
+    if (await isFireflyBudget(budget.budgetPk)) return 0;
     if (budget.sharedKey != null) {
       loadingIndeterminateKey.currentState?.setVisibility(true);
       if (budget.sharedOwnerMember == SharedOwnerMember.owner) {

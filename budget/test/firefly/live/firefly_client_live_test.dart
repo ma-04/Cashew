@@ -1121,5 +1121,64 @@ void main() {
       expect((await database.getBudgetInstance(groceriesPk)).amount,
           closeTo(300, 1e-9));
     });
+
+    Future<int> budgetOnLunch() async {
+      LiveResponse budget = await live.post("/budgets", {"name": "Groceries"});
+      expect(budget.status, 200, reason: budget.toString());
+      Map<String, dynamic> split = await remoteSplit(live, lunch);
+      LiveResponse web = await live.put("/transactions/$lunch", {
+        "transactions": [
+          {
+            "transaction_journal_id": split["transaction_journal_id"],
+            "budget_id": budget.id.toString(),
+          }
+        ]
+      });
+      expect(web.status, 200, reason: web.toString());
+      return budget.id;
+    }
+
+    test('a Firefly budget cannot be deleted here', () async {
+      int budgetId = await budgetOnLunch();
+      await sync();
+      String pk =
+          (await fireflyMapsOfRemote(FireflySyncEntityType.budget, budgetId))
+              .single
+              .localPk;
+      await database.deleteBudget(null, await database.getBudgetInstance(pk));
+      await sync();
+      expect((await remoteSplit(live, lunch))["budget_id"], "$budgetId");
+      expect((await localRowOfGroup(lunch)).sharedReferenceBudgetPk, pk);
+      expect((await live.get("/budgets/$budgetId")).status, 200);
+    });
+
+    test('a phone from client version 2 keeps the budget on its first edit',
+        () async {
+      int budgetId = await budgetOnLunch();
+      await sync();
+      // What a build of client version 2 leaves: no budget map rows and no
+      // budget links.
+      for (FireflySyncMapEntry map
+          in await fireflyMapsOfType(FireflySyncEntityType.budget)) {
+        await (database.delete(database.budgets)
+              ..where((b) => b.budgetPk.equals(map.localPk)))
+            .go();
+        await fireflyDeleteMap(FireflySyncEntityType.budget, map.localPk);
+      }
+      await database.customStatement(
+          "UPDATE transactions SET shared_reference_budget_pk = NULL");
+      appStateSettings["fireflyClientVersion"] = 2;
+
+      Map<String, dynamic> before = await remoteSplit(live, lunch);
+      Transaction row = await localRowOfGroup(lunch);
+      await editLocally(row.copyWith(name: "Team lunch"));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["description"], "Team lunch");
+      expect(after["budget_id"], "$budgetId");
+      expect(without(after, {"description"}), without(before, {"description"}));
+      expect((await localRowOfGroup(lunch)).sharedReferenceBudgetPk, isNotNull);
+    });
   }, reset: FireflyLiveReset.eachTest);
 }
