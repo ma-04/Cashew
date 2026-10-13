@@ -68,6 +68,41 @@ against the real server:
 The fake Firefly of the test suite could not see items 1, 5, 9, 13 and 14.
 This is why the real server comes first.
 
+## 2a. Test server, and what it showed
+
+A disposable Firefly III 6.7.9 (`fireflyiii/core:version-6.7.9`, SQLite) runs
+in Docker on the build server `fly@167.235.51.86`, in `~/firefly-test`, bound
+to `127.0.0.1:18080` only. No token is in git.
+
+- `./reset.sh && . ./env.sh`: a clean instance in about 0.4 s; exports
+  `FIREFLY_LIVE_URL` and `FIREFLY_LIVE_TOKEN`.
+- `./bootstrap.sh`: a new volume, user, token and snapshot (about 27 s).
+- `docker compose up -d` / `docker compose down`.
+- `tool/firefly_remote_test.sh [flutter test args]` rsyncs the repo to
+  `~/firefly-review` and runs the tests there with the live variables set;
+  `--analyze` runs the analyzer. The tests tagged `live` skip when
+  `FIREFLY_LIVE_URL` is not set. The build server's own time zone is
+  Asia/Dhaka (+06), which exercises the date rules.
+
+Facts read from the server (2026-10-13):
+
+- A date with an offset is stored as that instant in UTC; a date with no
+  offset is read in the server time zone. `Z` is accepted.
+- Amounts keep the precision sent (`10.123` stays `10.123000000000`, also for
+  a 2-decimal currency).
+- `current_balance` includes `virtual_balance`.
+- `category_id: null` clears the category; `notes: ""` clears the notes.
+- `/search/transactions?query=updated_at_after:YYYY-MM-DD` returns full
+  groups with pagination. With a time in the value it returns 0 records and
+  no error; `updated_after:` also returns 0. `external_id_is:` works.
+- A PUT of a group with more than one split and no `group_title` gets 422.
+- An account PUT of `{"name": ...}` keeps the role; a PUT that sends
+  `account_role: ccAsset` without the card fields gets 422.
+- A withdrawal to a loan has `destination_type: "Loan"`. Liability opening
+  balances come back as `opening balance`.
+- Categories have `color` and `notes`. The asset account list includes
+  inactive accounts.
+
 ## 3. Architecture
 
 Keep: `fireflyApiClient.dart`, most of `fireflyMapper.dart` and

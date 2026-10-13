@@ -1,4 +1,5 @@
 import 'package:budget/colors.dart';
+import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/struct/firefly/fireflyModels.dart';
 import 'package:budget/struct/firefly/fireflySettings.dart';
@@ -6,11 +7,8 @@ import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
-import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
-import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
-import 'package:budget/widgets/radioItems.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:budget/widgets/settingsContainers.dart';
 import 'package:budget/widgets/textInput.dart';
@@ -42,27 +40,20 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   bool testingConnection = false;
   bool syncingNow = false;
   bool runningHistoryAction = false;
-  late int syncWindowDays = fireflySyncWindowDays;
   late String counterpartyNaming = fireflyCounterpartyNaming;
-  // What "Push unsynced changes" would send. null until the first count.
-  FireflyUnsyncedCounts? unsyncedCounts;
-  // The asset accounts of the server, for the "Linked accounts" list. null
-  // means that the application could not read them (no connection, no token).
-  List<FireflyAccount>? assetAccounts;
-  List<FireflyWalletLink> walletLinks = [];
-  bool loadingWalletLinks = false;
-  // A refresh that came in while one was running.
-  bool walletLinksRefreshQueued = false;
-  // The account id that stands for "Not linked" in the radio list. Firefly
-  // has no account with a negative id.
-  static const int _notLinkedId = -1;
+  // The local changes that Firefly does not have yet. null until the first
+  // read.
+  FireflyQueuedChanges? queuedChanges;
+  // Each local account and the Firefly account that it mirrors. The server
+  // gives the link; the page only shows it.
+  List<FireflyLinkedWallet> linkedWallets = [];
 
   @override
   void initState() {
     super.initState();
     fireflySyncReportNotifier.addListener(_onSyncReport);
-    _refreshUnsyncedCounts();
-    _refreshWalletLinks();
+    _refreshQueuedChanges();
+    _refreshLinkedWallets();
   }
 
   @override
@@ -73,199 +64,73 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     super.dispose();
   }
 
-  Future<void> _refreshUnsyncedCounts() async {
+  Future<void> _refreshQueuedChanges() async {
     if (!fireflyEnabled) {
-      if (mounted) setState(() => unsyncedCounts = null);
+      if (mounted) setState(() => queuedChanges = null);
       return;
     }
-    FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
-    if (mounted) setState(() => unsyncedCounts = counts);
+    FireflyQueuedChanges changes = await fireflyQueuedChanges();
+    if (mounted) setState(() => queuedChanges = changes);
   }
 
+  // A sync can change both the queue and the links, thus this runs again
+  // after each report.
   void _onSyncReport() {
-    _refreshUnsyncedCounts();
-    _refreshWalletLinks();
+    _refreshQueuedChanges();
+    _refreshLinkedWallets();
   }
 
-  // The accounts of the server and the link of each local account. A sync
-  // can change both, thus this runs again after each report.
-  Future<void> _refreshWalletLinks() async {
+  Future<void> _refreshLinkedWallets() async {
     if (!fireflyEnabled) {
-      if (mounted) {
-        setState(() {
-          assetAccounts = null;
-          walletLinks = [];
-        });
-      }
+      if (mounted) setState(() => linkedWallets = []);
       return;
     }
-    // A refresh that arrives during one is not dropped: the state that it
-    // would read changes while the request runs, thus the list must be read
-    // once more afterwards.
-    if (loadingWalletLinks) {
-      walletLinksRefreshQueued = true;
-      return;
-    }
-    if (mounted) setState(() => loadingWalletLinks = true);
-    try {
-      List<FireflyAccount>? accounts = await fireflyListAssetAccounts();
-      List<FireflyWalletLink> links =
-          await fireflyWalletLinks(accounts: accounts);
-      if (!mounted) return;
-      setState(() {
-        assetAccounts = accounts;
-        walletLinks = links;
-      });
-    } finally {
-      // Without this the flag stays true after a throw, and each row of the
-      // list is then untappable until the page is opened again.
-      if (mounted) setState(() => loadingWalletLinks = false);
-    }
-    if (walletLinksRefreshQueued) {
-      walletLinksRefreshQueued = false;
-      await _refreshWalletLinks();
-    }
+    List<FireflyLinkedWallet> wallets = await fireflyLinkedWallets();
+    if (mounted) setState(() => linkedWallets = wallets);
   }
 
-  // The line under the name of a local account in the "Linked accounts" list.
-  String _walletLinkDescription(FireflyWalletLink link) {
-    if (link.fireflyId == null) return "firefly-not-linked".tr();
-    FireflyAccount? account = link.account;
-    if (account == null) {
-      // The request for the accounts failed. The link is fine; the app only
-      // cannot name it. To call it missing here invites the user to repair a
-      // link that has nothing wrong with it.
-      if (assetAccounts == null) return "firefly-linked-account-unknown".tr();
-      // The id has no account in the list of the server: it was removed
-      // there, or it is not an asset account any more.
-      return "firefly-linked-account-missing".tr();
-    }
+  String _linkedWalletDescription(FireflyLinkedWallet wallet) {
     return "\u2192 " +
-        account.name +
-        (account.active ? "" : " (" + "firefly-inactive".tr() + ")");
+        wallet.accountName +
+        (wallet.active ? "" : " (" + "firefly-inactive".tr() + ")");
   }
 
-  // Lets the user name the Firefly account of one local account. Only the
-  // link changes: no transaction is moved, here or on the server.
-  Future<void> _pickAccountForWallet(FireflyWalletLink link) async {
-    List<FireflyAccount>? accounts = assetAccounts;
-    if (accounts == null) {
-      openSnackbar(SnackbarMessage(
-        title: "firefly-linked-accounts-unavailable".tr(),
-        icon: appStateSettings["outlinedIcons"]
-            ? Icons.error_outlined
-            : Icons.error_rounded,
-      ));
-      return;
+  String _entityKindLabel(FireflySyncEntityType type) {
+    switch (type) {
+      case FireflySyncEntityType.wallet:
+        return "firefly-entity-account".tr();
+      case FireflySyncEntityType.transaction:
+        return "firefly-entity-transaction".tr();
+      case FireflySyncEntityType.category:
+        return "firefly-entity-category".tr();
     }
-    List<FireflyAccount> sorted = [...accounts]..sort((a, b) {
-        if (a.active != b.active) return a.active ? -1 : 1;
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
-    Map<int, FireflyAccount> byId = {
-      for (FireflyAccount account in sorted) account.id: account
-    };
-    // Firefly allows one account per local account. To choose one that
-    // another local account holds takes it from that one, thus the list says
-    // so before the choice, and the question afterwards says it again.
-    Map<int, String> walletByAccountId = {
-      for (FireflyWalletLink other in walletLinks)
-        if (other.fireflyId != null &&
-            other.wallet.walletPk != link.wallet.walletPk)
-          other.fireflyId!: other.wallet.name
-    };
-    // A link that points at an id the server did not give still selects a
-    // row: without it the list opens with nothing selected and the state of
-    // the account is not visible.
-    int? unknownLinkedId =
-        link.fireflyId != null && !byId.containsKey(link.fireflyId)
-            ? link.fireflyId
-            : null;
-    await openBottomSheet(
-      context,
-      PopupFramework(
-        title: "firefly-link-account".tr(),
-        subtitle: link.wallet.name,
-        child: RadioItems<int>(
-          items: [
-            _notLinkedId,
-            if (unknownLinkedId != null) unknownLinkedId,
-            for (FireflyAccount account in sorted) account.id
-          ],
-          initial: link.fireflyId ?? _notLinkedId,
-          displayFilter: (int id) {
-            if (id == _notLinkedId) return "firefly-not-linked".tr();
-            return byId[id]?.name ?? "firefly-linked-account-missing".tr();
-          },
-          getDescription: (int id) {
-            FireflyAccount? account = byId[id];
-            if (account == null) return "";
-            String? holder = walletByAccountId[id];
-            List<String> parts = [
-              if (account.currencyCode != null) account.currencyCode!,
-              if (!account.active) "firefly-inactive".tr(),
-              if (holder != null)
-                "firefly-link-account-taken".tr(namedArgs: {"wallet": holder}),
-            ];
-            return parts.join(" - ");
-          },
-          onChanged: (int id) async {
-            popRoute(context);
-            // RadioItems does not await this, thus an error here has no
-            // handler and never reaches the user.
-            try {
-              await _confirmLink(link, id == _notLinkedId ? null : byId[id],
-                  takenFrom: walletByAccountId[id]);
-            } catch (e) {
-              openSnackbar(SnackbarMessage(
-                title: "firefly-sync-failed".tr(),
-                description: e.toString(),
-                icon: appStateSettings["outlinedIcons"]
-                    ? Icons.error_outlined
-                    : Icons.error_rounded,
-              ));
-            }
-          },
-        ),
-      ),
-    );
   }
 
-  Future<void> _confirmLink(FireflyWalletLink link, FireflyAccount? account,
-      {String? takenFrom}) async {
-    if (account?.id == link.fireflyId) return;
+  // The first line of the error of the server, cut to a length that fits a
+  // row of the list.
+  String _shortError(String? error) {
+    String text = (error ?? "").trim();
+    if (text.isEmpty) return "firefly-change-refused".tr();
+    text = text.split("\n").first.trim();
+    const int maxLength = 120;
+    if (text.length > maxLength) {
+      text = text.substring(0, maxLength).trimRight() + "\u2026";
+    }
+    return text;
+  }
+
+  // Asks a yes or no question. True if the user chose to continue.
+  Future<bool> _confirm({
+    required String title,
+    required String description,
+    required IconData icon,
+  }) async {
     bool confirmed = false;
-    String description = "firefly-link-account-confirm".tr(namedArgs: {
-      "wallet": link.wallet.name,
-      "account": account?.name ?? "firefly-not-linked".tr(),
-    });
-    if (takenFrom != null) {
-      description += "\n\n" +
-          "firefly-link-account-taken-warning"
-              .tr(namedArgs: {"wallet": takenFrom});
-    }
-    // Two currencies that differ make every push of this account fail, and
-    // the sync says so only after the fact. Say it here, while the user can
-    // still pick another account.
-    String walletCurrency = (link.wallet.currency ?? "").trim().toUpperCase();
-    String accountCurrency = (account?.currencyCode ?? "").trim().toUpperCase();
-    if (walletCurrency.isNotEmpty &&
-        accountCurrency.isNotEmpty &&
-        walletCurrency != accountCurrency) {
-      description += "\n\n" +
-          "firefly-link-account-currency-warning".tr(namedArgs: {
-            "wallet": link.wallet.name,
-            "walletCurrency": walletCurrency,
-            "accountCurrency": accountCurrency,
-          });
-    }
     await openPopup(
       context,
-      title: "firefly-link-account".tr(),
+      title: title,
       description: description,
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.link_outlined
-          : Icons.link_rounded,
+      icon: icon,
       onSubmitLabel: "continue".tr(),
       onSubmit: () {
         confirmed = true;
@@ -276,22 +141,20 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         popRoute(context);
       },
     );
-    if (!confirmed) return;
-    await fireflyLinkWalletToAccount(link.wallet.walletPk, account);
-    openSnackbar(SnackbarMessage(
-      title: "firefly-link-account-done".tr(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.link_outlined
-          : Icons.link_rounded,
-    ));
-    // The pull attaches the transactions of the new account and sets the
-    // total of the local account again.
-    await _runHistoryAction(fireflySyncNow);
+    return confirmed;
   }
 
-  // The window lengths in days. A fixed list, not a text field, thus the
-  // value stays in the limits that fireflySettings sets.
-  static const List<int> _windowOptions = [7, 14, 30, 60, 90, 180, 365, 730];
+  // The first sync with a server replaces the local accounts, transactions
+  // and categories with the ones of Firefly. Say so before it runs.
+  Future<bool> _confirmRebuildOnEnable() {
+    return _confirm(
+      title: "firefly-enable-confirm-title".tr(),
+      description: "firefly-enable-confirm".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.warning_amber_outlined
+          : Icons.warning_amber_rounded,
+    );
+  }
 
   Future<bool> enableFirefly() async {
     if (!await _hasCredentials()) {
@@ -305,30 +168,18 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
       );
       return false;
     }
-    if (appStateSettings["backupSync"] == true) {
-      bool confirmed = false;
-      await openPopup(
-        context,
+    bool turnOffGoogleDrive = appStateSettings["backupSync"] == true;
+    if (turnOffGoogleDrive) {
+      bool confirmed = await _confirm(
         title: "cloud-sync".tr(),
         description: "firefly-disable-google-drive-sync-warning".tr(),
         icon: appStateSettings["outlinedIcons"]
             ? Icons.warning_amber_outlined
             : Icons.warning_amber_rounded,
-        onSubmitLabel: "continue".tr(),
-        onSubmit: () {
-          confirmed = true;
-          popRoute(context);
-        },
-        onCancelLabel: "cancel".tr(),
-        onCancel: () {
-          popRoute(context);
-        },
       );
       if (!confirmed) return false;
-      await updateSettings("backupSync", false,
-          pagesNeedingRefresh: [], updateGlobalState: false);
     }
-    return await _doEnableFirefly();
+    return await _doEnableFirefly(turnOffGoogleDrive: turnOffGoogleDrive);
   }
 
   // True if the host in the field is not the host that the saved links and
@@ -344,26 +195,14 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   // The user is about to change the host. That removes the token and every
   // link, which cannot be undone from here. Ask first: before this, a typo in
   // the host field and a tap on Save were enough to lose them.
-  Future<bool> _confirmForgetPreviousHost() async {
-    bool confirmed = false;
-    await openPopup(
-      context,
+  Future<bool> _confirmForgetPreviousHost() {
+    return _confirm(
       title: "firefly-host-changed".tr(),
       description: "firefly-host-change-confirm".tr(),
       icon: appStateSettings["outlinedIcons"]
           ? Icons.warning_amber_outlined
           : Icons.warning_amber_rounded,
-      onSubmitLabel: "continue".tr(),
-      onSubmit: () {
-        confirmed = true;
-        popRoute(context);
-      },
-      onCancelLabel: "cancel".tr(),
-      onCancel: () {
-        popRoute(context);
-      },
     );
-    return confirmed;
   }
 
   Future<void> _forgetPreviousHost() async {
@@ -385,7 +224,9 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     return stored != null && stored.isNotEmpty;
   }
 
-  Future<bool> _doEnableFirefly() async {
+  // Each question comes before any change: a cancel at any of them leaves
+  // the Google Drive sync, the token and the local data as they were.
+  Future<bool> _doEnableFirefly({bool turnOffGoogleDrive = false}) async {
     if (!await _hasCredentials()) {
       openSnackbar(
         SnackbarMessage(
@@ -399,10 +240,17 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     }
     String host = hostController.text.trim();
     String token = patController.text.trim();
-    if (_hostChanged(host)) {
-      if (!await _confirmForgetPreviousHost()) return false;
-      await _forgetPreviousHost();
+    bool hostChanged = _hostChanged(host);
+    if (hostChanged && !await _confirmForgetPreviousHost()) return false;
+    // The first sync with a server, and the first after a host change, is a
+    // rebuild of the local copy from Firefly.
+    bool willRebuild = hostChanged || await fireflyNeedsRebuild();
+    if (willRebuild && !await _confirmRebuildOnEnable()) return false;
+    if (turnOffGoogleDrive) {
+      await updateSettings("backupSync", false,
+          pagesNeedingRefresh: [], updateGlobalState: false);
     }
+    if (hostChanged) await _forgetPreviousHost();
     await setFireflyHostUrl(host);
     if (token.isNotEmpty) {
       await setFireflyPat(token);
@@ -415,8 +263,15 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     setState(() {
       enabled = true;
     });
-    fireflySyncNow();
+    _syncAfterEnable();
     return true;
+  }
+
+  Future<void> _syncAfterEnable() async {
+    // The user confirmed the rebuild in _enable when one is due.
+    await fireflySyncNow(allowRebuild: true);
+    await _refreshQueuedChanges();
+    await _refreshLinkedWallets();
   }
 
   Future<bool> disableFirefly() async {
@@ -435,18 +290,16 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     if (hostChanged) {
       if (!await _confirmForgetPreviousHost()) return;
       await _forgetPreviousHost();
-      // Without a token for the new host the application cannot sync. Stop
-      // the automatic cycles until the user gives one.
-      if (token.isEmpty) await setFireflyEnabled(false);
+      // The first sync with the new host replaces the local data, and the
+      // switch asks before it does that. Stop the automatic cycles until the
+      // user turns the sync on again.
+      await setFireflyEnabled(false);
     }
     await setFireflyHostUrl(host);
     if (token.isNotEmpty) {
       await setFireflyPat(token);
       patController.clear();
     }
-    // The cached ranges of the on-demand fetches are answers of the previous
-    // host, or of a smaller window.
-    fireflyClearOnDemandCacheMemory();
     if (!mounted) return;
     setState(() {
       enabled = fireflyEnabled;
@@ -515,12 +368,17 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     // A cycle that the engine started on its own holds the same lock. Such a
     // call does nothing and returns false, which is not a failure.
     bool alreadyRunning = fireflySyncIsRunning;
+    // A phone that comes from the two-way sync of an earlier build waits for
+    // a rebuild, which the user confirms here.
+    bool rebuild = await fireflyNeedsRebuild();
+    if (rebuild && !await _confirmRebuildOnEnable()) return;
+    if (!mounted) return;
     setState(() {
       syncingNow = true;
     });
     bool success;
     try {
-      success = await fireflySyncNow();
+      success = await fireflySyncNow(allowRebuild: rebuild);
     } finally {
       // Without this a throw leaves the flag set and each button of the page
       // stays disabled until the page is opened again.
@@ -530,7 +388,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         });
       }
     }
-    await _refreshUnsyncedCounts();
+    await _refreshQueuedChanges();
+    await _refreshLinkedWallets();
     if (!success && alreadyRunning) {
       openSnackbar(SnackbarMessage(
         title: "firefly-sync-busy".tr(),
@@ -577,7 +436,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
         });
       }
     }
-    await _refreshUnsyncedCounts();
+    await _refreshQueuedChanges();
+    await _refreshLinkedWallets();
     if (!success && alreadyRunning) {
       openSnackbar(SnackbarMessage(
         title: "firefly-sync-busy".tr(),
@@ -603,124 +463,56 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
   }
 
   Future<void> syncAllHistory() async {
-    bool confirmed = false;
-    await openPopup(
-      context,
+    bool confirmed = await _confirm(
       title: "firefly-sync-all-history".tr(),
       description: "firefly-sync-all-history-warning".tr(),
       icon: appStateSettings["outlinedIcons"]
           ? Icons.history_outlined
           : Icons.history_rounded,
-      onSubmitLabel: "continue".tr(),
-      onSubmit: () {
-        confirmed = true;
-        popRoute(context);
-      },
-      onCancelLabel: "cancel".tr(),
-      onCancel: () {
-        popRoute(context);
-      },
     );
     if (!confirmed) return;
     await _runHistoryAction(fireflySyncAllHistory);
   }
 
-  // Sends each local change since the link that Firefly does not hold yet.
-  // The routine cycles do the same for each change since the last cycle; this
-  // is for the case that those cycles failed for a while.
-  Future<void> pushUnsyncedChanges() async {
-    FireflyUnsyncedCounts counts = await fireflyCountUnsyncedChanges();
-    if (!context.mounted) return;
-    setState(() => unsyncedCounts = counts);
-    if (counts.isEmpty) {
-      openSnackbar(
-        SnackbarMessage(
-          title: "firefly-unsynced-none".tr(),
-          icon: appStateSettings["outlinedIcons"]
-              ? Icons.check_circle_outlined
-              : Icons.check_circle_rounded,
-        ),
-      );
-      return;
-    }
-    bool confirmed = false;
-    await openPopup(
-      context,
-      title: "firefly-push-unsynced".tr(),
-      description:
-          "firefly-push-unsynced-description".tr() + "\n\n" + counts.describe(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.cloud_upload_outlined
-          : Icons.cloud_upload_rounded,
-      onSubmitLabel: "continue".tr(),
-      onSubmit: () {
-        confirmed = true;
-        popRoute(context);
-      },
-      onCancelLabel: "cancel".tr(),
-      onCancel: () {
-        popRoute(context);
-      },
-    );
-    if (!confirmed) return;
-    await _runHistoryAction(fireflyPushUnsyncedChanges);
+  // Sends the changes that Firefly refused again, after the user fixed the
+  // cause on the server.
+  Future<void> retryFailedChanges() async {
+    await _runHistoryAction(fireflyRetryFailedChanges);
   }
 
-  Future<void> uploadExistingLocalHistory() async {
-    bool confirmed = false;
-    await openPopup(
-      context,
-      title: "firefly-upload-local-history".tr(),
-      description: "firefly-upload-local-history-warning".tr(),
+  // Drops the changes that Firefly refused. The local records already show
+  // the Firefly version, thus nothing else changes.
+  Future<void> dismissFailedChanges() async {
+    bool confirmed = await _confirm(
+      title: "firefly-dismiss-changes".tr(),
+      description: "firefly-dismiss-changes-confirm".tr(),
       icon: appStateSettings["outlinedIcons"]
-          ? Icons.warning_amber_outlined
-          : Icons.warning_amber_rounded,
-      onSubmitLabel: "continue".tr(),
-      onSubmit: () {
-        confirmed = true;
-        popRoute(context);
-      },
-      onCancelLabel: "cancel".tr(),
-      onCancel: () {
-        popRoute(context);
-      },
+          ? Icons.delete_outlined
+          : Icons.delete_rounded,
     );
     if (!confirmed) return;
-    await _runHistoryAction(fireflyUploadExistingLocalHistory);
-  }
-
-  // The links, not the records. To turn the sync off must not do this: the
-  // pull makes a new record for each remote split that no link names, thus a
-  // user who turns the sync off and on again would get each transaction two
-  // times. This action therefore asks first.
-  Future<void> resetFireflyLinks() async {
-    bool confirmed = false;
-    await openPopup(
-      context,
-      title: "firefly-reset-links".tr(),
-      description: "firefly-reset-links-warning".tr(),
-      icon: appStateSettings["outlinedIcons"]
-          ? Icons.link_off_outlined
-          : Icons.link_off_rounded,
-      onSubmitLabel: "continue".tr(),
-      onSubmit: () {
-        confirmed = true;
-        popRoute(context);
-      },
-      onCancelLabel: "cancel".tr(),
-      onCancel: () {
-        popRoute(context);
-      },
-    );
-    if (!confirmed) return;
-    await fireflyForgetSyncState();
-    if (mounted) setState(() {});
+    await fireflyDismissFailedChanges();
+    await _refreshQueuedChanges();
     openSnackbar(SnackbarMessage(
-      title: "firefly-reset-links-done".tr(),
+      title: "firefly-dismiss-changes-done".tr(),
       icon: appStateSettings["outlinedIcons"]
-          ? Icons.link_off_outlined
-          : Icons.link_off_rounded,
+          ? Icons.check_circle_outlined
+          : Icons.check_circle_rounded,
     ));
+  }
+
+  // A backup of the local database, then the local copy built again from
+  // Firefly. Each linked record keeps the fields that only Cashew has.
+  Future<void> rebuildFromFirefly() async {
+    bool confirmed = await _confirm(
+      title: "firefly-rebuild".tr(),
+      description: "firefly-rebuild-warning".tr(),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.restore_outlined
+          : Icons.restore_rounded,
+    );
+    if (!confirmed) return;
+    await _runHistoryAction(fireflyRebuildFromFirefly);
   }
 
   @override
@@ -843,53 +635,8 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                     disabled: syncingNow,
                     onTap: syncNow,
                   ),
-                  SizedBox(height: 8),
-                  TextFont(
-                    textAlign: TextAlign.center,
-                    fontSize: 13,
-                    maxLines: 3,
-                    textColor: getColor(context, "textLight"),
-                    text: unsyncedCounts == null
-                        ? ""
-                        : unsyncedCounts!.isEmpty
-                            ? "firefly-unsynced-none".tr()
-                            : "firefly-unsynced-count".tr(namedArgs: {
-                                "count": unsyncedCounts!.total.toString()
-                              }),
-                  ),
-                  SizedBox(height: 8),
-                  Button(
-                    label: "firefly-push-unsynced".tr(),
-                    disabled: runningHistoryAction ||
-                        syncingNow ||
-                        (unsyncedCounts?.isEmpty ?? true),
-                    onTap: pushUnsyncedChanges,
-                  ),
                   SizedBox(height: 12),
-                  SettingsContainerDropdown(
-                    enableBorderRadius: true,
-                    title: "firefly-sync-window".tr(),
-                    description: "firefly-sync-window-description".tr(),
-                    icon: appStateSettings["outlinedIcons"]
-                        ? Icons.date_range_outlined
-                        : Icons.date_range_rounded,
-                    initial: syncWindowDays.toString(),
-                    items: [
-                      for (int days in _windowOptions) days.toString(),
-                    ],
-                    getLabel: (String value) => value + " " + "days".tr(),
-                    onChanged: (String value) async {
-                      int? days = int.tryParse(value);
-                      if (days == null) return;
-                      await setFireflySyncWindowDays(days);
-                      // A range that was in the window with the previous
-                      // setting can be outside of the window now.
-                      fireflyClearOnDemandCacheMemory();
-                      setState(() {
-                        syncWindowDays = fireflySyncWindowDays;
-                      });
-                    },
-                  ),
+                  ..._changesWaiting(),
                   SizedBox(height: 8),
                   SettingsContainerDropdown(
                     enableBorderRadius: true,
@@ -927,18 +674,12 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Button(
-                          label: "firefly-upload-local-history".tr(),
+                          label: "firefly-rebuild".tr(),
                           disabled: runningHistoryAction || syncingNow,
-                          onTap: uploadExistingLocalHistory,
+                          onTap: rebuildFromFirefly,
                         ),
                       ),
                     ],
-                  ),
-                  SizedBox(height: 8),
-                  Button(
-                    label: "firefly-reset-links".tr(),
-                    disabled: runningHistoryAction || syncingNow,
-                    onTap: resetFireflyLinks,
                   ),
                   SizedBox(height: 12),
                   Align(
@@ -960,36 +701,21 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
                     ),
                   ),
                   SizedBox(height: 8),
-                  for (FireflyWalletLink link in walletLinks)
+                  for (FireflyLinkedWallet wallet in linkedWallets)
                     SettingsContainer(
-                      key: ValueKey(link.wallet.walletPk),
+                      key: ValueKey(wallet.walletPk),
                       enableBorderRadius: true,
-                      title: link.wallet.name,
-                      description: _walletLinkDescription(link),
+                      title: wallet.walletName,
+                      description: _linkedWalletDescription(wallet),
                       icon: appStateSettings["outlinedIcons"]
                           ? Icons.account_balance_wallet_outlined
                           : Icons.account_balance_wallet_rounded,
-                      onTap: runningHistoryAction ||
-                              syncingNow ||
-                              loadingWalletLinks
-                          ? null
-                          : () => _pickAccountForWallet(link),
-                    ),
-                  if (walletLinks.isNotEmpty && assetAccounts == null)
-                    Padding(
-                      padding: const EdgeInsetsDirectional.only(top: 4),
-                      child: TextFont(
-                        text: "firefly-linked-accounts-unavailable".tr(),
-                        fontSize: 13,
-                        maxLines: 3,
-                        textColor: getColor(context, "textLight"),
-                      ),
                     ),
                   SizedBox(height: 12),
                   TextFont(
                     text: "firefly-scope-note".tr(),
                     fontSize: 13,
-                    maxLines: 8,
+                    maxLines: 12,
                     textColor: getColor(context, "textLight"),
                   ),
                   ValueListenableBuilder<FireflySyncReport?>(
@@ -1013,6 +739,82 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
           ),
       ],
     );
+  }
+
+  // The count of the changes that Firefly does not have yet, and each change
+  // that Firefly refused, with the actions for those.
+  List<Widget> _changesWaiting() {
+    FireflyQueuedChanges? changes = queuedChanges;
+    if (changes == null) return [];
+    List<FireflyOutboxEntry> failed = changes.failed;
+    int waiting = changes.pending + failed.length;
+    return [
+      Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextFont(
+          text: "firefly-changes-waiting".tr(),
+          fontSize: 15,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      SizedBox(height: 4),
+      Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextFont(
+          fontSize: 13,
+          maxLines: 3,
+          textColor: getColor(context, "textLight"),
+          text: waiting == 0
+              ? "firefly-changes-waiting-none".tr()
+              : "firefly-changes-waiting-count"
+                  .tr(namedArgs: {"count": waiting.toString()}),
+        ),
+      ),
+      if (failed.isNotEmpty) ...[
+        SizedBox(height: 4),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: TextFont(
+            text: "firefly-changes-failed".tr(
+                namedArgs: {"count": failed.length.toString()}),
+            fontSize: 13,
+            maxLines: 5,
+            textColor: getColor(context, "textLight"),
+          ),
+        ),
+        SizedBox(height: 8),
+        for (FireflyOutboxEntry entry in failed)
+          SettingsContainer(
+            key: ValueKey(entry.entityType.name + "/" + entry.localPk),
+            enableBorderRadius: true,
+            title: _entityKindLabel(entry.entityType),
+            description: _shortError(entry.lastError),
+            icon: appStateSettings["outlinedIcons"]
+                ? Icons.error_outlined
+                : Icons.error_rounded,
+          ),
+        SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Button(
+                label: "firefly-retry-changes".tr(),
+                disabled: runningHistoryAction || syncingNow,
+                onTap: retryFailedChanges,
+              ),
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: Button(
+                label: "firefly-dismiss-changes".tr(),
+                disabled: runningHistoryAction || syncingNow,
+                onTap: dismissFailedChanges,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ];
   }
 
   String _statusLabel(FireflySyncStatus status) {

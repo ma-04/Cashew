@@ -1,0 +1,4 @@
+tags:
+  # Tests against a real Firefly III test instance. They skip when
+  # FIREFLY_LIVE_URL is not set. See test/firefly/live/firefly_live_env.dart.
+  live:

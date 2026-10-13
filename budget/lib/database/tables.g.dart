@@ -6676,6 +6676,12 @@ class $FireflySyncMapTable extends FireflySyncMap
       type: DriftSqlType.dateTime,
       requiredDuringInsert: false,
       clientDefault: () => new DateTime.now());
+  static const VerificationMeta _remoteSnapshotMeta =
+      const VerificationMeta('remoteSnapshot');
+  @override
+  late final GeneratedColumn<String> remoteSnapshot = GeneratedColumn<String>(
+      'remote_snapshot', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         syncMapPk,
@@ -6688,7 +6694,8 @@ class $FireflySyncMapTable extends FireflySyncMap
         counterpartyFireflyId,
         fireflySplitIndex,
         fireflyJournalId,
-        dateCreated
+        dateCreated,
+        remoteSnapshot
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -6763,6 +6770,12 @@ class $FireflySyncMapTable extends FireflySyncMap
           dateCreated.isAcceptableOrUnknown(
               data['date_created']!, _dateCreatedMeta));
     }
+    if (data.containsKey('remote_snapshot')) {
+      context.handle(
+          _remoteSnapshotMeta,
+          remoteSnapshot.isAcceptableOrUnknown(
+              data['remote_snapshot']!, _remoteSnapshotMeta));
+    }
     return context;
   }
 
@@ -6800,6 +6813,8 @@ class $FireflySyncMapTable extends FireflySyncMap
           .read(DriftSqlType.int, data['${effectivePrefix}firefly_journal_id']),
       dateCreated: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}date_created'])!,
+      remoteSnapshot: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}remote_snapshot']),
     );
   }
 
@@ -6826,6 +6841,7 @@ class FireflySyncMapEntry extends DataClass
   final int fireflySplitIndex;
   final int? fireflyJournalId;
   final DateTime dateCreated;
+  final String? remoteSnapshot;
   const FireflySyncMapEntry(
       {required this.syncMapPk,
       required this.entityType,
@@ -6837,7 +6853,8 @@ class FireflySyncMapEntry extends DataClass
       this.counterpartyFireflyId,
       required this.fireflySplitIndex,
       this.fireflyJournalId,
-      required this.dateCreated});
+      required this.dateCreated,
+      this.remoteSnapshot});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -6864,6 +6881,9 @@ class FireflySyncMapEntry extends DataClass
       map['firefly_journal_id'] = Variable<int>(fireflyJournalId);
     }
     map['date_created'] = Variable<DateTime>(dateCreated);
+    if (!nullToAbsent || remoteSnapshot != null) {
+      map['remote_snapshot'] = Variable<String>(remoteSnapshot);
+    }
     return map;
   }
 
@@ -6888,6 +6908,9 @@ class FireflySyncMapEntry extends DataClass
           ? const Value.absent()
           : Value(fireflyJournalId),
       dateCreated: Value(dateCreated),
+      remoteSnapshot: remoteSnapshot == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteSnapshot),
     );
   }
 
@@ -6910,6 +6933,7 @@ class FireflySyncMapEntry extends DataClass
       fireflySplitIndex: serializer.fromJson<int>(json['fireflySplitIndex']),
       fireflyJournalId: serializer.fromJson<int?>(json['fireflyJournalId']),
       dateCreated: serializer.fromJson<DateTime>(json['dateCreated']),
+      remoteSnapshot: serializer.fromJson<String?>(json['remoteSnapshot']),
     );
   }
   @override
@@ -6929,6 +6953,7 @@ class FireflySyncMapEntry extends DataClass
       'fireflySplitIndex': serializer.toJson<int>(fireflySplitIndex),
       'fireflyJournalId': serializer.toJson<int?>(fireflyJournalId),
       'dateCreated': serializer.toJson<DateTime>(dateCreated),
+      'remoteSnapshot': serializer.toJson<String?>(remoteSnapshot),
     };
   }
 
@@ -6943,7 +6968,8 @@ class FireflySyncMapEntry extends DataClass
           Value<int?> counterpartyFireflyId = const Value.absent(),
           int? fireflySplitIndex,
           Value<int?> fireflyJournalId = const Value.absent(),
-          DateTime? dateCreated}) =>
+          DateTime? dateCreated,
+          Value<String?> remoteSnapshot = const Value.absent()}) =>
       FireflySyncMapEntry(
         syncMapPk: syncMapPk ?? this.syncMapPk,
         entityType: entityType ?? this.entityType,
@@ -6964,6 +6990,8 @@ class FireflySyncMapEntry extends DataClass
             ? fireflyJournalId.value
             : this.fireflyJournalId,
         dateCreated: dateCreated ?? this.dateCreated,
+        remoteSnapshot:
+            remoteSnapshot.present ? remoteSnapshot.value : this.remoteSnapshot,
       );
   @override
   String toString() {
@@ -6978,7 +7006,8 @@ class FireflySyncMapEntry extends DataClass
           ..write('counterpartyFireflyId: $counterpartyFireflyId, ')
           ..write('fireflySplitIndex: $fireflySplitIndex, ')
           ..write('fireflyJournalId: $fireflyJournalId, ')
-          ..write('dateCreated: $dateCreated')
+          ..write('dateCreated: $dateCreated, ')
+          ..write('remoteSnapshot: $remoteSnapshot')
           ..write(')'))
         .toString();
   }
@@ -6995,7 +7024,8 @@ class FireflySyncMapEntry extends DataClass
       counterpartyFireflyId,
       fireflySplitIndex,
       fireflyJournalId,
-      dateCreated);
+      dateCreated,
+      remoteSnapshot);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7010,7 +7040,8 @@ class FireflySyncMapEntry extends DataClass
           other.counterpartyFireflyId == this.counterpartyFireflyId &&
           other.fireflySplitIndex == this.fireflySplitIndex &&
           other.fireflyJournalId == this.fireflyJournalId &&
-          other.dateCreated == this.dateCreated);
+          other.dateCreated == this.dateCreated &&
+          other.remoteSnapshot == this.remoteSnapshot);
 }
 
 class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
@@ -7025,6 +7056,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
   final Value<int> fireflySplitIndex;
   final Value<int?> fireflyJournalId;
   final Value<DateTime> dateCreated;
+  final Value<String?> remoteSnapshot;
   final Value<int> rowid;
   const FireflySyncMapCompanion({
     this.syncMapPk = const Value.absent(),
@@ -7038,6 +7070,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     this.fireflySplitIndex = const Value.absent(),
     this.fireflyJournalId = const Value.absent(),
     this.dateCreated = const Value.absent(),
+    this.remoteSnapshot = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   FireflySyncMapCompanion.insert({
@@ -7052,6 +7085,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     this.fireflySplitIndex = const Value.absent(),
     this.fireflyJournalId = const Value.absent(),
     this.dateCreated = const Value.absent(),
+    this.remoteSnapshot = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : entityType = Value(entityType),
         localPk = Value(localPk),
@@ -7068,6 +7102,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     Expression<int>? fireflySplitIndex,
     Expression<int>? fireflyJournalId,
     Expression<DateTime>? dateCreated,
+    Expression<String>? remoteSnapshot,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -7084,6 +7119,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       if (fireflySplitIndex != null) 'firefly_split_index': fireflySplitIndex,
       if (fireflyJournalId != null) 'firefly_journal_id': fireflyJournalId,
       if (dateCreated != null) 'date_created': dateCreated,
+      if (remoteSnapshot != null) 'remote_snapshot': remoteSnapshot,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -7100,6 +7136,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       Value<int>? fireflySplitIndex,
       Value<int?>? fireflyJournalId,
       Value<DateTime>? dateCreated,
+      Value<String?>? remoteSnapshot,
       Value<int>? rowid}) {
     return FireflySyncMapCompanion(
       syncMapPk: syncMapPk ?? this.syncMapPk,
@@ -7115,6 +7152,7 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
       fireflySplitIndex: fireflySplitIndex ?? this.fireflySplitIndex,
       fireflyJournalId: fireflyJournalId ?? this.fireflyJournalId,
       dateCreated: dateCreated ?? this.dateCreated,
+      remoteSnapshot: remoteSnapshot ?? this.remoteSnapshot,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7158,6 +7196,9 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
     if (dateCreated.present) {
       map['date_created'] = Variable<DateTime>(dateCreated.value);
     }
+    if (remoteSnapshot.present) {
+      map['remote_snapshot'] = Variable<String>(remoteSnapshot.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7178,6 +7219,396 @@ class FireflySyncMapCompanion extends UpdateCompanion<FireflySyncMapEntry> {
           ..write('fireflySplitIndex: $fireflySplitIndex, ')
           ..write('fireflyJournalId: $fireflyJournalId, ')
           ..write('dateCreated: $dateCreated, ')
+          ..write('remoteSnapshot: $remoteSnapshot, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $FireflyOutboxTable extends FireflyOutbox
+    with TableInfo<$FireflyOutboxTable, FireflyOutboxEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $FireflyOutboxTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entityTypeMeta =
+      const VerificationMeta('entityType');
+  @override
+  late final GeneratedColumnWithTypeConverter<FireflySyncEntityType, int>
+      entityType = GeneratedColumn<int>('entity_type', aliasedName, false,
+              type: DriftSqlType.int, requiredDuringInsert: true)
+          .withConverter<FireflySyncEntityType>(
+              $FireflyOutboxTable.$converterentityType);
+  static const VerificationMeta _localPkMeta =
+      const VerificationMeta('localPk');
+  @override
+  late final GeneratedColumn<String> localPk = GeneratedColumn<String>(
+      'local_pk', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumnWithTypeConverter<FireflyOutboxState, int> state =
+      GeneratedColumn<int>('state', aliasedName, false,
+              type: DriftSqlType.int,
+              requiredDuringInsert: false,
+              defaultValue: Constant(FireflyOutboxState.pending.index))
+          .withConverter<FireflyOutboxState>(
+              $FireflyOutboxTable.$converterstate);
+  static const VerificationMeta _attemptsMeta =
+      const VerificationMeta('attempts');
+  @override
+  late final GeneratedColumn<int> attempts = GeneratedColumn<int>(
+      'attempts', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _lastErrorMeta =
+      const VerificationMeta('lastError');
+  @override
+  late final GeneratedColumn<String> lastError = GeneratedColumn<String>(
+      'last_error', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _intentMeta = const VerificationMeta('intent');
+  @override
+  late final GeneratedColumn<String> intent = GeneratedColumn<String>(
+      'intent', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _dateQueuedMeta =
+      const VerificationMeta('dateQueued');
+  @override
+  late final GeneratedColumn<DateTime> dateQueued = GeneratedColumn<DateTime>(
+      'date_queued', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      clientDefault: () => new DateTime.now());
+  @override
+  List<GeneratedColumn> get $columns =>
+      [entityType, localPk, state, attempts, lastError, intent, dateQueued];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'firefly_outbox';
+  @override
+  VerificationContext validateIntegrity(Insertable<FireflyOutboxEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    context.handle(_entityTypeMeta, const VerificationResult.success());
+    if (data.containsKey('local_pk')) {
+      context.handle(_localPkMeta,
+          localPk.isAcceptableOrUnknown(data['local_pk']!, _localPkMeta));
+    } else if (isInserting) {
+      context.missing(_localPkMeta);
+    }
+    context.handle(_stateMeta, const VerificationResult.success());
+    if (data.containsKey('attempts')) {
+      context.handle(_attemptsMeta,
+          attempts.isAcceptableOrUnknown(data['attempts']!, _attemptsMeta));
+    }
+    if (data.containsKey('last_error')) {
+      context.handle(_lastErrorMeta,
+          lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta));
+    }
+    if (data.containsKey('intent')) {
+      context.handle(_intentMeta,
+          intent.isAcceptableOrUnknown(data['intent']!, _intentMeta));
+    }
+    if (data.containsKey('date_queued')) {
+      context.handle(
+          _dateQueuedMeta,
+          dateQueued.isAcceptableOrUnknown(
+              data['date_queued']!, _dateQueuedMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, localPk};
+  @override
+  FireflyOutboxEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return FireflyOutboxEntry(
+      entityType: $FireflyOutboxTable.$converterentityType.fromSql(
+          attachedDatabase.typeMapping
+              .read(DriftSqlType.int, data['${effectivePrefix}entity_type'])!),
+      localPk: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}local_pk'])!,
+      state: $FireflyOutboxTable.$converterstate.fromSql(attachedDatabase
+          .typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}state'])!),
+      attempts: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}attempts'])!,
+      lastError: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}last_error']),
+      intent: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}intent']),
+      dateQueued: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}date_queued'])!,
+    );
+  }
+
+  @override
+  $FireflyOutboxTable createAlias(String alias) {
+    return $FireflyOutboxTable(attachedDatabase, alias);
+  }
+
+  static JsonTypeConverter2<FireflySyncEntityType, int, int>
+      $converterentityType = const EnumIndexConverter<FireflySyncEntityType>(
+          FireflySyncEntityType.values);
+  static JsonTypeConverter2<FireflyOutboxState, int, int> $converterstate =
+      const EnumIndexConverter<FireflyOutboxState>(FireflyOutboxState.values);
+}
+
+class FireflyOutboxEntry extends DataClass
+    implements Insertable<FireflyOutboxEntry> {
+  final FireflySyncEntityType entityType;
+  final String localPk;
+  final FireflyOutboxState state;
+  final int attempts;
+  final String? lastError;
+  final String? intent;
+  final DateTime dateQueued;
+  const FireflyOutboxEntry(
+      {required this.entityType,
+      required this.localPk,
+      required this.state,
+      required this.attempts,
+      this.lastError,
+      this.intent,
+      required this.dateQueued});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    {
+      map['entity_type'] = Variable<int>(
+          $FireflyOutboxTable.$converterentityType.toSql(entityType));
+    }
+    map['local_pk'] = Variable<String>(localPk);
+    {
+      map['state'] =
+          Variable<int>($FireflyOutboxTable.$converterstate.toSql(state));
+    }
+    map['attempts'] = Variable<int>(attempts);
+    if (!nullToAbsent || lastError != null) {
+      map['last_error'] = Variable<String>(lastError);
+    }
+    if (!nullToAbsent || intent != null) {
+      map['intent'] = Variable<String>(intent);
+    }
+    map['date_queued'] = Variable<DateTime>(dateQueued);
+    return map;
+  }
+
+  FireflyOutboxCompanion toCompanion(bool nullToAbsent) {
+    return FireflyOutboxCompanion(
+      entityType: Value(entityType),
+      localPk: Value(localPk),
+      state: Value(state),
+      attempts: Value(attempts),
+      lastError: lastError == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastError),
+      intent:
+          intent == null && nullToAbsent ? const Value.absent() : Value(intent),
+      dateQueued: Value(dateQueued),
+    );
+  }
+
+  factory FireflyOutboxEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return FireflyOutboxEntry(
+      entityType: $FireflyOutboxTable.$converterentityType
+          .fromJson(serializer.fromJson<int>(json['entityType'])),
+      localPk: serializer.fromJson<String>(json['localPk']),
+      state: $FireflyOutboxTable.$converterstate
+          .fromJson(serializer.fromJson<int>(json['state'])),
+      attempts: serializer.fromJson<int>(json['attempts']),
+      lastError: serializer.fromJson<String?>(json['lastError']),
+      intent: serializer.fromJson<String?>(json['intent']),
+      dateQueued: serializer.fromJson<DateTime>(json['dateQueued']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entityType': serializer.toJson<int>(
+          $FireflyOutboxTable.$converterentityType.toJson(entityType)),
+      'localPk': serializer.toJson<String>(localPk),
+      'state': serializer
+          .toJson<int>($FireflyOutboxTable.$converterstate.toJson(state)),
+      'attempts': serializer.toJson<int>(attempts),
+      'lastError': serializer.toJson<String?>(lastError),
+      'intent': serializer.toJson<String?>(intent),
+      'dateQueued': serializer.toJson<DateTime>(dateQueued),
+    };
+  }
+
+  FireflyOutboxEntry copyWith(
+          {FireflySyncEntityType? entityType,
+          String? localPk,
+          FireflyOutboxState? state,
+          int? attempts,
+          Value<String?> lastError = const Value.absent(),
+          Value<String?> intent = const Value.absent(),
+          DateTime? dateQueued}) =>
+      FireflyOutboxEntry(
+        entityType: entityType ?? this.entityType,
+        localPk: localPk ?? this.localPk,
+        state: state ?? this.state,
+        attempts: attempts ?? this.attempts,
+        lastError: lastError.present ? lastError.value : this.lastError,
+        intent: intent.present ? intent.value : this.intent,
+        dateQueued: dateQueued ?? this.dateQueued,
+      );
+  @override
+  String toString() {
+    return (StringBuffer('FireflyOutboxEntry(')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('state: $state, ')
+          ..write('attempts: $attempts, ')
+          ..write('lastError: $lastError, ')
+          ..write('intent: $intent, ')
+          ..write('dateQueued: $dateQueued')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      entityType, localPk, state, attempts, lastError, intent, dateQueued);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is FireflyOutboxEntry &&
+          other.entityType == this.entityType &&
+          other.localPk == this.localPk &&
+          other.state == this.state &&
+          other.attempts == this.attempts &&
+          other.lastError == this.lastError &&
+          other.intent == this.intent &&
+          other.dateQueued == this.dateQueued);
+}
+
+class FireflyOutboxCompanion extends UpdateCompanion<FireflyOutboxEntry> {
+  final Value<FireflySyncEntityType> entityType;
+  final Value<String> localPk;
+  final Value<FireflyOutboxState> state;
+  final Value<int> attempts;
+  final Value<String?> lastError;
+  final Value<String?> intent;
+  final Value<DateTime> dateQueued;
+  final Value<int> rowid;
+  const FireflyOutboxCompanion({
+    this.entityType = const Value.absent(),
+    this.localPk = const Value.absent(),
+    this.state = const Value.absent(),
+    this.attempts = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.intent = const Value.absent(),
+    this.dateQueued = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  FireflyOutboxCompanion.insert({
+    required FireflySyncEntityType entityType,
+    required String localPk,
+    this.state = const Value.absent(),
+    this.attempts = const Value.absent(),
+    this.lastError = const Value.absent(),
+    this.intent = const Value.absent(),
+    this.dateQueued = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : entityType = Value(entityType),
+        localPk = Value(localPk);
+  static Insertable<FireflyOutboxEntry> custom({
+    Expression<int>? entityType,
+    Expression<String>? localPk,
+    Expression<int>? state,
+    Expression<int>? attempts,
+    Expression<String>? lastError,
+    Expression<String>? intent,
+    Expression<DateTime>? dateQueued,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entityType != null) 'entity_type': entityType,
+      if (localPk != null) 'local_pk': localPk,
+      if (state != null) 'state': state,
+      if (attempts != null) 'attempts': attempts,
+      if (lastError != null) 'last_error': lastError,
+      if (intent != null) 'intent': intent,
+      if (dateQueued != null) 'date_queued': dateQueued,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  FireflyOutboxCompanion copyWith(
+      {Value<FireflySyncEntityType>? entityType,
+      Value<String>? localPk,
+      Value<FireflyOutboxState>? state,
+      Value<int>? attempts,
+      Value<String?>? lastError,
+      Value<String?>? intent,
+      Value<DateTime>? dateQueued,
+      Value<int>? rowid}) {
+    return FireflyOutboxCompanion(
+      entityType: entityType ?? this.entityType,
+      localPk: localPk ?? this.localPk,
+      state: state ?? this.state,
+      attempts: attempts ?? this.attempts,
+      lastError: lastError ?? this.lastError,
+      intent: intent ?? this.intent,
+      dateQueued: dateQueued ?? this.dateQueued,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entityType.present) {
+      map['entity_type'] = Variable<int>(
+          $FireflyOutboxTable.$converterentityType.toSql(entityType.value));
+    }
+    if (localPk.present) {
+      map['local_pk'] = Variable<String>(localPk.value);
+    }
+    if (state.present) {
+      map['state'] =
+          Variable<int>($FireflyOutboxTable.$converterstate.toSql(state.value));
+    }
+    if (attempts.present) {
+      map['attempts'] = Variable<int>(attempts.value);
+    }
+    if (lastError.present) {
+      map['last_error'] = Variable<String>(lastError.value);
+    }
+    if (intent.present) {
+      map['intent'] = Variable<String>(intent.value);
+    }
+    if (dateQueued.present) {
+      map['date_queued'] = Variable<DateTime>(dateQueued.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('FireflyOutboxCompanion(')
+          ..write('entityType: $entityType, ')
+          ..write('localPk: $localPk, ')
+          ..write('state: $state, ')
+          ..write('attempts: $attempts, ')
+          ..write('lastError: $lastError, ')
+          ..write('intent: $intent, ')
+          ..write('dateQueued: $dateQueued, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -7201,6 +7632,7 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
       $ScannerTemplatesTable(this);
   late final $DeleteLogsTable deleteLogs = $DeleteLogsTable(this);
   late final $FireflySyncMapTable fireflySyncMap = $FireflySyncMapTable(this);
+  late final $FireflyOutboxTable fireflyOutbox = $FireflyOutboxTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7216,7 +7648,8 @@ abstract class _$FinanceDatabase extends GeneratedDatabase {
         appSettings,
         scannerTemplates,
         deleteLogs,
-        fireflySyncMap
+        fireflySyncMap,
+        fireflyOutbox
       ];
 }
 
@@ -10286,6 +10719,7 @@ typedef $$FireflySyncMapTableInsertCompanionBuilder = FireflySyncMapCompanion
   Value<int> fireflySplitIndex,
   Value<int?> fireflyJournalId,
   Value<DateTime> dateCreated,
+  Value<String?> remoteSnapshot,
   Value<int> rowid,
 });
 typedef $$FireflySyncMapTableUpdateCompanionBuilder = FireflySyncMapCompanion
@@ -10301,6 +10735,7 @@ typedef $$FireflySyncMapTableUpdateCompanionBuilder = FireflySyncMapCompanion
   Value<int> fireflySplitIndex,
   Value<int?> fireflyJournalId,
   Value<DateTime> dateCreated,
+  Value<String?> remoteSnapshot,
   Value<int> rowid,
 });
 
@@ -10336,6 +10771,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             Value<int> fireflySplitIndex = const Value.absent(),
             Value<int?> fireflyJournalId = const Value.absent(),
             Value<DateTime> dateCreated = const Value.absent(),
+            Value<String?> remoteSnapshot = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               FireflySyncMapCompanion(
@@ -10350,6 +10786,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             fireflySplitIndex: fireflySplitIndex,
             fireflyJournalId: fireflyJournalId,
             dateCreated: dateCreated,
+            remoteSnapshot: remoteSnapshot,
             rowid: rowid,
           ),
           getInsertCompanionBuilder: ({
@@ -10364,6 +10801,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             Value<int> fireflySplitIndex = const Value.absent(),
             Value<int?> fireflyJournalId = const Value.absent(),
             Value<DateTime> dateCreated = const Value.absent(),
+            Value<String?> remoteSnapshot = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               FireflySyncMapCompanion.insert(
@@ -10378,6 +10816,7 @@ class $$FireflySyncMapTableTableManager extends RootTableManager<
             fireflySplitIndex: fireflySplitIndex,
             fireflyJournalId: fireflyJournalId,
             dateCreated: dateCreated,
+            remoteSnapshot: remoteSnapshot,
             rowid: rowid,
           ),
         ));
@@ -10456,6 +10895,11 @@ class $$FireflySyncMapTableFilterComposer
       column: $state.table.dateCreated,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get remoteSnapshot => $state.composableBuilder(
+      column: $state.table.remoteSnapshot,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
 }
 
 class $$FireflySyncMapTableOrderingComposer
@@ -10516,6 +10960,192 @@ class $$FireflySyncMapTableOrderingComposer
       column: $state.table.dateCreated,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get remoteSnapshot => $state.composableBuilder(
+      column: $state.table.remoteSnapshot,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+}
+
+typedef $$FireflyOutboxTableInsertCompanionBuilder = FireflyOutboxCompanion
+    Function({
+  required FireflySyncEntityType entityType,
+  required String localPk,
+  Value<FireflyOutboxState> state,
+  Value<int> attempts,
+  Value<String?> lastError,
+  Value<String?> intent,
+  Value<DateTime> dateQueued,
+  Value<int> rowid,
+});
+typedef $$FireflyOutboxTableUpdateCompanionBuilder = FireflyOutboxCompanion
+    Function({
+  Value<FireflySyncEntityType> entityType,
+  Value<String> localPk,
+  Value<FireflyOutboxState> state,
+  Value<int> attempts,
+  Value<String?> lastError,
+  Value<String?> intent,
+  Value<DateTime> dateQueued,
+  Value<int> rowid,
+});
+
+class $$FireflyOutboxTableTableManager extends RootTableManager<
+    _$FinanceDatabase,
+    $FireflyOutboxTable,
+    FireflyOutboxEntry,
+    $$FireflyOutboxTableFilterComposer,
+    $$FireflyOutboxTableOrderingComposer,
+    $$FireflyOutboxTableProcessedTableManager,
+    $$FireflyOutboxTableInsertCompanionBuilder,
+    $$FireflyOutboxTableUpdateCompanionBuilder> {
+  $$FireflyOutboxTableTableManager(
+      _$FinanceDatabase db, $FireflyOutboxTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          filteringComposer:
+              $$FireflyOutboxTableFilterComposer(ComposerState(db, table)),
+          orderingComposer:
+              $$FireflyOutboxTableOrderingComposer(ComposerState(db, table)),
+          getChildManagerBuilder: (p) =>
+              $$FireflyOutboxTableProcessedTableManager(p),
+          getUpdateCompanionBuilder: ({
+            Value<FireflySyncEntityType> entityType = const Value.absent(),
+            Value<String> localPk = const Value.absent(),
+            Value<FireflyOutboxState> state = const Value.absent(),
+            Value<int> attempts = const Value.absent(),
+            Value<String?> lastError = const Value.absent(),
+            Value<String?> intent = const Value.absent(),
+            Value<DateTime> dateQueued = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FireflyOutboxCompanion(
+            entityType: entityType,
+            localPk: localPk,
+            state: state,
+            attempts: attempts,
+            lastError: lastError,
+            intent: intent,
+            dateQueued: dateQueued,
+            rowid: rowid,
+          ),
+          getInsertCompanionBuilder: ({
+            required FireflySyncEntityType entityType,
+            required String localPk,
+            Value<FireflyOutboxState> state = const Value.absent(),
+            Value<int> attempts = const Value.absent(),
+            Value<String?> lastError = const Value.absent(),
+            Value<String?> intent = const Value.absent(),
+            Value<DateTime> dateQueued = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              FireflyOutboxCompanion.insert(
+            entityType: entityType,
+            localPk: localPk,
+            state: state,
+            attempts: attempts,
+            lastError: lastError,
+            intent: intent,
+            dateQueued: dateQueued,
+            rowid: rowid,
+          ),
+        ));
+}
+
+class $$FireflyOutboxTableProcessedTableManager extends ProcessedTableManager<
+    _$FinanceDatabase,
+    $FireflyOutboxTable,
+    FireflyOutboxEntry,
+    $$FireflyOutboxTableFilterComposer,
+    $$FireflyOutboxTableOrderingComposer,
+    $$FireflyOutboxTableProcessedTableManager,
+    $$FireflyOutboxTableInsertCompanionBuilder,
+    $$FireflyOutboxTableUpdateCompanionBuilder> {
+  $$FireflyOutboxTableProcessedTableManager(super.$state);
+}
+
+class $$FireflyOutboxTableFilterComposer
+    extends FilterComposer<_$FinanceDatabase, $FireflyOutboxTable> {
+  $$FireflyOutboxTableFilterComposer(super.$state);
+  ColumnWithTypeConverterFilters<FireflySyncEntityType, FireflySyncEntityType,
+          int>
+      get entityType => $state.composableBuilder(
+          column: $state.table.entityType,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get localPk => $state.composableBuilder(
+      column: $state.table.localPk,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<FireflyOutboxState, FireflyOutboxState, int>
+      get state => $state.composableBuilder(
+          column: $state.table.state,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<int> get attempts => $state.composableBuilder(
+      column: $state.table.attempts,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get lastError => $state.composableBuilder(
+      column: $state.table.lastError,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get intent => $state.composableBuilder(
+      column: $state.table.intent,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<DateTime> get dateQueued => $state.composableBuilder(
+      column: $state.table.dateQueued,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+}
+
+class $$FireflyOutboxTableOrderingComposer
+    extends OrderingComposer<_$FinanceDatabase, $FireflyOutboxTable> {
+  $$FireflyOutboxTableOrderingComposer(super.$state);
+  ColumnOrderings<int> get entityType => $state.composableBuilder(
+      column: $state.table.entityType,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get localPk => $state.composableBuilder(
+      column: $state.table.localPk,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get state => $state.composableBuilder(
+      column: $state.table.state,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<int> get attempts => $state.composableBuilder(
+      column: $state.table.attempts,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get lastError => $state.composableBuilder(
+      column: $state.table.lastError,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get intent => $state.composableBuilder(
+      column: $state.table.intent,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<DateTime> get dateQueued => $state.composableBuilder(
+      column: $state.table.dateQueued,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
 }
 
 class _$FinanceDatabaseManager {
@@ -10543,4 +11173,6 @@ class _$FinanceDatabaseManager {
       $$DeleteLogsTableTableManager(_db, _db.deleteLogs);
   $$FireflySyncMapTableTableManager get fireflySyncMap =>
       $$FireflySyncMapTableTableManager(_db, _db.fireflySyncMap);
+  $$FireflyOutboxTableTableManager get fireflyOutbox =>
+      $$FireflyOutboxTableTableManager(_db, _db.fireflyOutbox);
 }

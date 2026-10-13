@@ -50,7 +50,98 @@ class FakeResponse {
   FakeResponse(this.status, this.json);
 }
 
-String _isoNow() => DateTime.now().toUtc().toIso8601String();
+// Firefly III 6.7.9 answers each date in the time zone of the user, to the
+// second. The test instance and the fake both use UTC.
+String fireflyDateString(DateTime date) {
+  DateTime utc = date.toUtc();
+  String two(int n) => n.toString().padLeft(2, "0");
+  return "${utc.year.toString().padLeft(4, "0")}-${two(utc.month)}-"
+      "${two(utc.day)}T${two(utc.hour)}:${two(utc.minute)}:"
+      "${two(utc.second)}+00:00";
+}
+
+String _isoNow() => fireflyDateString(DateTime.now());
+
+// Firefly reads a date with no offset as UTC, not as the local time of the
+// client or of the server. A date with no time is the start of that day.
+// DateTime.parse reads both as local time, thus it must not see them.
+DateTime? readFireflyDate(Object? raw) {
+  if (raw == null) return null;
+  String text = raw.toString().trim();
+  if (text.isEmpty) return null;
+  if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(text)) {
+    text = "${text}T00:00:00Z";
+  } else if (!RegExp(r'(Z|z|[+-]\d{2}:?\d{2})$').hasMatch(text)) {
+    text = "${text}Z";
+  }
+  return DateTime.tryParse(text)?.toUtc();
+}
+
+// Firefly keeps 12 decimal places and answers with all of them, for example
+// "10.123000000000". The value goes through as text: a double changes the
+// digits that the client sent.
+String fireflyAmountString(Object raw) {
+  String text = raw.toString().trim();
+  Match? match = RegExp(r'^(-?)(\d*)(?:\.(\d*))?$').firstMatch(text);
+  if (match == null || (match[2]!.isEmpty && (match[3] ?? "").isEmpty)) {
+    return text;
+  }
+  String whole = match[2]!.replaceFirst(RegExp(r'^0+(?=\d)'), "");
+  if (whole.isEmpty) whole = "0";
+  String fraction = (match[3] ?? "").padRight(12, "0").substring(0, 12);
+  return "${match[1]}$whole.$fraction";
+}
+
+// The fields of a split that Firefly stores in its own form. A date or an
+// amount that it cannot read stays as it is; the fake does not copy the
+// validation of those fields.
+Map<String, dynamic> _normalizeSplit(Map<String, dynamic> split) {
+  if (split.containsKey("date")) {
+    DateTime? date = readFireflyDate(split["date"]);
+    if (date != null) split["date"] = fireflyDateString(date);
+  }
+  if (split["amount"] != null) {
+    split["amount"] = fireflyAmountString(split["amount"]);
+  }
+  Object? foreignAmount = split["foreign_amount"];
+  if (foreignAmount != null && foreignAmount.toString().trim().isNotEmpty) {
+    split["foreign_amount"] = fireflyAmountString(foreignAmount);
+  }
+  return split;
+}
+
+bool _isBlank(Object? value) =>
+    value == null || value.toString().trim().isEmpty;
+
+// Laravel puts the first message of a 422 in "message", and the count of the
+// other messages after it.
+FakeResponse _validationError(Map<String, List<String>> errors) {
+  List<String> messages = errors.values.expand((m) => m).toList();
+  int more = messages.length - 1;
+  String message = messages.first;
+  if (more > 0) message += " (and $more more error${more == 1 ? '' : 's'})";
+  return FakeResponse(422, {"message": message, "errors": errors});
+}
+
+// Firefly checks the request, not the stored account: a PUT that sends
+// account_role ccAsset must send the two card fields again, also when the
+// account already holds them.
+FakeResponse? _creditCardErrors(Map<String, dynamic> body) {
+  if (body["account_role"]?.toString() != "ccAsset") return null;
+  Map<String, List<String>> errors = {};
+  if (_isBlank(body["credit_card_type"])) {
+    errors["credit_card_type"] = [
+      "The credit card type field is required when account role is ccAsset."
+    ];
+  }
+  if (_isBlank(body["monthly_payment_date"])) {
+    errors["monthly_payment_date"] = [
+      "The monthly payment date field is required when account role is "
+          "ccAsset."
+    ];
+  }
+  return errors.isEmpty ? null : _validationError(errors);
+}
 
 // A small Firefly III. It holds asset accounts, categories and transaction
 // groups, and answers the requests that the engine makes. `intercept` gives
@@ -79,6 +170,10 @@ class FakeFirefly {
       bool active = true,
       String role = "defaultAsset",
       String currencyCode = "USD",
+      String? virtualBalance,
+      String? creditCardType,
+      String? monthlyPaymentDate,
+      String? notes,
       String? updatedAt}) {
     Map<String, dynamic> account = {
       "type": "accounts",
@@ -87,9 +182,16 @@ class FakeFirefly {
         "name": name,
         "type": type,
         "currency_code": currencyCode,
+        // The fake does not calculate a balance. It answers with the value
+        // that the test gives. Firefly calculates virtual_balance plus the
+        // sum of the journals, and rounds it to the decimals of the currency.
         if (balance != null) "current_balance": balance,
+        "virtual_balance": virtualBalance,
         "active": active,
         "account_role": role,
+        "credit_card_type": creditCardType,
+        "monthly_payment_date": monthlyPaymentDate,
+        "notes": notes,
         "created_at": updatedAt ?? _isoNow(),
         "updated_at": updatedAt ?? _isoNow(),
       },
@@ -137,13 +239,14 @@ class FakeFirefly {
           {
             "transaction_journal_id": journalId,
             "type": type,
-            "date": (date ?? DateTime.now()).toUtc().toIso8601String(),
-            "amount": amount,
+            "date": fireflyDateString(date ?? DateTime.now()),
+            "amount": fireflyAmountString(amount),
             "description": description,
             "source_id": sourceId,
             "destination_id": destinationId,
             "currency_code": currencyCode,
-            if (foreignAmount != null) "foreign_amount": foreignAmount,
+            if (foreignAmount != null)
+              "foreign_amount": fireflyAmountString(foreignAmount),
             if (foreignCurrencyCode != null)
               "foreign_currency_code": foreignCurrencyCode,
             if (externalId != null) "external_id": externalId,
@@ -225,6 +328,8 @@ class FakeFirefly {
         return FakeResponse(200, {"data": account});
       }
       if (r.method == "POST") {
+        FakeResponse? cardErrors = _creditCardErrors(r.body!);
+        if (cardErrors != null) return cardErrors;
         String name = r.body!["name"].toString();
         bool taken = accounts.values.any((a) =>
             a["attributes"]["name"].toString().trim().toLowerCase() ==
@@ -241,12 +346,29 @@ class FakeFirefly {
         Map<String, dynamic> account = addAccount(newId, name,
             type: r.body!["type"]?.toString() ?? "asset",
             active: r.body!["active"] != false,
-            role: r.body!["account_role"]?.toString() ?? "defaultAsset");
+            role: r.body!["account_role"]?.toString() ?? "defaultAsset",
+            currencyCode: r.body!["currency_code"]?.toString() ?? "USD");
+        Map<String, dynamic> attributes = account["attributes"];
+        for (String key in const [
+          "virtual_balance",
+          "credit_card_type",
+          "monthly_payment_date",
+          "notes",
+          "include_net_worth",
+          "iban",
+          "account_number",
+        ]) {
+          if (r.body!.containsKey(key)) attributes[key] = r.body![key];
+        }
         return FakeResponse(200, {"data": account});
       }
       if (r.method == "PUT" && id != null) {
         Map<String, dynamic>? account = accounts[id];
         if (account == null) return FakeResponse(404, {"message": "no"});
+        FakeResponse? cardErrors = _creditCardErrors(r.body!);
+        if (cardErrors != null) return cardErrors;
+        // An account PUT changes the keys that it sends, and no other key. A
+        // PUT with no account_role keeps the role and the card fields.
         Map<String, dynamic> attributes =
             Map<String, dynamic>.from(account["attributes"]);
         r.body!.forEach((key, value) => attributes[key] = value);
@@ -287,7 +409,9 @@ class FakeFirefly {
       if (r.method == "PUT" && id != null) {
         Map<String, dynamic>? category = categories[id];
         if (category == null) return FakeResponse(404, {"message": "no"});
-        category["attributes"]["name"] = r.body!["name"];
+        if (r.body!.containsKey("name")) {
+          category["attributes"]["name"] = r.body!["name"];
+        }
         category["attributes"]["updated_at"] = _isoNow();
         return FakeResponse(200, {"data": category});
       }
@@ -303,15 +427,16 @@ class FakeFirefly {
         // it: _applyRemoteDeletes reads the answer as "every record of the
         // window", and a fake that answers with the whole ledger hides both
         // the window logic and what a short answer does to the local rows.
+        // The end day is part of the window, to its last second.
         DateTime? start = _dateParam(uri, "start");
-        DateTime? end = _dateParam(uri, "end");
+        DateTime? end = _dateParam(uri, "end")?.add(const Duration(days: 1));
         List<dynamic> list = transactionGroups.values.where((g) {
           List<dynamic> splits = g["attributes"]["transactions"];
           return splits.any((s) {
-            DateTime? date = DateTime.tryParse(s["date"].toString());
+            DateTime? date = readFireflyDate(s["date"]);
             if (date == null) return true;
             if (start != null && date.isBefore(start)) return false;
-            if (end != null && date.isAfter(end)) return false;
+            if (end != null && !date.isBefore(end)) return false;
             return true;
           });
         }).toList();
@@ -325,10 +450,10 @@ class FakeFirefly {
       if (r.method == "POST") {
         int newId = nextId++;
         List<dynamic> splits = List<dynamic>.from(r.body!["transactions"] ?? [])
-            .map((s) => {
+            .map((s) => _normalizeSplit({
                   ...Map<String, dynamic>.from(s),
                   "transaction_journal_id": nextId++,
-                })
+                }))
             .toList();
         Map<String, dynamic> group = {
           "type": "transactions",
@@ -346,6 +471,19 @@ class FakeFirefly {
       if (r.method == "PUT" && id != null) {
         Map<String, dynamic>? group = transactionGroups[id];
         if (group == null) return FakeResponse(404, {"message": "no"});
+        // Firefly validates the request before it looks at the journal ids.
+        // An entry that holds the id alone counts as an entry, and the title
+        // that the group already holds does not count.
+        List<dynamic> entries =
+            List<dynamic>.from(r.body!["transactions"] ?? []);
+        if (entries.length > 1 && _isBlank(r.body!["group_title"])) {
+          return _validationError({
+            "group_title": [
+              "A group title is mandatory when there is more than one "
+                  "transaction."
+            ]
+          });
+        }
         List<dynamic> old = group["attributes"]["transactions"];
         Set<int> knownJournalIds = {
           for (dynamic s in old)
@@ -360,14 +498,15 @@ class FakeFirefly {
         //     Firefly answers 401 for it, not 404;
         //   - every split of the group that the request does not name is
         //     DELETED.
+        //   - a split that the request names changes the keys that its entry
+        //     sends, and keeps every other key (JournalUpdateService).
         List<dynamic> splits = [];
-        for (dynamic entry
-            in List<dynamic>.from(r.body!["transactions"] ?? [])) {
+        for (dynamic entry in entries) {
           Map<String, dynamic> split = Map<String, dynamic>.from(entry);
           Object? rawJournalId = split["transaction_journal_id"];
           if (rawJournalId == null) {
             split["transaction_journal_id"] = nextId++;
-            splits.add(split);
+            splits.add(_normalizeSplit(split));
             continue;
           }
           int journalId = int.parse(rawJournalId.toString());
@@ -386,7 +525,10 @@ class FakeFirefly {
             continue;
           }
           before.addAll(split);
-          splits.add(before);
+          splits.add(_normalizeSplit(before));
+        }
+        if (r.body!.containsKey("group_title")) {
+          group["attributes"]["group_title"] = r.body!["group_title"];
         }
         group["attributes"]["transactions"] = splits;
         group["attributes"]["updated_at"] = _isoNow();
@@ -396,6 +538,21 @@ class FakeFirefly {
         transactionGroups.remove(id);
         return FakeResponse(204, {});
       }
+    }
+
+    if (resource == "search" &&
+        parts.length > 3 &&
+        parts[3] == "transactions" &&
+        r.method == "GET") {
+      List<String> words = (uri.queryParameters["query"] ?? "")
+          .trim()
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty)
+          .toList();
+      List<dynamic> list = transactionGroups.values
+          .where((g) => words.every((w) => _searchMatches(g, w)))
+          .toList();
+      return FakeResponse(200, _paginated(list, uri));
     }
 
     if (resource == "transaction-journals" && r.method == "DELETE") {
@@ -423,7 +580,34 @@ class FakeFirefly {
   static DateTime? _dateParam(Uri uri, String name) {
     String? raw = uri.queryParameters[name];
     if (raw == null || raw.isEmpty) return null;
-    return DateTime.tryParse(raw);
+    return readFireflyDate(raw);
+  }
+
+  // The operators of /search/transactions that the client uses. All words of
+  // a query must match. Firefly reads a word with an operator that it does
+  // not know as text, thus "updated_after:2020-01-01" finds nothing.
+  //   - updated_at_after:D includes the day D (UTC on the test instance).
+  //   - external_id_is:V is an exact match on one split.
+  //   - other text matches part of a description, in any case.
+  static bool _searchMatches(Map<String, dynamic> group, String word) {
+    List<dynamic> splits = group["attributes"]["transactions"];
+    int colon = word.indexOf(":");
+    String operator = colon < 0 ? "" : word.substring(0, colon);
+    String value = colon < 0 ? word : word.substring(colon + 1);
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.substring(1, value.length - 1);
+    }
+    if (operator == "updated_at_after") {
+      DateTime? after = readFireflyDate(value);
+      DateTime? updated = readFireflyDate(group["attributes"]["updated_at"]);
+      return after != null && updated != null && !updated.isBefore(after);
+    }
+    if (operator == "external_id_is") {
+      return splits.any((s) => s["external_id"]?.toString() == value);
+    }
+    String needle = word.toLowerCase();
+    return splits.any((s) =>
+        (s["description"]?.toString() ?? "").toLowerCase().contains(needle));
   }
 
   // Real pagination. The client asks for a page and a limit and refuses a

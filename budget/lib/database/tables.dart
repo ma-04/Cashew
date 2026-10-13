@@ -4,6 +4,9 @@ import 'package:budget/pages/homePage/homePageLineGraph.dart';
 import 'package:budget/pages/objectivesListPage.dart';
 import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/client/fireflyStore.dart'
+    show fireflyQueueDeleteIfLinked;
+import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:budget/struct/firebaseAuthGlobal.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/shareBudget.dart';
@@ -26,7 +29,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 50;
+int schemaVersionGlobal = 51;
 
 // The highest schema version drift_schemas/ has a snapshot for, and therefore
 // the highest version the generated migrationSteps() in schema_versions.dart
@@ -289,6 +292,13 @@ class FireflySyncMap extends Table {
   IntColumn get fireflyJournalId => integer().nullable()();
   DateTimeColumn get dateCreated =>
       dateTime().clientDefault(() => new DateTime.now())();
+  // The record as the server gave it the last time this app read it, as JSON:
+  // a split with its group id, group title and updated_at, an account or a
+  // category. A push compares the local row with this value and sends only
+  // the fields that the user changed. It also holds each field that the local
+  // tables have no column for. Null on a row that a build before schema 51
+  // wrote: such a row is not pushed until a pull fills this.
+  TextColumn get remoteSnapshot => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {syncMapPk};
@@ -297,6 +307,34 @@ class FireflySyncMap extends Table {
   List<Set<Column>> get uniqueKeys => [
         {entityType, localPk},
       ];
+}
+
+enum FireflyOutboxState { pending, failed }
+
+// A local record that has a change Firefly does not have yet. The row holds
+// no payload: the push reads the local row and its map row when it sends,
+// thus a second edit of the same record joins the first. The local row and
+// the map row together give the operation: a local row with no map row is a
+// create, both are an update, a map row with no local row is a delete.
+@DataClassName('FireflyOutboxEntry')
+class FireflyOutbox extends Table {
+  IntColumn get entityType => intEnum<FireflySyncEntityType>()();
+  TextColumn get localPk => text()();
+  IntColumn get state => intEnum<FireflyOutboxState>()
+      .withDefault(Constant(FireflyOutboxState.pending.index))();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  TextColumn get lastError => text().nullable()();
+  // An action that the user asked for and that the server must do first,
+  // because it changes more than one record there: "delete" for a category
+  // (Firefly removes it from each of its transactions) and "deactivate" for
+  // a wallet (a Firefly account delete destroys its transactions). The local
+  // record changes only after the server did it. Null for an edit.
+  TextColumn get intent => text().nullable()();
+  DateTimeColumn get dateQueued =>
+      dateTime().clientDefault(() => new DateTime.now())();
+
+  @override
+  Set<Column> get primaryKey => {entityType, localPk};
 }
 
 @DataClassName('TransactionWallet')
@@ -741,6 +779,7 @@ class CategoryWithTotal {
   DeleteLogs,
   Objectives,
   FireflySyncMap,
+  FireflyOutbox,
 ])
 class FinanceDatabase extends _$FinanceDatabase {
   // FinanceDatabase() : super(_openConnection());
@@ -1344,6 +1383,26 @@ class FinanceDatabase extends _$FinanceDatabase {
           } catch (e) {
             print("Migration Error: Error creating FireflySyncMap "
                     "firefly_id index " +
+                e.toString());
+          }
+        }
+        // Guarded at `>= 47` for the reason of the journal-id block above:
+        // the `from <= 46` branch makes the table with this column already.
+        if (from >= 47 && from <= 50) {
+          try {
+            await migrator.addColumn(
+                fireflySyncMap, fireflySyncMap.remoteSnapshot);
+          } catch (e) {
+            print("Migration Error: Error adding column "
+                    "FireflySyncMap.remoteSnapshot " +
+                e.toString());
+          }
+        }
+        if (from <= 50) {
+          try {
+            await migrator.createTable(fireflyOutbox);
+          } catch (e) {
+            print("Migration Error: Error creating table FireflyOutbox " +
                 e.toString());
           }
         }
@@ -3652,7 +3711,11 @@ class FinanceDatabase extends _$FinanceDatabase {
     // Preserve order of balance correction transaction
     // Negative entries at 30 seconds on the minute
     // Positive entries at 31 seconds on the minute
-    if (transaction.categoryFk == "0" && fireflySync == false) {
+    // Not with Firefly: the time of a transfer and of each other row is a
+    // field of the server record, and this rewrite would send a new time.
+    if (transaction.categoryFk == "0" &&
+        fireflySync == false &&
+        !fireflyEnabled) {
       if (transaction.amount < 0) {
         transaction = transaction.copyWith(
             dateCreated: transaction.dateCreated
@@ -5155,6 +5218,11 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   //delete category given key
   Future deleteCategory(String categoryPk, int order) async {
+    // A category that Firefly holds is deleted there first. Firefly removes
+    // it from each of its transactions; a local delete here would delete
+    // those transactions, and then each of them on the server.
+    if (await fireflyQueueDeleteIfLinked(
+        FireflySyncEntityType.category, categoryPk)) return;
     await deleteCategoryTitles(categoryPk);
     await deleteCategoryTransactions(categoryPk);
     await unAssignSubCategoryFromTransactions(categoryPk);
@@ -5251,6 +5319,10 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   //delete wallet given key
   Future deleteWallet(String walletPk, int order) async {
+    // A wallet that Firefly holds goes inactive there and keeps its history.
+    // A Firefly account delete destroys each transaction of the account.
+    if (await fireflyQueueDeleteIfLinked(
+        FireflySyncEntityType.wallet, walletPk)) return;
     TransactionWallet? newPrimaryCandidate;
 
     if (walletPk == "0") {
@@ -5347,6 +5419,15 @@ class FinanceDatabase extends _$FinanceDatabase {
                 return tbl.walletFk.equals(walletPk!);
               }))
             .get());
+    // With Firefly the move would send amounts converted at the rates of
+    // this app, and Firefly keeps the currency of each transaction. Moves
+    // between two wallets of one currency only.
+    if (fireflyEnabled &&
+        transactionsForMove.any((t) =>
+            (allWallets.indexedByPk[t.walletFk]?.currency ?? "") !=
+            (allWallets.indexedByPk[toWalletPk]?.currency ?? ""))) {
+      return false;
+    }
     List<Transaction> allTransactionsToUpdate = [];
     for (Transaction transaction in transactionsForMove) {
       allTransactionsToUpdate.add(transaction.copyWith(

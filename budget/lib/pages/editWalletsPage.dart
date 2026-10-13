@@ -472,11 +472,24 @@ void mergeWalletPopup(
         popRoute(context);
       }
       openLoadingPopupTryCatch(() async {
-        await database.moveWalletTransactions(
+        bool moved = await database.moveWalletTransactions(
           Provider.of<AllWallets>(context, listen: false),
           walletOriginal.walletPk,
           selectedWalletResult.walletPk,
         );
+        if (!moved) {
+          // Refused with Firefly: the two accounts have different
+          // currencies. Nothing changed.
+          openSnackbar(
+            SnackbarMessage(
+              title: "firefly-merge-refused".tr(),
+              icon: appStateSettings["outlinedIcons"]
+                  ? Icons.merge_outlined
+                  : Icons.merge_rounded,
+            ),
+          );
+          return;
+        }
         if (walletOriginal.walletPk == "0") {
           await database.convertToPrimaryWallet(selectedWalletResult);
         } else {

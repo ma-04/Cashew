@@ -110,6 +110,10 @@ const String _fireflySyncMapV49 = """
   )
 """;
 
+/// v50: the v49 table and its index on (entity_type, firefly_id). No
+/// remote_snapshot column and no firefly_outbox table, which v51 adds.
+const String _fireflySyncMapV50 = _fireflySyncMapV49;
+
 /// Puts a database of the current schema back to [version], thus the next
 /// open runs `onUpgrade` and not `onCreate`. The firefly_sync_map table gets
 /// the shape of that version. The other tables keep their shape, because no
@@ -118,10 +122,16 @@ void _rewindTo(String path, int version) {
   final raw.Database db = raw.sqlite3.open(path);
   try {
     db.execute("DROP TABLE IF EXISTS firefly_sync_map");
+    db.execute("DROP TABLE IF EXISTS firefly_outbox");
     // v46 is before the Firefly feature, thus it has no such table.
     if (version == 47) db.execute(_fireflySyncMapV47);
     if (version == 48) db.execute(_fireflySyncMapV48);
     if (version == 49) db.execute(_fireflySyncMapV49);
+    if (version == 50) {
+      db.execute(_fireflySyncMapV50);
+      db.execute("CREATE INDEX firefly_sync_map_entity_type_firefly_id "
+          "ON firefly_sync_map (entity_type, firefly_id)");
+    }
     db.execute("PRAGMA user_version = $version");
   } finally {
     db.dispose();
@@ -162,7 +172,7 @@ void main() {
     return file.path;
   }
 
-  for (final int from in <int>[46, 47, 48, 49]) {
+  for (final int from in <int>[46, 47, 48, 49, 50]) {
     test("upgrades a v$from database to v$schemaVersionGlobal", () async {
       final String path = await freshDatabase("db-$from");
       _rewindTo(path, from);
@@ -187,6 +197,11 @@ void main() {
       expect(await _indexesOf(database, "firefly_sync_map"),
           contains("firefly_sync_map_entity_type_firefly_id"),
           reason: "the v50 index block must have run");
+      expect(columns, contains("remote_snapshot"),
+          reason: "the v51 addColumn block must have run");
+      expect(await _columnsOf(database, "firefly_outbox"),
+          containsAll(["entity_type", "local_pk", "state", "intent"]),
+          reason: "the v51 createTable block must have run");
 
       final QueryRow version =
           await database.customSelect("PRAGMA user_version").getSingle();

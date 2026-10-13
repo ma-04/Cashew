@@ -358,6 +358,31 @@ class FireflyApiClient {
   Future<void> deleteTransactionJournal(int journalId) =>
       _delete("/transaction-journals/$journalId");
 
+  // The raw records, as the server sends them. The Firefly client keeps each
+  // record whole as the snapshot of its local row; the typed models above
+  // keep only the fields that the old sync engine read.
+  Future<List<Map<String, dynamic>>> getAllRaw(String path,
+          [Map<String, dynamic>? query]) =>
+      _getAllPages(path, query ?? {});
+
+  Future<Map<String, dynamic>> getRaw(String path) async =>
+      Map<String, dynamic>.from((await _get(path))["data"]);
+
+  Future<Map<String, dynamic>> postRaw(
+          String path, Map<String, dynamic> body) async =>
+      Map<String, dynamic>.from((await _post(path, body))["data"]);
+
+  Future<Map<String, dynamic>> putRaw(
+          String path, Map<String, dynamic> body) async =>
+      Map<String, dynamic>.from((await _put(path, body))["data"]);
+
+  Future<void> deleteRaw(String path) => _delete(path);
+
+  // A date for the start and end parameters and for the date keywords of the
+  // search. The search ignores a value with a time and finds nothing, with no
+  // error (updated_at_after:2024-01-01T00:00:00 gives 0 records).
+  String formatQueryDate(DateTime date) => _formatDate(date);
+
   String _formatDate(DateTime date) {
     String twoDigits(int n) => n.toString().padLeft(2, "0");
     return "${date.year}-${twoDigits(date.month)}-${twoDigits(date.day)}";
