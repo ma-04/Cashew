@@ -413,6 +413,17 @@ int? _categoryIdOf(FireflyPushContext ctx, Transaction row) {
   throw _Held("A transaction waits for its category to reach Firefly.");
 }
 
+// The tag of the subcategory of a row ("Parent/Child"), or null.
+Future<String?> _subcategoryTagOf(Transaction row) async {
+  if (row.subCategoryFk == null) return null;
+  TransactionCategory? sub =
+      await database.getCategoryInstanceOrNull(row.subCategoryFk!);
+  TransactionCategory? main =
+      await database.getCategoryInstanceOrNull(row.categoryFk);
+  if (sub == null || main == null) return null;
+  return fireflySubcategoryTag(main.name, sub.name);
+}
+
 int _accountOf(FireflyPushContext ctx, String walletPk) {
   int? id = ctx.apply.accountByWalletPk[walletPk];
   if (id == null) {
@@ -477,17 +488,19 @@ Future<void> _pushTransactionCreate(
       row,
       assetAccountId: _accountOf(ctx, row.walletFk),
       categoryId: _categoryIdOf(ctx, row),
+      subcategoryTag: await _subcategoryTagOf(row),
     ));
     String otherSide = row.amount > 0 ? "source" : "destination";
-    if (ctx.counterpartyNaming == "category" &&
+    if (fireflyLocalPayee(row) == null &&
+        ctx.counterpartyNaming == "category" &&
         row.categoryFk != kFireflyUncategorizedCategoryPk) {
       TransactionCategory? category =
           await database.getCategoryInstanceOrNull(row.categoryFk);
       if (category != null) split["${otherSide}_name"] = category.name;
     }
-    // Otherwise no other account: Firefly books the split on its own cash
-    // account, and makes that account when the server has none yet. A name
-    // would make an expense or a revenue account of that name.
+    // A row with no payee names no other account: Firefly books the split
+    // on its own cash account, and makes that account when the server has
+    // none yet.
   }
   split["external_id"] = source.transactionPk;
   await fireflyCountAttempt(_transaction, op.localPk, "sent");
@@ -561,6 +574,7 @@ Future<void> _pushTransactionUpdate(
       row,
       assetAccountId: _accountOf(ctx, row.walletFk),
       categoryId: _categoryIdOf(ctx, row),
+      subcategoryTag: await _subcategoryTagOf(row),
     );
   }
   if (fireflyDiff(local, base).isEmpty) return;
@@ -600,6 +614,16 @@ Future<void> _pushTransactionUpdate(
     ctx.report.conflicts += merge.conflicts.length;
     ctx.report.warn("A transaction was changed on Firefly and here. For "
         "${merge.conflicts.join(", ")} the value of Firefly stays.");
+  }
+  if (merge.send.containsKey(kFieldPayee) &&
+      !fireflyPayeeIsEditable(liveSplit)) {
+    // A name always finds or makes an expense or a revenue account, thus a
+    // payment to a loan would lose the loan.
+    merge.send.remove(kFieldPayee);
+    ctx.report.reverted++;
+    ctx.report.warn("The other account of this transaction is a liability "
+        "or an asset account. Change it on Firefly; the payee here was "
+        "undone.");
   }
   if (merge.send.isEmpty) {
     await fireflyApplyGroup(ctx.apply, group);

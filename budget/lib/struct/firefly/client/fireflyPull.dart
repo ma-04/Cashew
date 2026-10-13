@@ -339,11 +339,16 @@ Future<void> fireflyApplyAccountRecord(
   DateTime stamp = fireflyEngineStamp(_updatedAt(record));
   String? currency = attributes["currency_code"]?.toString().toLowerCase();
   int decimals = fireflyParseInt(attributes["currency_decimal_places"]) ?? 2;
+  // An inactive account is hidden in the wallet lists; its history stays.
+  bool archived = attributes["active"] == false;
+  String? kind = fireflyAccountKind(attributes);
   TransactionWallet row = onto != null
       ? onto.copyWith(
           name: name,
           currency: Value(currency),
           decimals: decimals,
+          archived: Value(archived),
+          accountKind: Value(kind),
           dateTimeModified: Value(stamp),
         )
       : TransactionWallet(
@@ -354,6 +359,8 @@ Future<void> fireflyApplyAccountRecord(
           order: order,
           currency: currency,
           decimals: decimals,
+          archived: archived,
+          accountKind: kind,
         );
   await database.createOrUpdateWallet(row, customDateTimeModified: stamp);
   await fireflyWriteMap(
@@ -611,6 +618,17 @@ Future<void> _applySplit(
   DateTime stamp = fireflyEngineStamp(_updatedAt(group));
   String pk = map?.localPk ?? local?.transactionPk ?? uuid.v4();
 
+  (String?, List<String>) tags =
+      await _subcategoryFromTags(categoryPk, fireflyRemoteTags(split));
+  if (tags.$1 == null &&
+      local?.subCategoryFk != null &&
+      local!.categoryFk == categoryPk &&
+      !await _subcategoryTagWasRemoved(local, map)) {
+    // A subcategory that was never on Firefly (a row from before the sync,
+    // or from before subcategories went as tags) stays. Its tag goes with the
+    // next change of the row.
+    tags = (local.subCategoryFk, tags.$2);
+  }
   Transaction row = _applyFields(
     local ?? _newRow(pk),
     name: (split["description"] ?? "").toString(),
@@ -622,6 +640,9 @@ Future<void> _applySplit(
     income: income,
     stamp: stamp,
     pairedPk: null,
+    subCategoryPk: tags.$1,
+    payee: fireflyRemotePayee(split),
+    tags: tags.$2,
   );
   if (local?.pairedTransactionFk != null) {
     await _deleteRow(local!.pairedTransactionFk!);
@@ -713,6 +734,9 @@ Future<void> _applyTransfer(
     income: false,
     stamp: stamp,
     pairedPk: destinationPk,
+    subCategoryPk: null,
+    payee: null,
+    tags: fireflyRemoteTags(split),
   );
   Transaction destinationRow = _applyFields(
     destination ?? _newRow(destinationPk),
@@ -725,6 +749,9 @@ Future<void> _applyTransfer(
     income: true,
     stamp: stamp,
     pairedPk: sourcePk,
+    subCategoryPk: null,
+    payee: null,
+    tags: fireflyRemoteTags(split),
   );
   await _writeRow(sourceRow);
   await _writeRow(destinationRow);
@@ -741,6 +768,70 @@ Future<void> _applyTransfer(
     );
   }
   ctx.report.pulledTransactions++;
+}
+
+// Splits the tags of a split into the subcategory of the row and its other
+// tags. The first tag "Parent/Child" whose parent is the name of the category
+// of the row gives the subcategory "Child", which is made when the category
+// has none of that name. Each other tag stays a tag.
+Future<(String?, List<String>)> _subcategoryFromTags(
+    String categoryPk, List<String> tags) async {
+  if (categoryPk == kFireflyUncategorizedCategoryPk ||
+      categoryPk == kBalanceCorrectionCategoryPk) {
+    return (null, tags);
+  }
+  TransactionCategory? category =
+      await database.getCategoryInstanceOrNull(categoryPk);
+  if (category == null) return (null, tags);
+  String prefix = "${category.name.trim().toLowerCase()}/";
+  String? tag = tags
+      .where((t) =>
+          t.toLowerCase().startsWith(prefix) &&
+          t.substring(prefix.length).trim().isNotEmpty)
+      .firstOrNull;
+  if (tag == null) return (null, tags);
+  String childName = tag.substring(prefix.length).trim();
+  List<TransactionCategory> subcategories =
+      await database.getAllSubCategoriesOfMainCategory(categoryPk);
+  TransactionCategory? sub = subcategories
+      .where((c) => c.name.trim().toLowerCase() == childName.toLowerCase())
+      .firstOrNull;
+  if (sub == null) {
+    int order = subcategories.isEmpty
+        ? 0
+        : subcategories.map((c) => c.order).reduce((a, b) => a > b ? a : b) +
+            1;
+    sub = TransactionCategory(
+      categoryPk: uuid.v4(),
+      name: childName,
+      dateCreated: DateTime.now(),
+      dateTimeModified: DateTime.now(),
+      order: order,
+      income: category.income,
+      mainCategoryPk: categoryPk,
+      methodAdded: MethodAdded.firefly,
+    );
+    // insert: false keeps the key above; insert: true would make a new one.
+    await database.createOrUpdateCategory(sub,
+        insert: false, updateSharedEntry: false);
+  }
+  return (sub.categoryPk, [...tags]..remove(tag));
+}
+
+// True when the last snapshot of the row had the tag of its subcategory: the
+// server removed it.
+Future<bool> _subcategoryTagWasRemoved(
+    Transaction local, FireflySyncMapEntry? map) async {
+  Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
+  if (snapshot == null) return false;
+  TransactionCategory? sub =
+      await database.getCategoryInstanceOrNull(local.subCategoryFk!);
+  TransactionCategory? main =
+      await database.getCategoryInstanceOrNull(local.categoryFk);
+  if (sub == null || main == null) return true;
+  String tag = fireflySubcategoryTag(main.name, sub.name).toLowerCase();
+  return fireflyRemoteTags(Map<String, dynamic>.from(snapshot[kSnapSplit] ?? {}))
+      .any((t) => t.toLowerCase() == tag);
 }
 
 Future<Transaction?> _rowOrNull(String transactionPk) {
@@ -790,14 +881,18 @@ Transaction _applyFields(
   required bool income,
   required DateTime stamp,
   required String? pairedPk,
+  required String? subCategoryPk,
+  required String? payee,
+  required List<String> tags,
 }) {
   return row.copyWith(
     name: name,
     amount: amount,
     note: note,
     categoryFk: categoryPk,
-    subCategoryFk:
-        row.categoryFk == categoryPk ? Value(row.subCategoryFk) : Value(null),
+    subCategoryFk: Value(subCategoryPk),
+    payee: Value(payee),
+    tags: Value(tags.isEmpty ? null : tags),
     walletFk: walletPk,
     dateCreated: date.toLocal(),
     income: income,

@@ -7,8 +7,12 @@ Transaction _row({
   String name = "Lunch",
   String note = "",
   DateTime? date,
+  String? payee = "Shop",
+  List<String>? tags = const ["food"],
 }) {
   return Transaction(
+    payee: payee,
+    tags: tags,
     transactionPk: "t1",
     name: name,
     amount: amount,
@@ -215,9 +219,9 @@ void main() {
       "source_id": "3",
       "destination_id": "8",
     };
-    Transaction source = _row(amount: -1200, name: "To card")
+    Transaction source = _row(amount: -1200, name: "To card", tags: null)
         .copyWith(dateCreated: DateTime.utc(2024, 5, 1, 10));
-    Transaction destination = _row(amount: 9.68, name: "To card")
+    Transaction destination = _row(amount: 9.68, name: "To card", tags: null)
         .copyWith(dateCreated: DateTime.utc(2024, 5, 1, 10));
 
     test("an edit of the source amount keeps the foreign amount", () {
@@ -245,8 +249,10 @@ void main() {
   });
 
   test("a create sends every field, the asset on the correct side", () {
-    FireflyProjection local = fireflyProjectLocalRow(_row(amount: 50),
-        assetAccountId: 3, categoryId: null);
+    FireflyProjection local = fireflyProjectLocalRow(
+        _row(amount: 50, payee: null, tags: null),
+        assetAccountId: 3,
+        categoryId: null);
     expect(fireflyCreateRequestFields(local), {
       "type": "deposit",
       "date": "2024-05-01T21:30:00Z",
@@ -282,6 +288,83 @@ void main() {
       expect(fireflyNotesWithColour("Trips", "0xffff8800"),
           "Trips\ncolor: #ff8800");
       expect(fireflyNotesWithColour(null, "0xffff8800"), "color: #ff8800");
+    });
+  });
+
+  group("payee and tags", () {
+    test("an unchanged payee and tags in another order send nothing", () {
+      FireflyProjection base =
+          fireflyProjectRemoteSplit(_split()..["tags"] = ["b", "food", "a"]);
+      FireflyProjection local = fireflyProjectLocalRow(
+          _row(tags: ["a", "food", "b"]),
+          assetAccountId: 3,
+          categoryId: 7);
+      expect(fireflyDiff(local, base), isEmpty);
+    });
+
+    test("a new payee sends the name of the other account only", () {
+      Map<String, dynamic> split = _split();
+      FireflyProjection base = fireflyProjectRemoteSplit(split);
+      FireflyProjection local = fireflyProjectLocalRow(_row(payee: "Bakery"),
+          assetAccountId: 3, categoryId: 7);
+      FireflyMergeResult merge =
+          fireflyMerge(base: base, local: local, live: base);
+      expect(fireflySplitRequestFields(merge.send, live: split),
+          {"destination_name": "Bakery"});
+    });
+
+    test("no payee is the cash account, by an empty name", () {
+      Map<String, dynamic> split = _split(type: "deposit");
+      split["source_name"] = "Employer";
+      split["source_type"] = "Revenue account";
+      split["destination_type"] = "Asset account";
+      FireflyProjection base = fireflyProjectRemoteSplit(split);
+      expect(base[kFieldPayee], "Employer");
+      FireflyProjection local = fireflyProjectLocalRow(
+          _row(amount: 12.5, payee: null),
+          assetAccountId: 9,
+          categoryId: 7);
+      FireflyMergeResult merge =
+          fireflyMerge(base: base, local: local, live: base);
+      expect(fireflySplitRequestFields(merge.send, live: split),
+          {"source_name": ""});
+    });
+
+    test("the cash account reads as no payee", () {
+      Map<String, dynamic> split = _split()
+        ..["destination_name"] = "Cash account"
+        ..["destination_type"] = "Cash account";
+      expect(fireflyRemotePayee(split), isNull);
+      expect(fireflyPayeeIsEditable(split), isTrue);
+      split["destination_type"] = "Loan";
+      expect(fireflyPayeeIsEditable(split), isFalse);
+    });
+
+    test("a subcategory goes as a tag, and the tags as a full list", () {
+      FireflyProjection base = fireflyProjectRemoteSplit(_split());
+      FireflyProjection local = fireflyProjectLocalRow(_row(),
+          assetAccountId: 3,
+          categoryId: 7,
+          subcategoryTag: fireflySubcategoryTag("Food", "Snacks"));
+      FireflyMergeResult merge =
+          fireflyMerge(base: base, local: local, live: base);
+      expect(fireflySplitRequestFields(merge.send, live: _split()), {
+        "tags": ["Food/Snacks", "food"]
+      });
+    });
+
+    test("a create names the payee, or no other account", () {
+      expect(
+          fireflyCreateRequestFields(fireflyProjectLocalRow(
+              _row(payee: "Market", tags: ["weekly"]),
+              assetAccountId: 3,
+              categoryId: null))["destination_name"],
+          "Market");
+      Map<String, dynamic> body = fireflyCreateRequestFields(
+          fireflyProjectLocalRow(_row(payee: null, tags: null),
+              assetAccountId: 3, categoryId: null));
+      expect(body.containsKey("destination_name"), isFalse);
+      expect(body.containsKey("tags"), isFalse);
     });
   });
 }

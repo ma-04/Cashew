@@ -449,8 +449,10 @@ void main() {
       LiveResponse account = await live.get("/accounts/$checking");
       expect(account.attributes["active"], isFalse);
       expect((await live.get("/transactions/$lunch")).status, 200);
-      expect(await database.getWalletInstanceOrNull(wallet.walletPk),
-          isNotNull);
+      TransactionWallet? hidden =
+          await database.getWalletInstanceOrNull(wallet.walletPk);
+      expect(hidden, isNotNull);
+      expect(hidden!.archived, isTrue);
     });
 
     test('a renamed wallet changes the name only', () async {
@@ -718,6 +720,127 @@ void main() {
       await sync();
       expect((await live.get("/categories/$food")).attributes["updated_at"],
           foodBefore["updated_at"]);
+    });
+
+    test('the payee and the tags come here, and a change goes back', () async {
+      await sync();
+      Transaction row = await localRowOfGroup(lunch);
+      expect(row.payee, "Cafe");
+      expect(row.tags, ["work"]);
+      Map<String, dynamic> before = await remoteSplit(live, lunch);
+
+      await editLocally(row.copyWith(
+          payee: const Value("Bakery"), tags: const Value(["home", "work"])));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["destination_name"], "Bakery");
+      expect(after["destination_type"], "Expense account");
+      expect(List.from(after["tags"])..sort(), ["home", "work"]);
+      expect(
+          without(after, {"destination_id", "destination_name", "tags"}),
+          without(before, {"destination_id", "destination_name", "tags"}));
+
+      // No payee is the cash account; no tags clears them.
+      row = await localRowOfGroup(lunch);
+      await editLocally(
+          row.copyWith(payee: const Value(null), tags: const Value(null)));
+      await sync(pushOnly: true);
+      after = await remoteSplit(live, lunch);
+      expect(after["destination_type"], "Cash account");
+      expect(after["tags"], isEmpty);
+    });
+
+    test('a new transaction names its payee and its tags', () async {
+      await sync();
+      Transaction lunchRow = await localRowOfGroup(lunch);
+      String pk = "phone-row-payee";
+      await database.into(database.transactions).insert(
+            lunchRow
+                .copyWith(
+                  transactionPk: pk,
+                  name: "Groceries",
+                  amount: -20,
+                  payee: const Value("Market"),
+                  tags: const Value(["weekly"]),
+                  dateCreated: DateTime.utc(2024, 6, 1, 8),
+                  dateTimeModified: Value(DateTime.now()),
+                )
+                .toCompanion(true),
+          );
+      await sync(pushOnly: true);
+      List<FireflySyncMapEntry> maps = await (database
+              .select(database.fireflySyncMap)
+            ..where((m) => m.localPk.equals(pk)))
+          .get();
+      expect(maps, hasLength(1));
+      Map<String, dynamic> created = await remoteSplit(live, maps.single.fireflyId);
+      expect(created["destination_name"], "Market");
+      expect(created["destination_type"], "Expense account");
+      expect(created["tags"], ["weekly"]);
+    });
+
+    test('a subcategory is the tag "Parent/Child" on Firefly', () async {
+      Map<String, dynamic> split = await remoteSplit(live, lunch);
+      LiveResponse web = await live.put("/transactions/$lunch", {
+        "transactions": [
+          {
+            "transaction_journal_id": split["transaction_journal_id"],
+            "tags": ["work", "Food/Snacks"],
+          }
+        ]
+      });
+      expect(web.status, 200, reason: web.toString());
+      await sync();
+      Transaction row = await localRowOfGroup(lunch);
+      expect(row.tags, ["work"]);
+      expect(row.subCategoryFk, isNotNull);
+      TransactionCategory sub =
+          await database.getCategoryInstance(row.subCategoryFk!);
+      expect(sub.name, "Snacks");
+      expect(sub.mainCategoryPk, row.categoryFk);
+
+      // A second subcategory of Food replaces the tag of the first one.
+      TransactionCategory drinks = sub.copyWith(
+          categoryPk: "sub-drinks", name: "Drinks", order: sub.order + 1);
+      await database.createOrUpdateCategory(drinks, updateSharedEntry: false);
+      await editLocally(row.copyWith(subCategoryFk: const Value("sub-drinks")));
+      await sync(pushOnly: true);
+      expect(List.from((await remoteSplit(live, lunch))["tags"])..sort(),
+          ["Food/Drinks", "work"]);
+    });
+
+    test('a payee change on a payment to a loan is undone', () async {
+      LiveResponse loan = await live.post("/accounts", {
+        "name": "Car loan",
+        "type": "liability",
+        "liability_type": "loan",
+        "liability_direction": "debit",
+        "interest": "0",
+        "interest_period": "monthly",
+        "currency_code": "EUR",
+      });
+      LiveResponse payment = await live.post("/transactions", {
+        "transactions": [
+          {
+            "type": "withdrawal",
+            "date": "2024-05-03T09:00:00Z",
+            "amount": "100",
+            "description": "Loan payment",
+            "source_id": checking.toString(),
+            "destination_id": loan.id.toString(),
+          }
+        ]
+      });
+      await sync();
+      Transaction row = await localRowOfGroup(payment.id);
+      expect(row.payee, "Car loan");
+      await editLocally(row.copyWith(payee: const Value("Someone")));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.reverted, 1);
+      Map<String, dynamic> after = await remoteSplit(live, payment.id);
+      expect(after["destination_id"], loan.id.toString());
+      expect((await localRowOfGroup(payment.id)).payee, "Car loan");
     });
   }, reset: FireflyLiveReset.eachTest);
 }

@@ -29,7 +29,7 @@ import 'package:budget/pages/activityPage.dart';
 import 'package:flutter/material.dart' show RangeValues;
 part 'tables.g.dart';
 
-int schemaVersionGlobal = 51;
+int schemaVersionGlobal = 52;
 
 // The highest schema version drift_schemas/ has a snapshot for, and therefore
 // the highest version the generated migrationSteps() in schema_versions.dart
@@ -355,6 +355,14 @@ class Wallets extends Table {
       .nullable()
       .withDefault(const Constant(null))
       .map(const HomePageWidgetDisplayListInColumnConverter())();
+  // A wallet that is hidden from the wallet lists, with its history kept.
+  // Firefly mode sets it for an inactive Firefly account.
+  // Nullable, thus the data class does not need a value for it.
+  BoolColumn get archived =>
+      boolean().nullable().withDefault(const Constant(false))();
+  // The Firefly account type of a mirrored wallet: null for an asset
+  // account, else the liability type ("loan", "debt" or "mortgage").
+  TextColumn get accountKind => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {walletPk};
@@ -423,6 +431,13 @@ class Transactions extends Table {
   TextColumn get objectiveLoanFk =>
       text().references(Objectives, #objectivePk).nullable()();
   TextColumn get budgetFksExclude =>
+      text().map(const StringListInColumnConverter()).nullable()();
+  // The other party of the transaction: the Firefly expense account of a
+  // withdrawal or the revenue account of a deposit. Null is the cash account.
+  TextColumn get payee => text().nullable()();
+  // The Firefly tags of the transaction. The tag of the subcategory
+  // ("Parent/Child") is not in this list; subCategoryFk holds it.
+  TextColumn get tags =>
       text().map(const StringListInColumnConverter()).nullable()();
 
   @override
@@ -1404,6 +1419,23 @@ class FinanceDatabase extends _$FinanceDatabase {
           } catch (e) {
             print("Migration Error: Error creating table FireflyOutbox " +
                 e.toString());
+          }
+        }
+        if (from <= 51) {
+          for (List<dynamic> tableColumn in [
+            [wallets, wallets.archived],
+            [wallets, wallets.accountKind],
+            [transactions, transactions.payee],
+            [transactions, transactions.tags],
+          ]) {
+            try {
+              await migrator.addColumn(tableColumn[0], tableColumn[1]);
+            } catch (e) {
+              print("Migration Error: Error adding column " +
+                  tableColumn[1].toString() +
+                  " " +
+                  e.toString());
+            }
           }
         }
       },

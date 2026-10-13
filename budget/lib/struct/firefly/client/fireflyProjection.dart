@@ -22,6 +22,21 @@ const String kFieldAsset = "asset";
 const String kFieldSource = "source_id";
 const String kFieldDestination = "destination_id";
 const String kFieldForeignAmount = "foreign_amount";
+// The name of the other account of a withdrawal (its destination) or of a
+// deposit (its source): an expense or a revenue account. Null is the cash
+// account of the server.
+const String kFieldPayee = "payee";
+// The tags of the split, in order of name.
+const String kFieldTags = "tags";
+
+// The other account types that a payee can name. Firefly finds or makes an
+// expense or a revenue account for a name; a split whose other account is a
+// liability or an asset account keeps that account.
+const Set<String> kFireflyPayeeAccountTypes = {
+  "Expense account",
+  "Revenue account",
+  "Cash account",
+};
 
 // Fields that go to the server together or not at all. A change of type moves
 // the asset account to the other side of the split, thus the type and the
@@ -45,6 +60,11 @@ bool fireflyFieldEquals(String key, Object? a, Object? b) {
   }
   if (key == kFieldAmount || key == kFieldForeignAmount) {
     return ((a as double) - (b as double)).abs() < kFireflyAmountTolerance;
+  }
+  if (key == kFieldTags) {
+    List<String> x = List<String>.from(a as List)..sort();
+    List<String> y = List<String>.from(b as List)..sort();
+    return x.join("\u0000") == y.join("\u0000") && x.length == y.length;
   }
   return a == b;
 }
@@ -111,6 +131,29 @@ String fireflySplitType(Map<String, dynamic> split) =>
 bool fireflySplitIsTransfer(Map<String, dynamic> split) =>
     fireflySplitType(split) == "transfer";
 
+// The side of the other account of a withdrawal or a deposit.
+String fireflyOtherSide(String type) =>
+    type == "deposit" ? "source" : "destination";
+
+// The payee of a withdrawal or a deposit as the server holds it: the name of
+// the other account, or null for the cash account.
+String? fireflyRemotePayee(Map<String, dynamic> split) {
+  String side = fireflyOtherSide(fireflySplitType(split));
+  if (split["${side}_type"]?.toString() == "Cash account") return null;
+  String name = (split["${side}_name"] ?? "").toString().trim();
+  return name.isEmpty ? null : name;
+}
+
+// True when a new payee can be given to the split: its other account is an
+// expense, a revenue or the cash account. A payment to a loan keeps the loan.
+bool fireflyPayeeIsEditable(Map<String, dynamic> split) {
+  String side = fireflyOtherSide(fireflySplitType(split));
+  return kFireflyPayeeAccountTypes.contains(split["${side}_type"]?.toString());
+}
+
+List<String> fireflyRemoteTags(Map<String, dynamic> split) =>
+    List.from(split["tags"] ?? []).map((t) => t.toString()).toList()..sort();
+
 // The projection of a withdrawal or a deposit as the server holds it.
 FireflyProjection fireflyProjectRemoteSplit(Map<String, dynamic> split) {
   String type = fireflySplitType(split);
@@ -124,6 +167,8 @@ FireflyProjection fireflyProjectRemoteSplit(Map<String, dynamic> split) {
     kFieldAsset: type == "deposit"
         ? fireflyParseInt(split["destination_id"])
         : fireflyParseInt(split["source_id"]),
+    kFieldPayee: fireflyRemotePayee(split),
+    kFieldTags: fireflyRemoteTags(split),
   };
 }
 
@@ -140,6 +185,7 @@ FireflyProjection fireflyProjectRemoteTransfer(Map<String, dynamic> split) {
     kFieldSource: fireflyParseInt(split["source_id"]),
     kFieldDestination: fireflyParseInt(split["destination_id"]),
     kFieldForeignAmount: fireflyParseAmount(split["foreign_amount"]),
+    kFieldTags: fireflyRemoteTags(split),
   };
 }
 
@@ -148,13 +194,34 @@ FireflyProjection fireflyProjectRemoteTransfer(Map<String, dynamic> split) {
 // Firefly needs a description; the local database permits an empty name.
 const String kFireflyNoDescription = "(no description)";
 
+// The tags of a local row: its tags, and the tag of its subcategory.
+List<String> fireflyLocalTags(Transaction row, String? subcategoryTag) {
+  Set<String> tags = {
+    for (String tag in row.tags ?? const <String>[])
+      if (tag.trim().isNotEmpty) tag.trim(),
+    if (subcategoryTag != null) subcategoryTag,
+  };
+  return tags.toList()..sort();
+}
+
+// The tag of a subcategory: "Parent/Child".
+String fireflySubcategoryTag(String categoryName, String subcategoryName) =>
+    "${categoryName.trim()}/${subcategoryName.trim()}";
+
+String? fireflyLocalPayee(Transaction row) {
+  String name = (row.payee ?? "").trim();
+  return name.isEmpty ? null : name;
+}
+
 // The projection of a local withdrawal or deposit. `assetAccountId` is the
 // Firefly id of the account of the wallet of the row, `categoryId` the Firefly
-// id of its category, or null for no category.
+// id of its category, or null for no category. `subcategoryTag` is the tag of
+// the subcategory of the row, or null.
 FireflyProjection fireflyProjectLocalRow(
   Transaction row, {
   required int assetAccountId,
   required int? categoryId,
+  String? subcategoryTag,
 }) {
   return {
     kFieldType: row.amount > 0 ? "deposit" : "withdrawal",
@@ -164,6 +231,8 @@ FireflyProjection fireflyProjectLocalRow(
     kFieldNotes: row.note,
     kFieldCategory: categoryId,
     kFieldAsset: assetAccountId,
+    kFieldPayee: fireflyLocalPayee(row),
+    kFieldTags: fireflyLocalTags(row, subcategoryTag),
   };
 }
 
@@ -190,6 +259,7 @@ FireflyProjection fireflyProjectLocalTransfer({
     kFieldSource: sourceAccountId,
     kFieldDestination: destinationAccountId,
     kFieldForeignAmount: crossCurrency ? destination.amount.abs() : null,
+    kFieldTags: fireflyLocalTags(source, null),
   };
 }
 
@@ -262,13 +332,21 @@ Map<String, dynamic> fireflySplitRequestFields(
       case kFieldDestination:
         body["destination_id"] = value.toString();
         break;
+      case kFieldTags:
+        body["tags"] = List<String>.from(value as List);
+        break;
       case kFieldType:
       case kFieldAsset:
+      case kFieldPayee:
         break;
     }
   });
   if (send.containsKey(kFieldType) || send.containsKey(kFieldAsset)) {
     _writeAccountSides(body, send, live);
+  } else if (send.containsKey(kFieldPayee)) {
+    // An empty name puts the split on the cash account.
+    String type = live == null ? "withdrawal" : fireflySplitType(live);
+    body["${fireflyOtherSide(type)}_name"] = send[kFieldPayee] ?? "";
   }
   return body;
 }
@@ -299,7 +377,10 @@ void _writeAccountSides(Map<String, dynamic> body, FireflyProjection send,
   String newOtherSide = type == "deposit" ? "source" : "destination";
   String assetSide = type == "deposit" ? "destination" : "source";
   body["${assetSide}_id"] = asset.toString();
-  if (otherType == "Cash account" && otherId != null) {
+  if (send.containsKey(kFieldPayee)) {
+    // A new payee goes with the new type. An empty name is the cash account.
+    body["${newOtherSide}_name"] = send[kFieldPayee] ?? "";
+  } else if (otherType == "Cash account" && otherId != null) {
     body["${newOtherSide}_id"] = otherId.toString();
   } else if (otherName != null && otherName.isNotEmpty) {
     body["${newOtherSide}_name"] = otherName;
@@ -309,8 +390,16 @@ void _writeAccountSides(Map<String, dynamic> body, FireflyProjection send,
 // The fields of a create. A create has no record to compare with, thus each
 // field that the projection holds is sent.
 Map<String, dynamic> fireflyCreateRequestFields(FireflyProjection local) {
-  FireflyProjection send = Map.of(local)..remove(kFieldAsset);
+  FireflyProjection send = Map.of(local)
+    ..remove(kFieldAsset)
+    ..remove(kFieldPayee);
   Map<String, dynamic> body = fireflySplitRequestFields(send);
+  // No payee: no other account, thus Firefly books the split on its own cash
+  // account. A name makes or finds the expense or revenue account.
+  String? payee = local[kFieldPayee] as String?;
+  if (payee != null && local.containsKey(kFieldAsset)) {
+    body["${fireflyOtherSide(local[kFieldType] as String)}_name"] = payee;
+  }
   if (local.containsKey(kFieldAsset)) {
     String type = local[kFieldType] as String;
     body["type"] = type;
@@ -321,7 +410,19 @@ Map<String, dynamic> fireflyCreateRequestFields(FireflyProjection local) {
   }
   if (body["category_id"] == null) body.remove("category_id");
   if ((body["notes"] ?? "") == "") body.remove("notes");
+  if ((body["tags"] as List?)?.isEmpty ?? false) body.remove("tags");
   return body;
+}
+
+// --- Accounts ---------------------------------------------------------------
+
+// The kind of a Firefly account for Wallets.accountKind: null for an asset
+// account, else the liability type ("loan", "debt" or "mortgage").
+String? fireflyAccountKind(Map attributes) {
+  String type = (attributes["type"] ?? "asset").toString().toLowerCase();
+  if (type == "asset") return null;
+  String? liability = attributes["liability_type"]?.toString().toLowerCase();
+  return (liability == null || liability.isEmpty) ? "loan" : liability;
 }
 
 // --- Category colour ---------------------------------------------------------

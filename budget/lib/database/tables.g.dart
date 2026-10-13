@@ -89,6 +89,22 @@ class $WalletsTable extends Wallets
           defaultValue: const Constant(null))
       .withConverter<List<HomePageWidgetDisplay>?>(
           $WalletsTable.$converterhomePageWidgetDisplayn);
+  static const VerificationMeta _archivedMeta =
+      const VerificationMeta('archived');
+  @override
+  late final GeneratedColumn<bool> archived = GeneratedColumn<bool>(
+      'archived', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("archived" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _accountKindMeta =
+      const VerificationMeta('accountKind');
+  @override
+  late final GeneratedColumn<String> accountKind = GeneratedColumn<String>(
+      'account_kind', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         walletPk,
@@ -101,7 +117,9 @@ class $WalletsTable extends Wallets
         currency,
         currencyFormat,
         decimals,
-        homePageWidgetDisplay
+        homePageWidgetDisplay,
+        archived,
+        accountKind
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -165,6 +183,16 @@ class $WalletsTable extends Wallets
     }
     context.handle(
         _homePageWidgetDisplayMeta, const VerificationResult.success());
+    if (data.containsKey('archived')) {
+      context.handle(_archivedMeta,
+          archived.isAcceptableOrUnknown(data['archived']!, _archivedMeta));
+    }
+    if (data.containsKey('account_kind')) {
+      context.handle(
+          _accountKindMeta,
+          accountKind.isAcceptableOrUnknown(
+              data['account_kind']!, _accountKindMeta));
+    }
     return context;
   }
 
@@ -197,6 +225,10 @@ class $WalletsTable extends Wallets
       homePageWidgetDisplay: $WalletsTable.$converterhomePageWidgetDisplayn
           .fromSql(attachedDatabase.typeMapping.read(DriftSqlType.string,
               data['${effectivePrefix}home_page_widget_display'])),
+      archived: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}archived']),
+      accountKind: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}account_kind']),
     );
   }
 
@@ -226,6 +258,8 @@ class TransactionWallet extends DataClass
   final String? currencyFormat;
   final int decimals;
   final List<HomePageWidgetDisplay>? homePageWidgetDisplay;
+  final bool? archived;
+  final String? accountKind;
   const TransactionWallet(
       {required this.walletPk,
       required this.name,
@@ -237,7 +271,9 @@ class TransactionWallet extends DataClass
       this.currency,
       this.currencyFormat,
       required this.decimals,
-      this.homePageWidgetDisplay});
+      this.homePageWidgetDisplay,
+      this.archived,
+      this.accountKind});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -266,6 +302,12 @@ class TransactionWallet extends DataClass
           .$converterhomePageWidgetDisplayn
           .toSql(homePageWidgetDisplay));
     }
+    if (!nullToAbsent || archived != null) {
+      map['archived'] = Variable<bool>(archived);
+    }
+    if (!nullToAbsent || accountKind != null) {
+      map['account_kind'] = Variable<String>(accountKind);
+    }
     return map;
   }
 
@@ -293,6 +335,12 @@ class TransactionWallet extends DataClass
       homePageWidgetDisplay: homePageWidgetDisplay == null && nullToAbsent
           ? const Value.absent()
           : Value(homePageWidgetDisplay),
+      archived: archived == null && nullToAbsent
+          ? const Value.absent()
+          : Value(archived),
+      accountKind: accountKind == null && nullToAbsent
+          ? const Value.absent()
+          : Value(accountKind),
     );
   }
 
@@ -313,6 +361,8 @@ class TransactionWallet extends DataClass
       decimals: serializer.fromJson<int>(json['decimals']),
       homePageWidgetDisplay: serializer.fromJson<List<HomePageWidgetDisplay>?>(
           json['homePageWidgetDisplay']),
+      archived: serializer.fromJson<bool?>(json['archived']),
+      accountKind: serializer.fromJson<String?>(json['accountKind']),
     );
   }
   @override
@@ -331,6 +381,8 @@ class TransactionWallet extends DataClass
       'decimals': serializer.toJson<int>(decimals),
       'homePageWidgetDisplay': serializer
           .toJson<List<HomePageWidgetDisplay>?>(homePageWidgetDisplay),
+      'archived': serializer.toJson<bool?>(archived),
+      'accountKind': serializer.toJson<String?>(accountKind),
     };
   }
 
@@ -346,7 +398,9 @@ class TransactionWallet extends DataClass
           Value<String?> currencyFormat = const Value.absent(),
           int? decimals,
           Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay =
-              const Value.absent()}) =>
+              const Value.absent(),
+          Value<bool?> archived = const Value.absent(),
+          Value<String?> accountKind = const Value.absent()}) =>
       TransactionWallet(
         walletPk: walletPk ?? this.walletPk,
         name: name ?? this.name,
@@ -364,6 +418,8 @@ class TransactionWallet extends DataClass
         homePageWidgetDisplay: homePageWidgetDisplay.present
             ? homePageWidgetDisplay.value
             : this.homePageWidgetDisplay,
+        archived: archived.present ? archived.value : this.archived,
+        accountKind: accountKind.present ? accountKind.value : this.accountKind,
       );
   @override
   String toString() {
@@ -378,7 +434,9 @@ class TransactionWallet extends DataClass
           ..write('currency: $currency, ')
           ..write('currencyFormat: $currencyFormat, ')
           ..write('decimals: $decimals, ')
-          ..write('homePageWidgetDisplay: $homePageWidgetDisplay')
+          ..write('homePageWidgetDisplay: $homePageWidgetDisplay, ')
+          ..write('archived: $archived, ')
+          ..write('accountKind: $accountKind')
           ..write(')'))
         .toString();
   }
@@ -395,7 +453,9 @@ class TransactionWallet extends DataClass
       currency,
       currencyFormat,
       decimals,
-      homePageWidgetDisplay);
+      homePageWidgetDisplay,
+      archived,
+      accountKind);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -410,7 +470,9 @@ class TransactionWallet extends DataClass
           other.currency == this.currency &&
           other.currencyFormat == this.currencyFormat &&
           other.decimals == this.decimals &&
-          other.homePageWidgetDisplay == this.homePageWidgetDisplay);
+          other.homePageWidgetDisplay == this.homePageWidgetDisplay &&
+          other.archived == this.archived &&
+          other.accountKind == this.accountKind);
 }
 
 class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
@@ -425,6 +487,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
   final Value<String?> currencyFormat;
   final Value<int> decimals;
   final Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay;
+  final Value<bool?> archived;
+  final Value<String?> accountKind;
   final Value<int> rowid;
   const WalletsCompanion({
     this.walletPk = const Value.absent(),
@@ -438,6 +502,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
     this.currencyFormat = const Value.absent(),
     this.decimals = const Value.absent(),
     this.homePageWidgetDisplay = const Value.absent(),
+    this.archived = const Value.absent(),
+    this.accountKind = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   WalletsCompanion.insert({
@@ -452,6 +518,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
     this.currencyFormat = const Value.absent(),
     this.decimals = const Value.absent(),
     this.homePageWidgetDisplay = const Value.absent(),
+    this.archived = const Value.absent(),
+    this.accountKind = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : name = Value(name),
         order = Value(order);
@@ -467,6 +535,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
     Expression<String>? currencyFormat,
     Expression<int>? decimals,
     Expression<String>? homePageWidgetDisplay,
+    Expression<bool>? archived,
+    Expression<String>? accountKind,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -482,6 +552,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
       if (decimals != null) 'decimals': decimals,
       if (homePageWidgetDisplay != null)
         'home_page_widget_display': homePageWidgetDisplay,
+      if (archived != null) 'archived': archived,
+      if (accountKind != null) 'account_kind': accountKind,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -498,6 +570,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
       Value<String?>? currencyFormat,
       Value<int>? decimals,
       Value<List<HomePageWidgetDisplay>?>? homePageWidgetDisplay,
+      Value<bool?>? archived,
+      Value<String?>? accountKind,
       Value<int>? rowid}) {
     return WalletsCompanion(
       walletPk: walletPk ?? this.walletPk,
@@ -512,6 +586,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
       decimals: decimals ?? this.decimals,
       homePageWidgetDisplay:
           homePageWidgetDisplay ?? this.homePageWidgetDisplay,
+      archived: archived ?? this.archived,
+      accountKind: accountKind ?? this.accountKind,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -554,6 +630,12 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
           .$converterhomePageWidgetDisplayn
           .toSql(homePageWidgetDisplay.value));
     }
+    if (archived.present) {
+      map['archived'] = Variable<bool>(archived.value);
+    }
+    if (accountKind.present) {
+      map['account_kind'] = Variable<String>(accountKind.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -574,6 +656,8 @@ class WalletsCompanion extends UpdateCompanion<TransactionWallet> {
           ..write('currencyFormat: $currencyFormat, ')
           ..write('decimals: $decimals, ')
           ..write('homePageWidgetDisplay: $homePageWidgetDisplay, ')
+          ..write('archived: $archived, ')
+          ..write('accountKind: $accountKind, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2120,6 +2204,17 @@ class $TransactionsTable extends Transactions
               type: DriftSqlType.string, requiredDuringInsert: false)
           .withConverter<List<String>?>(
               $TransactionsTable.$converterbudgetFksExcluden);
+  static const VerificationMeta _payeeMeta = const VerificationMeta('payee');
+  @override
+  late final GeneratedColumn<String> payee = GeneratedColumn<String>(
+      'payee', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _tagsMeta = const VerificationMeta('tags');
+  @override
+  late final GeneratedColumnWithTypeConverter<List<String>?, String> tags =
+      GeneratedColumn<String>('tags', aliasedName, true,
+              type: DriftSqlType.string, requiredDuringInsert: false)
+          .withConverter<List<String>?>($TransactionsTable.$convertertagsn);
   @override
   List<GeneratedColumn> get $columns => [
         transactionPk,
@@ -2152,7 +2247,9 @@ class $TransactionsTable extends Transactions
         sharedReferenceBudgetPk,
         objectiveFk,
         objectiveLoanFk,
-        budgetFksExclude
+        budgetFksExclude,
+        payee,
+        tags
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2319,6 +2416,11 @@ class $TransactionsTable extends Transactions
               data['objective_loan_fk']!, _objectiveLoanFkMeta));
     }
     context.handle(_budgetFksExcludeMeta, const VerificationResult.success());
+    if (data.containsKey('payee')) {
+      context.handle(
+          _payeeMeta, payee.isAcceptableOrUnknown(data['payee']!, _payeeMeta));
+    }
+    context.handle(_tagsMeta, const VerificationResult.success());
     return context;
   }
 
@@ -2400,6 +2502,11 @@ class $TransactionsTable extends Transactions
       budgetFksExclude: $TransactionsTable.$converterbudgetFksExcluden.fromSql(
           attachedDatabase.typeMapping.read(DriftSqlType.string,
               data['${effectivePrefix}budget_fks_exclude'])),
+      payee: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}payee']),
+      tags: $TransactionsTable.$convertertagsn.fromSql(attachedDatabase
+          .typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tags'])),
     );
   }
 
@@ -2431,6 +2538,10 @@ class $TransactionsTable extends Transactions
       const StringListInColumnConverter();
   static TypeConverter<List<String>?, String?> $converterbudgetFksExcluden =
       NullAwareTypeConverter.wrap($converterbudgetFksExclude);
+  static TypeConverter<List<String>, String> $convertertags =
+      const StringListInColumnConverter();
+  static TypeConverter<List<String>?, String?> $convertertagsn =
+      NullAwareTypeConverter.wrap($convertertags);
 }
 
 class Transaction extends DataClass implements Insertable<Transaction> {
@@ -2465,6 +2576,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
   final String? objectiveFk;
   final String? objectiveLoanFk;
   final List<String>? budgetFksExclude;
+  final String? payee;
+  final List<String>? tags;
   const Transaction(
       {required this.transactionPk,
       this.pairedTransactionFk,
@@ -2496,7 +2609,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       this.sharedReferenceBudgetPk,
       this.objectiveFk,
       this.objectiveLoanFk,
-      this.budgetFksExclude});
+      this.budgetFksExclude,
+      this.payee,
+      this.tags});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2583,6 +2698,13 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           .$converterbudgetFksExcluden
           .toSql(budgetFksExclude));
     }
+    if (!nullToAbsent || payee != null) {
+      map['payee'] = Variable<String>(payee);
+    }
+    if (!nullToAbsent || tags != null) {
+      map['tags'] =
+          Variable<String>($TransactionsTable.$convertertagsn.toSql(tags));
+    }
     return map;
   }
 
@@ -2662,6 +2784,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       budgetFksExclude: budgetFksExclude == null && nullToAbsent
           ? const Value.absent()
           : Value(budgetFksExclude),
+      payee:
+          payee == null && nullToAbsent ? const Value.absent() : Value(payee),
+      tags: tags == null && nullToAbsent ? const Value.absent() : Value(tags),
     );
   }
 
@@ -2713,6 +2838,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       objectiveLoanFk: serializer.fromJson<String?>(json['objectiveLoanFk']),
       budgetFksExclude:
           serializer.fromJson<List<String>?>(json['budgetFksExclude']),
+      payee: serializer.fromJson<String?>(json['payee']),
+      tags: serializer.fromJson<List<String>?>(json['tags']),
     );
   }
   @override
@@ -2759,6 +2886,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
       'objectiveFk': serializer.toJson<String?>(objectiveFk),
       'objectiveLoanFk': serializer.toJson<String?>(objectiveLoanFk),
       'budgetFksExclude': serializer.toJson<List<String>?>(budgetFksExclude),
+      'payee': serializer.toJson<String?>(payee),
+      'tags': serializer.toJson<List<String>?>(tags),
     };
   }
 
@@ -2793,7 +2922,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           Value<String?> sharedReferenceBudgetPk = const Value.absent(),
           Value<String?> objectiveFk = const Value.absent(),
           Value<String?> objectiveLoanFk = const Value.absent(),
-          Value<List<String>?> budgetFksExclude = const Value.absent()}) =>
+          Value<List<String>?> budgetFksExclude = const Value.absent(),
+          Value<String?> payee = const Value.absent(),
+          Value<List<String>?> tags = const Value.absent()}) =>
       Transaction(
         transactionPk: transactionPk ?? this.transactionPk,
         pairedTransactionFk: pairedTransactionFk.present
@@ -2853,6 +2984,8 @@ class Transaction extends DataClass implements Insertable<Transaction> {
         budgetFksExclude: budgetFksExclude.present
             ? budgetFksExclude.value
             : this.budgetFksExclude,
+        payee: payee.present ? payee.value : this.payee,
+        tags: tags.present ? tags.value : this.tags,
       );
   @override
   String toString() {
@@ -2890,7 +3023,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           ..write('sharedReferenceBudgetPk: $sharedReferenceBudgetPk, ')
           ..write('objectiveFk: $objectiveFk, ')
           ..write('objectiveLoanFk: $objectiveLoanFk, ')
-          ..write('budgetFksExclude: $budgetFksExclude')
+          ..write('budgetFksExclude: $budgetFksExclude, ')
+          ..write('payee: $payee, ')
+          ..write('tags: $tags')
           ..write(')'))
         .toString();
   }
@@ -2927,7 +3062,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
         sharedReferenceBudgetPk,
         objectiveFk,
         objectiveLoanFk,
-        budgetFksExclude
+        budgetFksExclude,
+        payee,
+        tags
       ]);
   @override
   bool operator ==(Object other) =>
@@ -2966,7 +3103,9 @@ class Transaction extends DataClass implements Insertable<Transaction> {
           other.sharedReferenceBudgetPk == this.sharedReferenceBudgetPk &&
           other.objectiveFk == this.objectiveFk &&
           other.objectiveLoanFk == this.objectiveLoanFk &&
-          other.budgetFksExclude == this.budgetFksExclude);
+          other.budgetFksExclude == this.budgetFksExclude &&
+          other.payee == this.payee &&
+          other.tags == this.tags);
 }
 
 class TransactionsCompanion extends UpdateCompanion<Transaction> {
@@ -3001,6 +3140,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
   final Value<String?> objectiveFk;
   final Value<String?> objectiveLoanFk;
   final Value<List<String>?> budgetFksExclude;
+  final Value<String?> payee;
+  final Value<List<String>?> tags;
   final Value<int> rowid;
   const TransactionsCompanion({
     this.transactionPk = const Value.absent(),
@@ -3034,6 +3175,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     this.objectiveFk = const Value.absent(),
     this.objectiveLoanFk = const Value.absent(),
     this.budgetFksExclude = const Value.absent(),
+    this.payee = const Value.absent(),
+    this.tags = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   TransactionsCompanion.insert({
@@ -3068,6 +3211,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     this.objectiveFk = const Value.absent(),
     this.objectiveLoanFk = const Value.absent(),
     this.budgetFksExclude = const Value.absent(),
+    this.payee = const Value.absent(),
+    this.tags = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : name = Value(name),
         amount = Value(amount),
@@ -3105,6 +3250,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
     Expression<String>? objectiveFk,
     Expression<String>? objectiveLoanFk,
     Expression<String>? budgetFksExclude,
+    Expression<String>? payee,
+    Expression<String>? tags,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3145,6 +3292,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       if (objectiveFk != null) 'objective_fk': objectiveFk,
       if (objectiveLoanFk != null) 'objective_loan_fk': objectiveLoanFk,
       if (budgetFksExclude != null) 'budget_fks_exclude': budgetFksExclude,
+      if (payee != null) 'payee': payee,
+      if (tags != null) 'tags': tags,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3181,6 +3330,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       Value<String?>? objectiveFk,
       Value<String?>? objectiveLoanFk,
       Value<List<String>?>? budgetFksExclude,
+      Value<String?>? payee,
+      Value<List<String>?>? tags,
       Value<int>? rowid}) {
     return TransactionsCompanion(
       transactionPk: transactionPk ?? this.transactionPk,
@@ -3219,6 +3370,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
       objectiveFk: objectiveFk ?? this.objectiveFk,
       objectiveLoanFk: objectiveLoanFk ?? this.objectiveLoanFk,
       budgetFksExclude: budgetFksExclude ?? this.budgetFksExclude,
+      payee: payee ?? this.payee,
+      tags: tags ?? this.tags,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3331,6 +3484,13 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
           .$converterbudgetFksExcluden
           .toSql(budgetFksExclude.value));
     }
+    if (payee.present) {
+      map['payee'] = Variable<String>(payee.value);
+    }
+    if (tags.present) {
+      map['tags'] = Variable<String>(
+          $TransactionsTable.$convertertagsn.toSql(tags.value));
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3374,6 +3534,8 @@ class TransactionsCompanion extends UpdateCompanion<Transaction> {
           ..write('objectiveFk: $objectiveFk, ')
           ..write('objectiveLoanFk: $objectiveLoanFk, ')
           ..write('budgetFksExclude: $budgetFksExclude, ')
+          ..write('payee: $payee, ')
+          ..write('tags: $tags, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -7665,6 +7827,8 @@ typedef $$WalletsTableInsertCompanionBuilder = WalletsCompanion Function({
   Value<String?> currencyFormat,
   Value<int> decimals,
   Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay,
+  Value<bool?> archived,
+  Value<String?> accountKind,
   Value<int> rowid,
 });
 typedef $$WalletsTableUpdateCompanionBuilder = WalletsCompanion Function({
@@ -7679,6 +7843,8 @@ typedef $$WalletsTableUpdateCompanionBuilder = WalletsCompanion Function({
   Value<String?> currencyFormat,
   Value<int> decimals,
   Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay,
+  Value<bool?> archived,
+  Value<String?> accountKind,
   Value<int> rowid,
 });
 
@@ -7713,6 +7879,8 @@ class $$WalletsTableTableManager extends RootTableManager<
             Value<int> decimals = const Value.absent(),
             Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay =
                 const Value.absent(),
+            Value<bool?> archived = const Value.absent(),
+            Value<String?> accountKind = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               WalletsCompanion(
@@ -7727,6 +7895,8 @@ class $$WalletsTableTableManager extends RootTableManager<
             currencyFormat: currencyFormat,
             decimals: decimals,
             homePageWidgetDisplay: homePageWidgetDisplay,
+            archived: archived,
+            accountKind: accountKind,
             rowid: rowid,
           ),
           getInsertCompanionBuilder: ({
@@ -7742,6 +7912,8 @@ class $$WalletsTableTableManager extends RootTableManager<
             Value<int> decimals = const Value.absent(),
             Value<List<HomePageWidgetDisplay>?> homePageWidgetDisplay =
                 const Value.absent(),
+            Value<bool?> archived = const Value.absent(),
+            Value<String?> accountKind = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               WalletsCompanion.insert(
@@ -7756,6 +7928,8 @@ class $$WalletsTableTableManager extends RootTableManager<
             currencyFormat: currencyFormat,
             decimals: decimals,
             homePageWidgetDisplay: homePageWidgetDisplay,
+            archived: archived,
+            accountKind: accountKind,
             rowid: rowid,
           ),
         ));
@@ -7833,6 +8007,16 @@ class $$WalletsTableFilterComposer
           builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
               column,
               joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get accountKind => $state.composableBuilder(
+      column: $state.table.accountKind,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
 
   ComposableFilter objectivesRefs(
       ComposableFilter Function($$ObjectivesTableFilterComposer f) f) {
@@ -7961,6 +8145,16 @@ class $$WalletsTableOrderingComposer
 
   ColumnOrderings<String> get homePageWidgetDisplay => $state.composableBuilder(
       column: $state.table.homePageWidgetDisplay,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get archived => $state.composableBuilder(
+      column: $state.table.archived,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get accountKind => $state.composableBuilder(
+      column: $state.table.accountKind,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 }
@@ -8614,6 +8808,8 @@ typedef $$TransactionsTableInsertCompanionBuilder = TransactionsCompanion
   Value<String?> objectiveFk,
   Value<String?> objectiveLoanFk,
   Value<List<String>?> budgetFksExclude,
+  Value<String?> payee,
+  Value<List<String>?> tags,
   Value<int> rowid,
 });
 typedef $$TransactionsTableUpdateCompanionBuilder = TransactionsCompanion
@@ -8649,6 +8845,8 @@ typedef $$TransactionsTableUpdateCompanionBuilder = TransactionsCompanion
   Value<String?> objectiveFk,
   Value<String?> objectiveLoanFk,
   Value<List<String>?> budgetFksExclude,
+  Value<String?> payee,
+  Value<List<String>?> tags,
   Value<int> rowid,
 });
 
@@ -8704,6 +8902,8 @@ class $$TransactionsTableTableManager extends RootTableManager<
             Value<String?> objectiveFk = const Value.absent(),
             Value<String?> objectiveLoanFk = const Value.absent(),
             Value<List<String>?> budgetFksExclude = const Value.absent(),
+            Value<String?> payee = const Value.absent(),
+            Value<List<String>?> tags = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TransactionsCompanion(
@@ -8738,6 +8938,8 @@ class $$TransactionsTableTableManager extends RootTableManager<
             objectiveFk: objectiveFk,
             objectiveLoanFk: objectiveLoanFk,
             budgetFksExclude: budgetFksExclude,
+            payee: payee,
+            tags: tags,
             rowid: rowid,
           ),
           getInsertCompanionBuilder: ({
@@ -8772,6 +8974,8 @@ class $$TransactionsTableTableManager extends RootTableManager<
             Value<String?> objectiveFk = const Value.absent(),
             Value<String?> objectiveLoanFk = const Value.absent(),
             Value<List<String>?> budgetFksExclude = const Value.absent(),
+            Value<String?> payee = const Value.absent(),
+            Value<List<String>?> tags = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               TransactionsCompanion.insert(
@@ -8806,6 +9010,8 @@ class $$TransactionsTableTableManager extends RootTableManager<
             objectiveFk: objectiveFk,
             objectiveLoanFk: objectiveLoanFk,
             budgetFksExclude: budgetFksExclude,
+            payee: payee,
+            tags: tags,
             rowid: rowid,
           ),
         ));
@@ -8961,6 +9167,18 @@ class $$TransactionsTableFilterComposer
   ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
       get budgetFksExclude => $state.composableBuilder(
           column: $state.table.budgetFksExclude,
+          builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
+              column,
+              joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get payee => $state.composableBuilder(
+      column: $state.table.payee,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnWithTypeConverterFilters<List<String>?, List<String>, String>
+      get tags => $state.composableBuilder(
+          column: $state.table.tags,
           builder: (column, joinBuilders) => ColumnWithTypeConverterFilters(
               column,
               joinBuilders: joinBuilders));
@@ -9167,6 +9385,16 @@ class $$TransactionsTableOrderingComposer
 
   ColumnOrderings<String> get budgetFksExclude => $state.composableBuilder(
       column: $state.table.budgetFksExclude,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get payee => $state.composableBuilder(
+      column: $state.table.payee,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get tags => $state.composableBuilder(
+      column: $state.table.tags,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
