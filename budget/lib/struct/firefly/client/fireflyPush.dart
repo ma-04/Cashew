@@ -23,7 +23,6 @@ import 'package:budget/struct/firefly/fireflyMapper.dart'
     show
         kBalanceCorrectionCategoryPk,
         kFireflyUncategorizedCategoryPk,
-        kFireflyCashAccountName,
         isFireflyBalanceAnchorPk;
 
 const FireflySyncEntityType _wallet = FireflySyncEntityType.wallet;
@@ -45,8 +44,6 @@ class FireflyPushContext {
   final String counterpartyNaming;
   late final FireflyPullContext apply;
   final Set<String> _handled = {};
-  int? _cashAccountId;
-  bool _cashAccountRead = false;
 
   FireflyPushContext({
     required this.client,
@@ -397,16 +394,6 @@ int _accountOf(FireflyPushContext ctx, String walletPk) {
   return id;
 }
 
-Future<int?> _cashAccountId(FireflyPushContext ctx) async {
-  if (ctx._cashAccountRead) return ctx._cashAccountId;
-  ctx._cashAccountRead = true;
-  List<Map<String, dynamic>> cash =
-      await ctx.client.getAllRaw("/accounts", {"type": "cash"});
-  ctx._cashAccountId =
-      cash.isEmpty ? null : fireflyParseInt(cash.first["id"]);
-  return ctx._cashAccountId;
-}
-
 Future<void> _pushTransactionCreate(
     FireflyPushContext ctx, FireflyOutboxEntry op, Transaction row) async {
   if (!row.paid) {
@@ -469,15 +456,11 @@ Future<void> _pushTransactionCreate(
         row.categoryFk != kFireflyUncategorizedCategoryPk) {
       TransactionCategory? category =
           await database.getCategoryInstanceOrNull(row.categoryFk);
-      split["${otherSide}_name"] = category?.name ?? kFireflyCashAccountName;
-    } else {
-      int? cash = await _cashAccountId(ctx);
-      if (cash != null) {
-        split["${otherSide}_id"] = cash.toString();
-      } else {
-        split["${otherSide}_name"] = kFireflyCashAccountName;
-      }
+      if (category != null) split["${otherSide}_name"] = category.name;
     }
+    // Otherwise no other account: Firefly books the split on its own cash
+    // account, and makes that account when the server has none yet. A name
+    // would make an expense or a revenue account of that name.
   }
   split["external_id"] = source.transactionPk;
   await fireflyCountAttempt(_transaction, op.localPk, "sent");

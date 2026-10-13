@@ -64,6 +64,11 @@ const int kFireflyClientVersion = 1;
 const Duration kFireflyDeleteSweepRange = Duration(days: 62);
 const Duration kFireflyFullPullInterval = Duration(days: 1);
 
+// The transaction list of Firefly leaves out opening balances and the other
+// special types unless it is asked for all of them. Without them the local
+// sum of a wallet is not its balance.
+const Map<String, dynamic> kFireflyAllTypes = {"type": "all"};
+
 bool _cycleRunning = false;
 bool _editDuringCycle = false;
 bool get fireflySyncIsRunning => _cycleRunning;
@@ -102,11 +107,15 @@ Future<String?> Function() fireflyBackupBeforeRebuild = _backupDatabaseFile;
 Future<String?> _backupDatabaseFile() async {
   if (kIsWeb) return null;
   Directory folder = await getApplicationDocumentsDirectory();
+  return fireflyBackupDatabaseTo(folder.path);
+}
+
+Future<String> fireflyBackupDatabaseTo(String folder) async {
   String stamp = DateTime.now()
       .toIso8601String()
       .replaceAll(":", "-")
       .replaceAll(".", "-");
-  String path = p.join(folder.path, "firefly-rebuild-backup-$stamp.sqlite");
+  String path = p.join(folder, "firefly-rebuild-backup-$stamp.sqlite");
   if (await File(path).exists()) await File(path).delete();
   // VACUUM INTO writes a consistent copy of the open database.
   await database.customStatement("VACUUM INTO ?", [path]);
@@ -168,6 +177,7 @@ Future<bool> fireflySyncNow({
         throw FireflyRebuildNeededException();
       }
       await _rebuild(client, report);
+      await _checkBalances(client, report);
     } else {
       await _queueLocalChanges(_scanFrom());
       bool full = fullResync || _fullPullIsDue(started);
@@ -235,7 +245,7 @@ Future<void> _rebuild(FireflyApiClient client, FireflySyncReport report) async {
   await fireflyPullAccounts(ctx);
   DateTime pulled = DateTime.now();
   Set<int> seen =
-      await fireflyApplyGroups(ctx, await client.getAllRaw("/transactions"));
+      await fireflyApplyGroups(ctx, await client.getAllRaw("/transactions", kFireflyAllTypes));
   await fireflyRemoveMissingGroups(ctx, seen);
 
   // A paid local row of a mirrored wallet that Firefly does not have. The
@@ -357,7 +367,7 @@ Future<void> _pull(FireflyApiClient client, FireflySyncReport report,
 
   if (full || _lastPull == null) {
     Set<int> seen =
-        await fireflyApplyGroups(ctx, await client.getAllRaw("/transactions"));
+        await fireflyApplyGroups(ctx, await client.getAllRaw("/transactions", kFireflyAllTypes));
     await fireflyRemoveMissingGroups(ctx, seen);
   } else {
     // Changes since the last pull, with one day of margin: the search keyword
@@ -375,16 +385,21 @@ Future<void> _pull(FireflyApiClient client, FireflySyncReport report,
     Set<int> seen = await fireflyApplyGroups(
         ctx,
         await client.getAllRaw(
-            "/transactions", {"start": client.formatQueryDate(start)}));
+            "/transactions",
+            {...kFireflyAllTypes, "start": client.formatQueryDate(start)}));
     await fireflyRemoveMissingGroups(ctx, seen, since: start);
   }
   await _setLastPull(started, full: full || _lastPull == null);
 }
 
 // Firefly gives the balance of each account. The local sum of a mirrored
-// wallet must be that balance less the virtual balance, which Firefly adds
-// to current_balance. A difference means that a local row is not on the
-// server, or the reverse; the report names the wallet.
+// wallet must agree with it; a difference means that a local row is not on
+// the server, or the reverse, and the report names the wallet.
+//
+// Two details of current_balance, read on Firefly 6.7.9: it is rounded to the
+// decimals of the currency, and it holds the virtual balance only after
+// Firefly computed the balance again (an account with no transaction yet
+// gives 0 with a virtual balance of 100). Both forms are accepted.
 Future<void> _checkBalances(
     FireflyApiClient client, FireflySyncReport report) async {
   if ((await fireflyOutboxEntries(state: FireflyOutboxState.pending))
@@ -400,16 +415,27 @@ Future<void> _checkBalances(
     if (maps.isEmpty) continue;
     Map<String, dynamic> attributes =
         Map<String, dynamic>.from(account["attributes"] ?? {});
-    double balance =
-        (double.tryParse("${attributes["current_balance"]}") ?? 0) -
-            (double.tryParse("${attributes["virtual_balance"] ?? 0}") ?? 0);
+    double current = double.tryParse("${attributes["current_balance"]}") ?? 0;
+    double virtual =
+        double.tryParse("${attributes["virtual_balance"] ?? 0}") ?? 0;
+    int decimals = fireflyParseInt(attributes["currency_decimal_places"]) ?? 2;
+    double unit = 1 / _pow10(decimals);
     double local = await _walletSum(maps.first.localPk);
-    if ((balance - local).abs() >= 0.005) {
+    bool agrees(double server) => (server - local).abs() <= unit / 2 + 1e-9;
+    if (!agrees(current) && !agrees(current - virtual)) {
       report.warn("The balance of \"${attributes["name"]}\" is "
-          "${balance.toStringAsFixed(2)} on Firefly and "
-          "${local.toStringAsFixed(2)} here.");
+          "${(current - virtual).toStringAsFixed(decimals)} on Firefly and "
+          "${local.toStringAsFixed(decimals)} here.");
     }
   }
+}
+
+double _pow10(int n) {
+  double value = 1;
+  for (int i = 0; i < n; i++) {
+    value *= 10;
+  }
+  return value;
 }
 
 Future<double> _walletSum(String walletPk) async {

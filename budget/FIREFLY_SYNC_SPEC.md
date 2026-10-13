@@ -1,5 +1,9 @@
 # Firefly III Sync for Cashew — Requirements & Specs
 
+> This is the spec of the two-way sync engine of `feature/firefly-iii-sync`.
+> Branch `feature/firefly-client` replaces that engine; see
+> `FIREFLY_CLIENT_PLAN.md`.
+
 As of 2026-10-13. Living version: https://claude.ai/code/artifact/4cdd4710-b47e-48d3-ad43-53f1c001828e
 
 ## Overview

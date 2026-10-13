@@ -388,7 +388,9 @@ class FireflyApiClient {
     return "${date.year}-${twoDigits(date.month)}-${twoDigits(date.day)}";
   }
 
-  static const int _kPageSize = 50;
+  // Firefly accepts at least 5000. A larger page makes the full pull of a
+  // server with years of history take fewer requests.
+  static const int _kPageSize = 500;
 
   // A stop limit. A server that always reports one more page cannot make this
   // loop run forever. 2000 pages of 50 records is 100000 records.

@@ -16,6 +16,7 @@ import 'package:budget/struct/firefly/fireflyMapper.dart'
     show kFireflyUncategorizedCategoryPk;
 import 'package:budget/struct/firefly/fireflySyncEngine.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -152,6 +153,13 @@ void main() {
           reason: report.warnings.join("\n"));
       List<TransactionWallet> wallets = await database.getAllWallets();
       expect(wallets.map((w) => w.name), containsAll(['Checking', 'Savings']));
+      TransactionWallet checkingWallet = wallets.firstWhere((w) => w.name == "Checking");
+      double sum = (await (database.select(database.transactions)
+                ..where((t) => t.walletFk.equals(checkingWallet.walletPk)))
+              .get())
+          .fold(0.0, (a, t) => a + t.amount);
+      expect(sum, closeTo(500 - 12.345, 1e-9),
+          reason: "the opening balance and the lunch");
       Transaction row = await localRowOfGroup(lunch);
       expect(row.name, "Lunch");
       expect(row.amount, closeTo(-12.345, 1e-9));
@@ -242,9 +250,8 @@ void main() {
           Map<String, dynamic>.from(found.json["data"][0]["attributes"]
               ["transactions"][0]);
       expect(DateTime.parse(split["date"]).toUtc(), when.toUtc());
-      // A new instance has no cash account. The push then names one generic
-      // account, never an account per description.
-      expect(split["destination_name"], "Cash account");
+      // No account is named: Firefly books it on its own cash account.
+      expect(split["destination_type"], "Cash account");
       expect(split["external_id"], isNotNull);
     });
 
@@ -470,6 +477,194 @@ void main() {
       expect(
           await fireflyMapsOfRemote(FireflySyncEntityType.transaction, lunch),
           isEmpty);
+    });
+
+    test('a phone from the two-way sync is rebuilt on confirm, and the '
+        'server does not change', () async {
+      Map<String, dynamic> lunchSplit = await remoteSplit(live, lunch);
+      int lunchJournal = int.parse("${lunchSplit["transaction_journal_id"]}");
+      String lunchUpdated =
+          (await live.get("/transactions/$lunch")).attributes["updated_at"];
+      String checkingUpdated =
+          (await live.get("/accounts/$checking")).attributes["updated_at"];
+
+      // The local database of a phone that ran the two-way sync: map rows
+      // with no snapshot, a tombstone, a balance anchor, a stale row, a
+      // local-only paid row and an unpaid planning row.
+      DateTime old = DateTime(2024, 6, 1);
+      await database.into(database.wallets).insert(WalletsCompanion.insert(
+          walletPk: const Value("w-check"),
+          name: "Checking",
+          order: 0,
+          colour: const Value("0xff4caf50"),
+          iconName: const Value("bank.png"),
+          currency: const Value("eur"),
+          dateTimeModified: Value(old)));
+      await database.into(database.categories).insert(
+          CategoriesCompanion.insert(
+              categoryPk: const Value("c-food"),
+              name: "Food",
+              order: 0,
+              colour: const Value("0xffff9800"),
+              dateTimeModified: Value(old)));
+      await database.into(database.categories).insert(
+          CategoriesCompanion.insert(
+              categoryPk: const Value("c-sub"),
+              name: "Lunches",
+              order: 0,
+              mainCategoryPk: const Value("c-food"),
+              dateTimeModified: Value(old)));
+      Future<void> row(String pk, String name, double amount,
+          {bool paid = true, String? sub}) async {
+        await database.into(database.transactions).insert(
+            TransactionsCompanion.insert(
+                transactionPk: Value(pk),
+                name: name,
+                amount: amount,
+                note: "",
+                categoryFk: "c-food",
+                subCategoryFk: Value(sub),
+                walletFk: const Value("w-check"),
+                dateCreated: Value(DateTime(2024, 5, 2)),
+                dateTimeModified: Value(old),
+                income: Value(amount > 0),
+                paid: Value(paid)));
+      }
+
+      await row("t-lunch", "Lunch (stale)", -12.345, sub: "c-sub");
+      await row("firefly-balance-anchor-w-check", "Firefly balance", 480);
+      await row("t-coffee", "Coffee only here", -3);
+      await row("t-rent", "Rent next month", -900, paid: false);
+      Future<void> map(FireflySyncEntityType type, String pk, int id,
+          {int? journal, bool tombstone = false}) {
+        return database.into(database.fireflySyncMap).insert(
+            FireflySyncMapCompanion.insert(
+                entityType: type,
+                localPk: pk,
+                fireflyId: id,
+                fireflyJournalId: Value(journal),
+                isTombstone: Value(tombstone),
+                lastSyncedLocalModified: Value(old)));
+      }
+
+      await map(FireflySyncEntityType.wallet, "w-check", checking);
+      await map(FireflySyncEntityType.category, "c-food", food);
+      await map(FireflySyncEntityType.transaction, "t-lunch", lunch,
+          journal: lunchJournal);
+      await map(FireflySyncEntityType.transaction, "t-gone", 99999,
+          tombstone: true);
+
+      // An automatic cycle does not rebuild.
+      expect(await fireflySyncNow(), isFalse);
+      expect(fireflySyncErrorNotifier.value, contains("rebuild"));
+      expect(await database.getWalletInstance("w-check"), isNotNull);
+
+      FireflySyncReport report = await sync();
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+
+      TransactionWallet wallet = await database.getWalletInstance("w-check");
+      expect(wallet.colour, "0xff4caf50");
+      expect(wallet.iconName, "bank.png");
+      Transaction lunchRow = await localRowOfGroup(lunch);
+      expect(lunchRow.transactionPk, "t-lunch");
+      expect(lunchRow.name, "Lunch");
+      expect(lunchRow.subCategoryFk, "c-sub");
+      expect(
+          (await database.getCategoryInstance("c-food")).colour, "0xffff9800");
+      Future<Transaction?> local(String pk) =>
+          (database.select(database.transactions)
+                ..where((t) => t.transactionPk.equals(pk)))
+              .getSingleOrNull();
+      expect(await local("firefly-balance-anchor-w-check"), isNull);
+      expect(await local("t-coffee"), isNull);
+      expect(await local("t-rent"), isNotNull);
+      for (FireflySyncMapEntry m
+          in await database.select(database.fireflySyncMap).get()) {
+        expect(m.remoteSnapshot, isNotNull, reason: m.localPk);
+        expect(m.isTombstone, isFalse);
+      }
+      expect(report.warnings.where((w) => w.contains("balance of")), isEmpty,
+          reason: report.warnings.join("\n"));
+
+      expect((await live.get("/transactions/$lunch")).attributes["updated_at"],
+          lunchUpdated);
+      expect((await live.get("/accounts/$checking")).attributes["updated_at"],
+          checkingUpdated);
+      LiveResponse all = await live.get("/transactions", {"type": "all"});
+      expect(all.json["meta"]["pagination"]["total"], 2,
+          reason: "the lunch and the opening balance, nothing uploaded");
+    });
+
+    test('a renamed credit card keeps its card fields', () async {
+      int card = await live.createAssetAccount('Visa', role: 'ccAsset', extra: {
+        "credit_card_type": "monthlyFull",
+        "monthly_payment_date": "2024-05-15",
+      });
+      await sync();
+      FireflySyncMapEntry m =
+          (await fireflyMapsOfRemote(FireflySyncEntityType.wallet, card)).single;
+      TransactionWallet wallet = await database.getWalletInstance(m.localPk);
+      await database.createOrUpdateWallet(wallet.copyWith(name: "Visa Gold"));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      Map<String, dynamic> after = (await live.get("/accounts/$card")).attributes;
+      expect(after["name"], "Visa Gold");
+      expect(after["account_role"], "ccAsset");
+      expect(after["credit_card_type"], "monthlyFull");
+    });
+
+    test('an expense turned into income becomes a deposit', () async {
+      await sync();
+      Transaction row = await localRowOfGroup(lunch);
+      await editLocally(row.copyWith(amount: 12.345, income: true));
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["type"], "deposit");
+      expect(after["destination_id"], checking.toString());
+      expect(after["source_name"], "Cafe");
+      expect(double.parse(after["amount"]), closeTo(12.345, 1e-9));
+    });
+
+    test('a cleared note and a cleared category are cleared on the server',
+        () async {
+      await sync();
+      Map<String, dynamic> before = await remoteSplit(live, lunch);
+      Transaction row = await localRowOfGroup(lunch);
+      await editLocally(row.copyWith(
+          note: "", categoryFk: kFireflyUncategorizedCategoryPk));
+      await sync(pushOnly: true);
+      Map<String, dynamic> after = await remoteSplit(live, lunch);
+      expect(after["notes"], isNull);
+      expect(after["category_id"], isNull);
+      expect(without(after, {"notes", "category_id", "category_name"}),
+          without(before, {"notes", "category_id", "category_name"}));
+    });
+
+    test('a category merge moves every transaction, then deletes it',
+        () async {
+      int drinks = await live.createCategory('Drinks');
+      LiveResponse beer = await live.createWithdrawal(
+        sourceId: checking,
+        amount: "4",
+        date: "2023-02-01T18:00:00Z",
+        description: "Beer",
+        categoryId: drinks,
+      );
+      await sync();
+      TransactionCategory from = await database.getCategoryInstance(
+          (await fireflyMapsOfRemote(FireflySyncEntityType.category, drinks))
+              .single
+              .localPk);
+      TransactionCategory to = await database.getCategoryInstance(
+          (await fireflyMapsOfRemote(FireflySyncEntityType.category, food))
+              .single
+              .localPk);
+      await database.mergeAndDeleteCategory(from, to);
+      FireflySyncReport report = await sync(pushOnly: true);
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      expect((await live.get("/categories/$drinks")).status, 404);
+      expect((await remoteSplit(live, beer.id))["category_id"], "$food");
     });
   }, reset: FireflyLiveReset.eachTest);
 }

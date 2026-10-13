@@ -83,5 +83,15 @@ if [ -f "$TESTENV/env.sh" ]; then
   export FIREFLY_LIVE_RESET="$TESTENV/reset.sh"
 fi
 
-exec flutter test "$@"
+# The live tests share one server, and each test resets it. Two test files
+# that run at the same time reset it under each other. Thus one file at a
+# time whenever the live tests can be part of the run.
+concurrency=()
+case " $* " in
+  *" --exclude-tags live "*|*" -x live "*) ;;
+  *) if [ $# -eq 0 ] || printf '%s\n' "$@" | grep -q 'test/firefly/live\|^test/\?$\|^test/firefly/\?$\|live'; then
+       concurrency=(--concurrency=1)
+     fi ;;
+esac
+exec flutter test "${concurrency[@]}" "$@"
 REMOTE

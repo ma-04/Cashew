@@ -162,6 +162,40 @@ liability credit, multi-split groups (until the split editor exists), bills,
 recurrences, available budgets. Blocked actions: wallet move and merge, wallet
 delete, marking a Firefly row unpaid. These need owner decisions, see 5.
 
+## 3a. State of phase A (2026-10-13)
+
+Done, with tests against Firefly 6.7.9:
+
+- Snapshot and outbox (schema 51); field-diff push with a three-way merge;
+  server-wins pull; full first pull; incremental pull through
+  `updated_at_after:`; deletes found in a 62-day range on each pull and in
+  the full history once a day and on "Sync all history".
+- Rebuild from Firefly after a backup (`VACUUM INTO`), only on the user's
+  confirm; an automatic cycle on a phone from the two-way sync stops with a
+  message. The rebuild keeps Cashew-only columns of linked records, removes
+  the balance anchors and the paid local rows that Firefly does not have, and
+  writes nothing to the server.
+- Opening balances, reconciliations (read with `type=all`) and reconciled
+  journals are read-only. A Firefly row cannot be marked unpaid. Balance
+  corrections and unpaid planning rows stay local.
+- Every rule of table 2. A new withdrawal or deposit in "generic" payee mode
+  names no other account, thus Firefly books it on its own cash account.
+- Category delete (server first, rows uncategorized), category merge
+  (moves, then the delete), wallet delete (account inactive, history kept),
+  wallet merge refused between two currencies.
+- A balance check after each pull: the wallet sum against current_balance,
+  within the rounding of the currency.
+
+Not done in phase A:
+
+- Category colour and notes are not synced.
+- A wallet that the user deleted stays visible (inactive on Firefly). The
+  wallet lists need a filter for inactive accounts.
+- Edits of a multi-split group work one split at a time; there is no split
+  editor, and a new multi-split group cannot be made here.
+- The UI does not stop an edit of a read-only row; the push undoes it and
+  says so.
+
 ## 4. Phases
 
 Each phase ends with its tests green on the real server and the fake server.
