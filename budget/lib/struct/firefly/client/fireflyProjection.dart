@@ -128,9 +128,6 @@ DateTime? fireflyParseDate(Object? value) =>
 String fireflySplitType(Map<String, dynamic> split) =>
     (split["type"] ?? "").toString().toLowerCase();
 
-bool fireflySplitIsTransfer(Map<String, dynamic> split) =>
-    fireflySplitType(split) == "transfer";
-
 // The side of the other account of a withdrawal or a deposit.
 String fireflyOtherSide(String type) =>
     type == "deposit" ? "source" : "destination";
@@ -390,7 +387,10 @@ void _writeAccountSides(Map<String, dynamic> body, FireflyProjection send,
 // The fields of a create. A create has no record to compare with, thus each
 // field that the projection holds is sent.
 Map<String, dynamic> fireflyCreateRequestFields(FireflyProjection local) {
+  // The type and the asset side are written below. Given to
+  // fireflySplitRequestFields, they would read as a change of type.
   FireflyProjection send = Map.of(local)
+    ..remove(kFieldType)
     ..remove(kFieldAsset)
     ..remove(kFieldPayee);
   Map<String, dynamic> body = fireflySplitRequestFields(send);
@@ -423,6 +423,16 @@ String? fireflyAccountKind(Map attributes) {
   if (type == "asset") return null;
   String? liability = attributes["liability_type"]?.toString().toLowerCase();
   return (liability == null || liability.isEmpty) ? "loan" : liability;
+}
+
+// The Firefly type of a new split between two wallets. Firefly refuses a
+// transfer between an asset account and a liability: a payment to a liability
+// is a withdrawal, and money that comes from a liability is a deposit. `kind`
+// is Wallets.accountKind (null for an asset account).
+String fireflyPairType(String? sourceKind, String? destinationKind) {
+  if (sourceKind == null && destinationKind != null) return "withdrawal";
+  if (sourceKind != null && destinationKind == null) return "deposit";
+  return "transfer";
 }
 
 // --- Category colour ---------------------------------------------------------

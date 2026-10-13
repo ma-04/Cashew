@@ -273,7 +273,7 @@ Future<void> fireflyRemoveLocalCategory(String categoryPk) async {
 
 Future<void> fireflyPullAccounts(FireflyPullContext ctx) async {
   List<Map<String, dynamic>> remote =
-      await ctx.client.getAllRaw("/accounts", {"type": "asset"});
+      await fireflyGetWalletAccounts(ctx.client);
   List<TransactionWallet> locals = await database.getAllWallets();
   int nextOrder = locals.isEmpty
       ? 0
@@ -321,6 +321,15 @@ Future<void> fireflyPullAccounts(FireflyPullContext ctx) async {
     ctx.report.warn("The Firefly account of a wallet was deleted. The wallet "
         "is no longer linked.");
   }
+}
+
+// The accounts that are wallets: the asset accounts and the liabilities.
+Future<List<Map<String, dynamic>>> fireflyGetWalletAccounts(
+    FireflyApiClient client) async {
+  return [
+    ...await client.getAllRaw("/accounts", {"type": "asset"}),
+    ...await client.getAllRaw("/accounts", {"type": "liabilities"}),
+  ];
 }
 
 // Writes an asset account record of the server onto the local wallet `onto`,
@@ -552,7 +561,13 @@ Future<void> _applySplit(
   String? destinationWallet =
       ctx.walletPkByAccount[fireflyParseInt(split["destination_id"])];
 
-  if (type == "transfer" && sourceWallet != null && destinationWallet != null) {
+  // A split between two wallets is two local rows, as a transfer. A
+  // withdrawal from an asset account to a liability and a deposit from a
+  // liability are such splits too; the snapshot keeps their type.
+  if (sourceWallet != null &&
+      destinationWallet != null &&
+      sourceWallet != destinationWallet &&
+      (type == "transfer" || type == "withdrawal" || type == "deposit")) {
     await _applyTransfer(ctx, group, split, journalId, maps, sourceWallet,
         destinationWallet);
     return;

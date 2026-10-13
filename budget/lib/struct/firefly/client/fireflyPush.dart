@@ -480,6 +480,7 @@ Future<void> _pushTransactionCreate(
       description: pair.$1.name,
       notes: pair.$1.note,
     ));
+    split["type"] = fireflyPairType(from?.accountKind, to?.accountKind);
     if (cross && (to?.currency ?? "").isNotEmpty) {
       split["foreign_currency_code"] = to!.currency!.toUpperCase();
     }
@@ -542,8 +543,11 @@ Future<void> _pushTransactionUpdate(
   }
 
   (Transaction, Transaction)? pair = await _transferPair(row);
-  bool isTransfer = fireflySplitIsTransfer(baseSplit);
-  if (isTransfer != (pair != null)) {
+  // Two local rows stand for a split between two wallets: a transfer, or a
+  // withdrawal or deposit between an asset account and a liability.
+  // The pull gives such a row a leg in its snapshot.
+  bool isPair = snapshot[kSnapLeg] != null;
+  if (isPair != (pair != null)) {
     return putBack("A transaction cannot change between a transfer and an "
         "expense or income here. Change it on Firefly.");
   }

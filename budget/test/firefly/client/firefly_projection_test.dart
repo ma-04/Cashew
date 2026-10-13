@@ -367,4 +367,26 @@ void main() {
       expect(body.containsKey("tags"), isFalse);
     });
   });
+
+  test("a new transfer names both accounts", () {
+    Transaction out = _row(amount: -75, tags: null);
+    Transaction into = _row(amount: 75, tags: null);
+    Map<String, dynamic> body =
+        fireflyCreateRequestFields(fireflyProjectLocalTransfer(
+      source: out,
+      destination: into,
+      sourceAccountId: 3,
+      destinationAccountId: 8,
+      crossCurrency: false,
+      description: "Pay",
+      notes: "",
+    ));
+    expect(body["type"], "transfer");
+    expect(body["source_id"], "3");
+    expect(body["destination_id"], "8");
+    expect(fireflyPairType(null, "loan"), "withdrawal");
+    expect(fireflyPairType("debt", null), "deposit");
+    expect(fireflyPairType("loan", "debt"), "transfer");
+    expect(fireflyPairType(null, null), "transfer");
+  });
 }

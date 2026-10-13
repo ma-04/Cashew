@@ -810,16 +810,18 @@ void main() {
           ["Food/Drinks", "work"]);
     });
 
-    test('a payee change on a payment to a loan is undone', () async {
+    test('a liability is a wallet, and a payment to it is two rows',
+        () async {
       LiveResponse loan = await live.post("/accounts", {
         "name": "Car loan",
         "type": "liability",
         "liability_type": "loan",
-        "liability_direction": "debit",
+        "liability_direction": "credit",
         "interest": "0",
         "interest_period": "monthly",
         "currency_code": "EUR",
       });
+      expect(loan.status, 200, reason: loan.toString());
       LiveResponse payment = await live.post("/transactions", {
         "transactions": [
           {
@@ -829,18 +831,99 @@ void main() {
             "description": "Loan payment",
             "source_id": checking.toString(),
             "destination_id": loan.id.toString(),
+            "category_id": food.toString(),
           }
         ]
       });
-      await sync();
+      expect(payment.status, 200, reason: payment.toString());
+      FireflySyncReport report = await sync();
+      expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
+
+      FireflySyncMapEntry loanMap =
+          (await fireflyMapsOfRemote(FireflySyncEntityType.wallet, loan.id))
+              .single;
+      TransactionWallet loanWallet =
+          await database.getWalletInstance(loanMap.localPk);
+      expect(loanWallet.accountKind, "loan");
+      List<FireflySyncMapEntry> legs =
+          await fireflyMapsOfRemote(FireflySyncEntityType.transaction,
+              payment.id);
+      expect(legs, hasLength(2));
+
+      // An edit of the amount keeps the type, the loan and the category.
+      Map<String, dynamic> before = await remoteSplit(live, payment.id);
       Transaction row = await localRowOfGroup(payment.id);
-      expect(row.payee, "Car loan");
-      await editLocally(row.copyWith(payee: const Value("Someone")));
-      FireflySyncReport report = await sync(pushOnly: true);
-      expect(report.reverted, 1);
+      Transaction source = row.amount < 0
+          ? row
+          : await (database.select(database.transactions)
+                ..where((t) => t.transactionPk.equals(row.pairedTransactionFk!)))
+              .getSingle();
+      await editLocally(source.copyWith(amount: -120));
+      report = await sync();
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
       Map<String, dynamic> after = await remoteSplit(live, payment.id);
-      expect(after["destination_id"], loan.id.toString());
-      expect((await localRowOfGroup(payment.id)).payee, "Car loan");
+      expect(double.parse(after["amount"]), closeTo(120, 1e-9));
+      expect(without(after, {"amount", "pc_amount"}),
+          without(before, {"amount", "pc_amount"}));
+      expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
+    });
+
+    test('a new transfer from an asset to a loan is a withdrawal', () async {
+      LiveResponse loan = await live.post("/accounts", {
+        "name": "Car loan",
+        "type": "liability",
+        "liability_type": "loan",
+        "liability_direction": "credit",
+        "interest": "0",
+        "interest_period": "monthly",
+        "currency_code": "EUR",
+      });
+      expect(loan.status, 200, reason: loan.toString());
+      await sync();
+      String checkingPk = (await fireflyMapsOfRemote(
+              FireflySyncEntityType.wallet, checking))
+          .single
+          .localPk;
+      String loanPk =
+          (await fireflyMapsOfRemote(FireflySyncEntityType.wallet, loan.id))
+              .single
+              .localPk;
+      Transaction template = await localRowOfGroup(lunch);
+      DateTime now = DateTime.now();
+      Transaction out = template.copyWith(
+        transactionPk: "pay-out",
+        pairedTransactionFk: const Value("pay-in"),
+        name: "Pay the loan",
+        amount: -75,
+        walletFk: checkingPk,
+        categoryFk: "0",
+        subCategoryFk: const Value(null),
+        payee: const Value(null),
+        tags: const Value(null),
+        income: false,
+        dateCreated: DateTime.utc(2024, 6, 2, 9),
+        dateTimeModified: Value(now),
+      );
+      Transaction into = out.copyWith(
+        transactionPk: "pay-in",
+        pairedTransactionFk: const Value("pay-out"),
+        amount: 75,
+        walletFk: loanPk,
+        income: true,
+      );
+      await database.into(database.transactions).insert(out.toCompanion(true));
+      await database.into(database.transactions).insert(into.toCompanion(true));
+      FireflySyncReport report = await sync();
+      expect(report.failed, 0, reason: report.warnings.join("\n"));
+      FireflySyncMapEntry map = (await (database.select(database.fireflySyncMap)
+                ..where((m) => m.localPk.equals("pay-out")))
+              .get())
+          .single;
+      Map<String, dynamic> created = await remoteSplit(live, map.fireflyId);
+      expect(created["type"], "withdrawal");
+      expect(created["source_id"], checking.toString());
+      expect(created["destination_id"], loan.id.toString());
+      expect(report.warnings, isEmpty, reason: report.warnings.join("\n"));
     });
   }, reset: FireflyLiveReset.eachTest);
 }

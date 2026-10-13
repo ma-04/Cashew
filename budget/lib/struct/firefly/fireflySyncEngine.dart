@@ -407,7 +407,7 @@ Future<void> _checkBalances(
     return;
   }
   for (Map<String, dynamic> account
-      in await client.getAllRaw("/accounts", {"type": "asset"})) {
+      in await fireflyGetWalletAccounts(client)) {
     int? id = fireflyParseInt(account["id"]);
     if (id == null) continue;
     List<FireflySyncMapEntry> maps =
