@@ -114,6 +114,12 @@ class _AddWalletPageState extends State<AddWalletPage> {
 
   Future<TransactionWallet> createTransactionWallet() async {
     int numberOfWallets = (await database.getTotalCountOfWallets())[0] ?? 0;
+    // The page does not edit these fields. The save replaces the row, thus
+    // they come from the current row: else an inactive Firefly account
+    // becomes active here, and a liability an asset account.
+    TransactionWallet? current = widget.wallet == null
+        ? null
+        : await database.getWalletInstanceOrNull(widget.wallet!.walletPk);
     return TransactionWallet(
       walletPk: widget.wallet != null ? widget.wallet!.walletPk : "-1",
       name: selectedTitle ?? "",
@@ -127,6 +133,8 @@ class _AddWalletPageState extends State<AddWalletPage> {
       homePageWidgetDisplay: widget.wallet != null
           ? widget.wallet!.homePageWidgetDisplay
           : defaultWalletHomePageWidgetDisplay,
+      archived: current?.archived ?? widget.wallet?.archived,
+      accountKind: current?.accountKind ?? widget.wallet?.accountKind,
     );
   }
 

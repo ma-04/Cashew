@@ -4,7 +4,8 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
-import 'package:budget/struct/firefly/client/fireflyPlanning.dart' show isFireflyBudget;
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart'
+    show fireflyAddableBudgets, isFireflyBudget;
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/shareBudget.dart';
 import 'package:budget/widgets/animatedExpanded.dart';
@@ -577,7 +578,7 @@ Future<dynamic> selectAddableBudgetPopup(BuildContext context,
     PopupFramework(
       title: "select-budget".tr(),
       child: StreamBuilder<List<Budget>>(
-        stream: database.watchAllAddableBudgets(),
+        stream: fireflyAddableBudgets(database.watchAllAddableBudgets()),
         builder: (context, snapshot) {
           if (snapshot.hasData &&
               (snapshot.data != null && snapshot.data!.length > 0)) {

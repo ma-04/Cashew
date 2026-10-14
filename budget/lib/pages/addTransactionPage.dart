@@ -49,6 +49,8 @@ import 'package:budget/widgets/util/contextMenu.dart';
 import 'package:budget/widgets/util/showDatePicker.dart';
 import 'package:budget/widgets/viewAllTransactionsButton.dart';
 import 'package:budget/widgets/fireflyTransactionFields.dart';
+import 'package:budget/struct/firefly/client/fireflyPlanning.dart'
+    show fireflyAddableBudgets;
 import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:drift/drift.dart' hide Column;
 import 'package:easy_localization/easy_localization.dart';
@@ -3177,7 +3179,7 @@ class _SelectAddedBudgetState extends State<SelectAddedBudget> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Budget>>(
-      stream: database.watchAllAddableBudgets(),
+      stream: fireflyAddableBudgets(database.watchAllAddableBudgets()),
       builder: (context, snapshot) {
         if (snapshot.hasData) {
           if (snapshot.data!.length <= 0) return Container();

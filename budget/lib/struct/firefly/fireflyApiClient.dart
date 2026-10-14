@@ -61,6 +61,9 @@ class FireflyValidationException extends FireflyNetworkException {
 
   bool get isNameInUse => message.contains("already in use");
 
+  // A create with `error_if_duplicate_hash` of a record that the server has.
+  bool get isDuplicate => message.contains("Duplicate of transaction");
+
   @override
   String toString() => "FireflyValidationException: $message";
 }

@@ -109,6 +109,13 @@ Future<void> _run(FireflyPushContext ctx, FireflyOutboxEntry op,
     await fireflyFailOp(op.entityType, op.localPk, e.message);
     ctx.report.warn("Firefly refused a change: ${_shortError(e.message)}");
     await _restoreServerState(ctx, op);
+  } on FireflyNotFoundException catch (e) {
+    // The record is gone on the server. The next full pull removes or
+    // unlinks the local record; the other changes go now.
+    ctx.report.failed++;
+    await fireflyFailOp(op.entityType, op.localPk, e.toString());
+    ctx.report.warn("A record that was changed here is no longer on "
+        "Firefly. The next full sync updates it here.");
   } on FireflyNetworkException catch (e) {
     await fireflyCountAttempt(op.entityType, op.localPk, e.message);
     rethrow;
@@ -287,6 +294,20 @@ Future<void> _pushWallet(FireflyPushContext ctx, FireflyOutboxEntry op) async {
       await fireflyFinishOp(_wallet, pk);
       return;
     }
+    if (op.intent == kFireflyIntentDeactivate) {
+      // The account was deleted on Firefly before the push. The user asked
+      // to delete the wallet: no account is made again.
+      await fireflyRetireUnlinkedWallet(pk);
+      await fireflyFinishOp(_wallet, pk);
+      return;
+    }
+    if (local.archived == true) {
+      // An inactive wallet with no link: its account was deleted on
+      // Firefly. A create would make that account again.
+      await fireflyFinishOp(_wallet, pk);
+      ctx.report.keptLocal++;
+      return;
+    }
     String currency = (local.currency ?? "").trim().toUpperCase();
     Map<String, dynamic> record = await ctx.client.postRaw("/accounts", {
       "name": local.name,
@@ -409,24 +430,29 @@ Future<void> _pushTransaction(
 }
 
 // The Firefly id of the category of a local row: null for no category. A
-// row in a category that is not on the server yet waits.
-int? _categoryIdOf(FireflyPushContext ctx, Transaction row) {
+// row in a category that is not on the server yet waits, and the category is
+// queued: the user put a row into it, thus it goes to Firefly.
+Future<int?> _categoryIdOf(FireflyPushContext ctx, Transaction row) async {
   if (row.categoryFk == kFireflyUncategorizedCategoryPk) return null;
   for (MapEntry<int, String> entry in ctx.apply.categoryPkById.entries) {
     if (entry.value == row.categoryFk) return entry.key;
+  }
+  if (await database.getCategoryInstanceOrNull(row.categoryFk) != null) {
+    await fireflyQueue(_category, row.categoryFk);
   }
   throw _Held("A transaction waits for its category to reach Firefly.");
 }
 
 // The Firefly budget of a row, or null. A local budget that Firefly does not
-// have is no budget there.
-int? _budgetIdOf(FireflyPushContext ctx, Transaction row) {
+// have does not change the budget on the server: the budget stays `unchanged`
+// (the server value of the row; null for a new row).
+int? _budgetIdOf(FireflyPushContext ctx, Transaction row, {int? unchanged}) {
   String? pk = row.sharedReferenceBudgetPk;
   if (pk == null) return null;
   for (MapEntry<int, String> entry in ctx.apply.budgetPkById.entries) {
     if (entry.value == pk) return entry.key;
   }
-  return null;
+  return unchanged;
 }
 
 // The tag of the subcategory of a row ("Parent/Child"), or null.
@@ -440,9 +466,14 @@ Future<String?> _subcategoryTagOf(Transaction row) async {
   return fireflySubcategoryTag(main.name, sub.name);
 }
 
-int _accountOf(FireflyPushContext ctx, String walletPk) {
+// The Firefly account of a wallet. A row in a wallet that is not on the
+// server yet waits, and the wallet is queued (see _categoryIdOf).
+Future<int> _accountOf(FireflyPushContext ctx, String walletPk) async {
   int? id = ctx.apply.accountByWalletPk[walletPk];
   if (id == null) {
+    if (await database.getWalletInstanceOrNull(walletPk) != null) {
+      await fireflyQueue(_wallet, walletPk);
+    }
     throw _Held("A transaction waits for its wallet to reach Firefly.");
   }
   return id;
@@ -490,8 +521,8 @@ Future<void> _pushTransactionCreate(
     split = fireflyCreateRequestFields(fireflyProjectLocalTransfer(
       source: pair.$1,
       destination: pair.$2,
-      sourceAccountId: _accountOf(ctx, pair.$1.walletFk),
-      destinationAccountId: _accountOf(ctx, pair.$2.walletFk),
+      sourceAccountId: await _accountOf(ctx, pair.$1.walletFk),
+      destinationAccountId: await _accountOf(ctx, pair.$2.walletFk),
       crossCurrency: cross,
       description: pair.$1.name,
       notes: pair.$1.note,
@@ -503,8 +534,8 @@ Future<void> _pushTransactionCreate(
   } else {
     split = fireflyCreateRequestFields(fireflyProjectLocalRow(
       row,
-      assetAccountId: _accountOf(ctx, row.walletFk),
-      categoryId: _categoryIdOf(ctx, row),
+      assetAccountId: await _accountOf(ctx, row.walletFk),
+      categoryId: await _categoryIdOf(ctx, row),
       subcategoryTag: await _subcategoryTagOf(row),
       budgetId: _budgetIdOf(ctx, row),
     ));
@@ -522,8 +553,21 @@ Future<void> _pushTransactionCreate(
   }
   split["external_id"] = source.transactionPk;
   await fireflyCountAttempt(_transaction, op.localPk, "sent");
-  Map<String, dynamic> group =
-      await ctx.client.postRaw("/transactions", {"transactions": [split]});
+  Map<String, dynamic> group;
+  try {
+    // The hash of Firefly includes the external id (the key of the row),
+    // thus only a second create of this row is refused: for example after a
+    // restore of a backup that holds the row with no link.
+    group = await ctx.client.postRaw("/transactions",
+        {"error_if_duplicate_hash": true, "transactions": [split]});
+  } on FireflyValidationException catch (e) {
+    if (!e.isDuplicate) rethrow;
+    List<Map<String, dynamic>> found = await ctx.client.getAllRaw(
+        "/search/transactions",
+        {"query": "external_id_is:${source.transactionPk}"});
+    if (found.isEmpty) rethrow;
+    group = found.first;
+  }
   // The answer holds the external id, thus the pull links it to the row.
   await fireflyApplyGroup(ctx.apply, group);
   ctx.report.pushedCreates++;
@@ -582,8 +626,8 @@ Future<void> _pushTransactionUpdate(
     local = fireflyProjectLocalTransfer(
       source: pair.$1,
       destination: pair.$2,
-      sourceAccountId: _accountOf(ctx, pair.$1.walletFk),
-      destinationAccountId: _accountOf(ctx, pair.$2.walletFk),
+      sourceAccountId: await _accountOf(ctx, pair.$1.walletFk),
+      destinationAccountId: await _accountOf(ctx, pair.$2.walletFk),
       crossCurrency: baseSplit["foreign_amount"] != null,
       description:
           fireflyTransferText(pair.$1.name, pair.$2.name, remoteText),
@@ -591,12 +635,16 @@ Future<void> _pushTransactionUpdate(
     );
   } else {
     base = fireflyProjectRemoteSplit(baseSplit);
+    String? subcategoryTag = await _subcategoryTagOf(row);
     local = fireflyProjectLocalRow(
       row,
-      assetAccountId: _accountOf(ctx, row.walletFk),
-      categoryId: _categoryIdOf(ctx, row),
-      subcategoryTag: await _subcategoryTagOf(row),
-      budgetId: _budgetIdOf(ctx, row),
+      assetAccountId: await _accountOf(ctx, row.walletFk),
+      categoryId: await _categoryIdOf(ctx, row),
+      subcategoryTag: subcategoryTag == null
+          ? null
+          : fireflyRemoteSpelling(subcategoryTag, fireflyRemoteTags(baseSplit)),
+      budgetId: _budgetIdOf(ctx, row,
+          unchanged: fireflyParseInt(baseSplit["budget_id"])),
     );
   }
   if (fireflyDiff(local, base).isEmpty) return;
@@ -706,8 +754,23 @@ Future<void> _pushTransactionDelete(
     return;
   }
   List<dynamic> splits = List.from(_attributes(group)["transactions"] ?? []);
-  bool holdsSplit = splits.any((s) =>
-      fireflyParseInt(s["transaction_journal_id"]) == map.fireflyJournalId);
+  Map? liveSplit = splits
+      .whereType<Map>()
+      .where((s) =>
+          fireflyParseInt(s["transaction_journal_id"]) == map.fireflyJournalId)
+      .firstOrNull;
+  if (liveSplit != null && liveSplit["reconciled"] == true) {
+    // Reconciled on Firefly after the last pull. The local row comes back.
+    ctx.report.reverted++;
+    ctx.report.warn("A transaction was reconciled on Firefly. It cannot be "
+        "deleted here. Delete it on Firefly.");
+    for (FireflySyncMapEntry m in journalMaps) {
+      await fireflyDeleteMap(_transaction, m.localPk);
+    }
+    await fireflyApplyGroup(ctx.apply, group);
+    return;
+  }
+  bool holdsSplit = liveSplit != null;
   if (holdsSplit) {
     if (splits.length == 1) {
       await ctx.client.deleteRaw("/transactions/${map.fireflyId}");
@@ -719,7 +782,10 @@ Future<void> _pushTransactionDelete(
     }
     ctx.report.pushedDeletes++;
   }
+  // Both rows of a pair stand for the one split that is now gone. A row
+  // that the user did not delete (the other leg) goes too, else it stays
+  // with no link and the balance of its wallet is wrong.
   for (FireflySyncMapEntry m in journalMaps) {
-    await fireflyDeleteMap(_transaction, m.localPk);
+    await fireflyRemoveLocalTransaction(m.localPk, ctx.report);
   }
 }

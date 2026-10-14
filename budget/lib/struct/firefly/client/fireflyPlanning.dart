@@ -40,6 +40,20 @@ Future<bool> isFireflyBudget(String budgetPk) async {
   return await fireflyMapOf(_budget, budgetPk) != null;
 }
 
+// The budgets that a transaction can be added to. While the sync is on, the
+// Firefly budgets only: a budget of this app is not on Firefly, and the
+// transaction must keep its Firefly budget.
+Stream<List<Budget>> fireflyAddableBudgets(Stream<List<Budget>> budgets) {
+  return budgets.asyncMap((list) async {
+    if (!fireflyEnabled) return list;
+    Set<String> linked = {
+      for (FireflySyncMapEntry map in await fireflyMapsOfType(_budget))
+        map.localPk,
+    };
+    return list.where((b) => linked.contains(b.budgetPk)).toList();
+  });
+}
+
 // The Cashew period of a Firefly budget: from its auto-budget period, else
 // from the length of its budget limit of this month.
 (BudgetReoccurence, int) fireflyBudgetPeriod(

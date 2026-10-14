@@ -6,6 +6,8 @@ import 'dart:convert';
 
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/firefly/fireflyMapper.dart'
+    show kBalanceCorrectionCategoryPk, kFireflyUncategorizedCategoryPk;
 import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:drift/drift.dart';
 
@@ -231,4 +233,43 @@ Future<bool> fireflyQueueDeleteIfLinked(
           ? kFireflyIntentDeactivate
           : kFireflyIntentDelete);
   return true;
+}
+
+// True for a wallet or a category that Firefly holds, while the sync is on.
+// Its delete follows the rules of Firefly (see fireflyQueueDeleteIfLinked).
+Future<bool> fireflyIsLinked(FireflySyncEntityType type, String localPk) async {
+  if (!fireflyEnabled) return false;
+  return await fireflyMapOf(type, localPk) != null;
+}
+
+// The reason why the delete of a wallet or a category is refused while the
+// sync is on (a translation key), or null. The local delete of a record that
+// Firefly does not hold deletes its transactions; a transaction that Firefly
+// holds would then be deleted on the server too.
+//  - The two categories of this app ("0" and the uncategorized category)
+//    hold the transfers and each transaction with no category.
+//  - A wallet or a category with no link can hold transactions that Firefly
+//    holds (moved into it here).
+Future<String?> fireflyDeleteRefusal(
+    FireflySyncEntityType type, String localPk) async {
+  if (!fireflyEnabled) return null;
+  if (type == FireflySyncEntityType.category &&
+      (localPk == kBalanceCorrectionCategoryPk ||
+          localPk == kFireflyUncategorizedCategoryPk)) {
+    return "firefly-system-category-delete-refused";
+  }
+  if (await fireflyMapOf(type, localPk) != null) return null;
+  List<Transaction> rows = await (database.select(database.transactions)
+        ..where((t) => type == FireflySyncEntityType.wallet
+            ? t.walletFk.equals(localPk)
+            : t.categoryFk.equals(localPk)))
+      .get();
+  for (Transaction row in rows) {
+    if (await fireflyMapOf(FireflySyncEntityType.transaction,
+            row.transactionPk) !=
+        null) {
+      return "firefly-delete-holds-firefly-rows";
+    }
+  }
+  return null;
 }

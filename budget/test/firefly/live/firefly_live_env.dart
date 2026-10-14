@@ -58,10 +58,27 @@ class FireflyLive {
     return url == null || url.isEmpty ? null : url;
   }
 
+  // The live tests reset the server and write to it. Thus they run only
+  // against an instance on this computer (the Docker test instance), never
+  // against a server that can hold real data.
+  static bool _isLoopback(String url) {
+    String host = Uri.tryParse(url)?.host ?? "";
+    return host == "127.0.0.1" || host == "localhost" || host == "::1";
+  }
+
   // The reason to skip, or null when the instance is configured.
-  static String? get skipReason => _url == null
-      ? "FIREFLY_LIVE_URL is not set; no Firefly III test instance"
-      : null;
+  static String? get skipReason {
+    String? url = _url;
+    if (url == null) {
+      return "FIREFLY_LIVE_URL is not set; no Firefly III test instance";
+    }
+    if (!_isLoopback(url)) {
+      return "FIREFLY_LIVE_URL is not on this computer. The live tests "
+          "reset the server, thus they run only against a local test "
+          "instance";
+    }
+    return null;
+  }
 
   // An instance with an empty URL when the tests skip. The test bodies do
   // not run then, thus no request goes out.

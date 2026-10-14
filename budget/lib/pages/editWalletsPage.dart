@@ -1,5 +1,7 @@
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
+import 'package:budget/struct/firefly/client/fireflyStore.dart'
+    show fireflyDeleteRefusal, fireflyIsLinked;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/editAssociatedTitlesPage.dart';
@@ -387,6 +389,19 @@ Future<DeletePopupAction?> deleteWalletPopup(
   required TransactionWallet wallet,
   required RoutesToPopAfterDelete routesToPopAfterDelete,
 }) async {
+  String? refusal =
+      await fireflyDeleteRefusal(FireflySyncEntityType.wallet, wallet.walletPk);
+  if (refusal != null) {
+    openSnackbar(SnackbarMessage(
+      title: refusal.tr(),
+      icon: Icons.lock_outline,
+    ));
+    return null;
+  }
+  // A wallet that Firefly holds goes inactive and keeps its transactions.
+  // The question about the transactions does not apply.
+  bool linked =
+      await fireflyIsLinked(FireflySyncEntityType.wallet, wallet.walletPk);
   DeletePopupAction? action = await openDeletePopup(
     context,
     title: "delete-account-question".tr(),
@@ -397,7 +412,7 @@ Future<DeletePopupAction?> deleteWalletPopup(
     int transactionsFromWalletLength =
         (await database.getAllTransactionsFromWallet(wallet.walletPk)).length;
     dynamic result = true;
-    if (transactionsFromWalletLength > 0) {
+    if (transactionsFromWalletLength > 0 && !linked) {
       result = await openPopup(
         context,
         title: "delete-all-transactions-question".tr(),

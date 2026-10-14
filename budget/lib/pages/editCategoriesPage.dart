@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
+import 'package:budget/struct/firefly/client/fireflyStore.dart'
+    show fireflyDeleteRefusal, fireflyIsLinked;
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addCategoryPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -531,6 +533,20 @@ Future<DeletePopupAction?> deleteCategoryPopup(
   if (category.mainCategoryPk != null) {
     isSubCategory = true;
   }
+  String? refusal = await fireflyDeleteRefusal(
+      FireflySyncEntityType.category, category.categoryPk);
+  if (refusal != null) {
+    openSnackbar(SnackbarMessage(
+      title: refusal.tr(),
+      icon: Icons.lock_outline,
+    ));
+    return null;
+  }
+  // Firefly deletes a category and keeps its transactions, with no
+  // category. The question about the transactions does not apply.
+  bool linked = !isSubCategory &&
+      await fireflyIsLinked(
+          FireflySyncEntityType.category, category.categoryPk);
   DeletePopupAction? action = await openDeletePopup(
     context,
     title: isSubCategory
@@ -549,7 +565,7 @@ Future<DeletePopupAction?> deleteCategoryPopup(
         : (await database.getAllTransactionsFromCategory(category.categoryPk))
             .length;
     dynamic result = true;
-    if (transactionsFromCategoryLength > 0) {
+    if (transactionsFromCategoryLength > 0 && !linked) {
       result = await openPopup(
         context,
         title: isSubCategory

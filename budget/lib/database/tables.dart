@@ -6,7 +6,7 @@ import 'package:budget/pages/transactionFilters.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/firefly/client/fireflyPlanning.dart' show isFireflyBudget;
 import 'package:budget/struct/firefly/client/fireflyStore.dart'
-    show fireflyQueueDeleteIfLinked;
+    show fireflyDeleteRefusal, fireflyMapOf, fireflyQueueDeleteIfLinked;
 import 'package:budget/struct/firefly/fireflySettings.dart' show fireflyEnabled;
 import 'package:budget/struct/firebaseAuthGlobal.dart';
 import 'package:budget/struct/settings.dart';
@@ -5312,6 +5312,11 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   //delete category given key
   Future deleteCategory(String categoryPk, int order) async {
+    // A delete that would delete transactions that Firefly holds does not
+    // run; see fireflyDeleteRefusal. The delete popup says why.
+    if (await fireflyDeleteRefusal(
+            FireflySyncEntityType.category, categoryPk) !=
+        null) return;
     // A category that Firefly holds is deleted there first. Firefly removes
     // it from each of its transactions; a local delete here would delete
     // those transactions, and then each of them on the server.
@@ -5413,6 +5418,10 @@ class FinanceDatabase extends _$FinanceDatabase {
 
   //delete wallet given key
   Future deleteWallet(String walletPk, int order) async {
+    // A delete that would delete transactions that Firefly holds does not
+    // run; see fireflyDeleteRefusal. The delete popup says why.
+    if (await fireflyDeleteRefusal(FireflySyncEntityType.wallet, walletPk) !=
+        null) return;
     // A wallet that Firefly holds goes inactive there and keeps its history.
     // A Firefly account delete destroys each transaction of the account.
     if (await fireflyQueueDeleteIfLinked(
@@ -7858,6 +7867,12 @@ class FinanceDatabase extends _$FinanceDatabase {
           ..where((t) => t.categoryFk.isNotIn(categoryPks)))
         .get();
     for (Transaction transaction in wanderingTransactions) {
+      // A delete of a row that Firefly holds would delete it on the server.
+      // The next pull gives it its category again.
+      if (fireflyEnabled &&
+          await fireflyMapOf(
+                  FireflySyncEntityType.transaction, transaction.transactionPk) !=
+              null) continue;
       await deleteTransaction(transaction.transactionPk,
           updateSharedEntry: true);
     }
@@ -7941,6 +7956,15 @@ class FinanceDatabase extends _$FinanceDatabase {
         print("Found related transaction with pairing!");
         return pairedTransaction;
       }
+      // A Firefly transaction has its pair in pairedTransactionFk. The match
+      // by time below can find a leg of a different Firefly transfer (many
+      // have the time 00:00), and the update would change that transfer.
+      if (fireflyEnabled &&
+          await fireflyMapOf(FireflySyncEntityType.transaction,
+                  originalBalanceCorrection.transactionPk) !=
+              null) {
+        return null;
+      }
 
       return (await (select(transactions)
                 ..where(
@@ -7990,6 +8014,20 @@ class FinanceDatabase extends _$FinanceDatabase {
     Transaction originalBalanceCorrection,
     Transaction closeBalanceCorrection,
   ) async {
+    // The amount of the other leg of a Firefly transfer between two
+    // currencies is the amount that the bank booked (the foreign amount).
+    // A conversion with the exchange rates of this app would change it on
+    // Firefly, thus it stays.
+    bool keepAmount = fireflyEnabled &&
+        await fireflyMapOf(FireflySyncEntityType.transaction,
+                closeBalanceCorrection.transactionPk) !=
+            null &&
+        (allWallets.indexedByPk[closeBalanceCorrection.walletFk]?.currency ??
+                "") !=
+            (allWallets.indexedByPk[originalBalanceCorrection.walletFk]
+                    ?.currency ??
+                "");
+    double keptAmount = closeBalanceCorrection.amount;
     closeBalanceCorrection = originalBalanceCorrection.copyWith(
       // Don't change the paired transactionFk either
       pairedTransactionFk: Value(closeBalanceCorrection.pairedTransactionFk),
@@ -8018,6 +8056,9 @@ class FinanceDatabase extends _$FinanceDatabase {
                 .toString(),
           ),
     );
+    if (keepAmount) {
+      closeBalanceCorrection = closeBalanceCorrection.copyWith(amount: keptAmount);
+    }
     print(closeBalanceCorrection);
     return await createOrUpdateTransaction(closeBalanceCorrection,
         insert: false);

@@ -272,13 +272,22 @@ void main() {
       expect(fireflyCategoryColour(record("Food\ncolor: #12AB34")),
           "0xff12ab34");
       expect(fireflyCategoryColour(record("colour=ff8800")), "0xffff8800");
-      expect(fireflyCategoryColour(record("see #ff8800 here")), "0xffff8800");
+      expect(fireflyCategoryColour(record(" #ff8800\n")), "0xffff8800");
       expect(fireflyCategoryColour(record("#000000 color: #ffffff")),
           "0xffffffff");
       expect(fireflyCategoryColour(record("no colour", "00ff00")),
           "0xff00ff00");
       expect(fireflyCategoryColour(record(null)), isNull);
       expect(fireflyCategoryColour(record("issue #1234567")), isNull);
+    });
+
+    test("a hex value in other text is not a colour (review A8)", () {
+      expect(fireflyCategoryColour(record("Invoice #123456")), isNull);
+      expect(fireflyCategoryColour(record("see #ff8800 here")), isNull);
+      expect(fireflyCategoryColour(record("watercolor: #ff8800")), isNull);
+      expect(fireflyNotesWithColour("Invoice #123456", "0xffff8800"),
+          "Invoice #123456\ncolor: #ff8800");
+      expect(fireflyNotesWithColour("#123456", "0xffff8800"), "#ff8800");
     });
 
     test("is written in place, and keeps the rest of the text", () {
@@ -289,6 +298,14 @@ void main() {
       expect(fireflyNotesWithColour("Trips", "0xffff8800"),
           "Trips\ncolor: #ff8800");
       expect(fireflyNotesWithColour(null, "0xffff8800"), "color: #ff8800");
+    });
+  });
+
+  group("subcategory tag spelling", () {
+    test("the push keeps the spelling of the server (review A9)", () {
+      expect(fireflyRemoteSpelling("Food/Lunch", ["food / lunch", "work"]),
+          "food / lunch");
+      expect(fireflyRemoteSpelling("Food/Lunch", ["work"]), "Food/Lunch");
     });
   });
 

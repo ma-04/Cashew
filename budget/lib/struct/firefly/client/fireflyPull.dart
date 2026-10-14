@@ -156,6 +156,12 @@ Future<void> fireflyPullCategories(FireflyPullContext ctx) async {
       // a 422 on its create.
       for (TransactionCategory candidate in locals) {
         if (candidate.mainCategoryPk != null) continue;
+        // The two categories of this app are never a Firefly category: the
+        // push sends no category for their rows.
+        if (candidate.categoryPk == kBalanceCorrectionCategoryPk ||
+            candidate.categoryPk == kFireflyUncategorizedCategoryPk) {
+          continue;
+        }
         if (_sameName(candidate.name) != _sameName(name)) continue;
         if (await fireflyMapOf(_category, candidate.categoryPk) != null) {
           continue;
@@ -245,13 +251,26 @@ Future<void> fireflyRemoveLocalCategory(String categoryPk) async {
       .get();
   for (Transaction row in rows) {
     bool main = row.categoryFk == categoryPk;
+    FireflySyncMapEntry? map = await fireflyMapOf(_transaction, row.transactionPk);
+    Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
+    // Firefly keeps the tags of a transaction when it deletes its category.
+    // The tag of the subcategory thus becomes a plain tag of the row, else
+    // the next push of the row would remove it on the server.
+    List<String> tags = [...?row.tags];
+    String? subcategoryTag = await _subcategoryTagOfRow(row, category);
+    if (subcategoryTag != null) {
+      List<String> remote = snapshot?[kSnapSplit] is Map
+          ? fireflyRemoteTags(Map<String, dynamic>.from(snapshot![kSnapSplit]))
+          : const [];
+      String spelled = fireflyRemoteSpelling(subcategoryTag, remote);
+      if (!tags.contains(spelled)) tags.add(spelled);
+    }
     Transaction moved = row.copyWith(
       categoryFk: main ? kFireflyUncategorizedCategoryPk : row.categoryFk,
       subCategoryFk: Value(null),
+      tags: Value(tags.isEmpty ? null : tags),
     );
     await _writeRow(moved);
-    FireflySyncMapEntry? map = await fireflyMapOf(_transaction, row.transactionPk);
-    Map<String, dynamic>? snapshot = fireflySnapshotOf(map);
     if (map != null && snapshot != null && main) {
       Map<String, dynamic> split = Map<String, dynamic>.from(snapshot[kSnapSplit]);
       split["category_id"] = null;
@@ -273,6 +292,18 @@ Future<void> fireflyRemoveLocalCategory(String categoryPk) async {
     // the budgets to it, and no transaction.
     await database.deleteCategory(categoryPk, category.order);
   }
+}
+
+// The tag of the subcategory of a row, while its category `category` is
+// still in the database, or null.
+Future<String?> _subcategoryTagOfRow(
+    Transaction row, TransactionCategory? category) async {
+  if (row.subCategoryFk == null || category == null) return null;
+  if (row.categoryFk != category.categoryPk) return null;
+  TransactionCategory? sub =
+      await database.getCategoryInstanceOrNull(row.subCategoryFk!);
+  if (sub == null) return null;
+  return fireflySubcategoryTag(category.name, sub.name);
 }
 
 // --- Upgrade ----------------------------------------------------------------
@@ -353,18 +384,43 @@ Future<void> fireflyPullAccounts(FireflyPullContext ctx) async {
 
   // An account that the server no longer has. Firefly deleted its
   // transactions with it, and the pull of the transactions removes the local
-  // rows. A wallet that still holds a row stays, with no link.
+  // rows. The wallet goes too; a wallet that still holds a row becomes
+  // inactive with no link. It never goes to Firefly again: that would make
+  // the deleted account again.
   for (FireflySyncMapEntry map in await fireflyMapsOfType(_wallet)) {
     if (remoteIds.contains(map.fireflyId)) continue;
     if (!await _remoteIsGone(ctx.client, "/accounts/${map.fireflyId}")) {
       continue;
     }
     await fireflyDeleteMap(_wallet, map.localPk);
+    await fireflyFinishOp(_wallet, map.localPk);
     ctx.walletPkByAccount.remove(map.fireflyId);
     ctx.accountByWalletPk.remove(map.localPk);
+    await fireflyRetireUnlinkedWallet(map.localPk);
     ctx.report.warn("The Firefly account of a wallet was deleted. The wallet "
-        "is no longer linked.");
+        "was removed here, or made inactive when it still holds a "
+        "transaction.");
   }
+}
+
+// A wallet with no link that must not go to Firefly: it is deleted when it
+// holds no transaction, else it becomes inactive. The primary wallet "0" of
+// the app is never deleted.
+Future<void> fireflyRetireUnlinkedWallet(String walletPk) async {
+  TransactionWallet? wallet = await database.getWalletInstanceOrNull(walletPk);
+  if (wallet == null) return;
+  bool empty = (await (database.select(database.transactions)
+            ..where((t) => t.walletFk.equals(walletPk))
+            ..limit(1))
+          .get())
+      .isEmpty;
+  if (empty && walletPk != "0") {
+    await database.deleteWallet(walletPk, wallet.order);
+    return;
+  }
+  await (database.update(database.wallets)
+        ..where((w) => w.walletPk.equals(walletPk)))
+      .write(const WalletsCompanion(archived: Value(true)));
 }
 
 // The accounts that are wallets: the asset accounts and the liabilities.
@@ -599,6 +655,12 @@ Future<void> _applySplit(
   int journalId,
   List<FireflySyncMapEntry> maps,
 ) async {
+  // A local row of this split with a queued change, also a deleted one (a
+  // map row with no local row): the push sends it, and the pull keeps the
+  // local state until then. Without this check, the pull would bring back a
+  // row that the user deleted, and the delete would never reach Firefly.
+  if (maps.any((map) => ctx.hasOpenOp(_transaction, map.localPk))) return;
+
   String type = fireflySplitType(split);
   String? sourceWallet =
       ctx.walletPkByAccount[fireflyParseInt(split["source_id"])];
@@ -651,10 +713,10 @@ Future<void> _applySplit(
     await fireflyDeleteMap(_transaction, extra.localPk);
   }
   Transaction? local = map == null ? null : await _rowOrNull(map.localPk);
+  // A create whose answer was lost: the server has the record, thus the
+  // server state goes onto the row and the queued create finds nothing to
+  // send.
   if (map == null) local = await _lostCreate(split);
-  if (local != null && ctx.hasOpenOp(_transaction, local.transactionPk)) {
-    return;
-  }
   if (!ctx.force &&
       local != null &&
       map != null &&
@@ -761,9 +823,6 @@ Future<void> _applyTransfer(
     if (source?.pairedTransactionFk != null) {
       destination = await _rowOrNull(source!.pairedTransactionFk!);
     }
-  }
-  for (Transaction? row in [source, destination]) {
-    if (row != null && ctx.hasOpenOp(_transaction, row.transactionPk)) return;
   }
   if (!ctx.force &&
       source != null &&

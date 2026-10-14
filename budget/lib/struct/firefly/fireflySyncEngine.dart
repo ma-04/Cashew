@@ -33,7 +33,11 @@ import 'package:budget/struct/firefly/client/fireflyReport.dart';
 import 'package:budget/struct/firefly/client/fireflyStore.dart';
 import 'package:budget/struct/firefly/fireflyApiClient.dart';
 import 'package:budget/struct/firefly/fireflyMapper.dart'
-    show isFireflyBalanceAnchorPk, kFireflyBalanceAnchorPkPrefix;
+    show
+        isFireflyBalanceAnchorPk,
+        kBalanceCorrectionCategoryPk,
+        kFireflyBalanceAnchorPkPrefix,
+        kFireflyUncategorizedCategoryPk;
 import 'package:budget/struct/firefly/fireflyModels.dart';
 import 'package:budget/struct/firefly/fireflySettings.dart';
 import 'package:budget/struct/settings.dart';
@@ -189,6 +193,9 @@ Future<bool> fireflySyncNow({
       bool upgrade = version != kFireflyClientVersion;
       if (version == 1) await fireflyBackfillFromSnapshots();
       if (upgrade) pushOnly = false;
+      // An installation that was linked before the moment of the link was
+      // kept: its local records from before the link go now, once.
+      if (fireflyLinkedAt == null) await _removeUnlinkedLeftovers(report);
       await _queueLocalChanges(_scanFrom());
       bool full = fullResync || upgrade || _fullPullIsDue(started);
       if (!pushOnly) {
@@ -297,6 +304,7 @@ Future<void> _rebuild(FireflyApiClient client, FireflySyncReport report) async {
         "removed. The backup holds them.");
   }
 
+  await _removeUnlinkedLeftovers(report);
   await updateSettings("fireflyClientVersion", kFireflyClientVersion,
       updateGlobalState: false);
   await _setLastPull(pulled, full: true);
@@ -319,12 +327,30 @@ Future<void> _setScanFrom(DateTime started) {
       updateGlobalState: false);
 }
 
-Future<void> _queueLocalChanges(DateTime since) async {
+// The local changes since `since`, as the push would send them. Each one is
+// queued, or only counted with `dryRun`.
+//
+// A wallet or a category with no link that is older than the link to the
+// server is a local record from before the sync (a default category of the
+// app). A move in a list changes it, but it does not go to Firefly for that:
+// it goes only when the user puts a transaction into it (see the push).
+Future<FireflyLocalChanges> _queueLocalChanges(DateTime since,
+    {bool dryRun = false}) async {
+  FireflyLocalChanges changes = FireflyLocalChanges();
+  DateTime? linkedAt = fireflyLinkedAt;
+  bool preLink(DateTime created, FireflySyncMapEntry? map) =>
+      map == null && linkedAt != null && created.isBefore(linkedAt);
+  Future<void> queue(FireflySyncEntityType type, String pk) async {
+    if (!dryRun) await fireflyQueue(type, pk);
+  }
+
   for (TransactionWallet wallet in await database.getAllNewWallets(since)) {
     FireflySyncMapEntry? map =
         await fireflyMapOf(FireflySyncEntityType.wallet, wallet.walletPk);
+    if (preLink(wallet.dateCreated, map)) continue;
     if (fireflyLocalRowIsDirty(wallet.dateTimeModified, map)) {
-      await fireflyQueue(FireflySyncEntityType.wallet, wallet.walletPk);
+      changes.wallets++;
+      await queue(FireflySyncEntityType.wallet, wallet.walletPk);
     }
   }
   for (TransactionCategory category
@@ -332,8 +358,10 @@ Future<void> _queueLocalChanges(DateTime since) async {
     if (category.mainCategoryPk != null) continue;
     FireflySyncMapEntry? map = await fireflyMapOf(
         FireflySyncEntityType.category, category.categoryPk);
+    if (preLink(category.dateCreated, map)) continue;
     if (fireflyLocalRowIsDirty(category.dateTimeModified, map)) {
-      await fireflyQueue(FireflySyncEntityType.category, category.categoryPk);
+      changes.categories++;
+      await queue(FireflySyncEntityType.category, category.categoryPk);
     }
   }
   for (Transaction row in await database.getAllNewTransactions(since)) {
@@ -341,8 +369,12 @@ Future<void> _queueLocalChanges(DateTime since) async {
     FireflySyncMapEntry? map = await fireflyMapOf(
         FireflySyncEntityType.transaction, row.transactionPk);
     if (fireflyLocalRowIsDirty(row.dateTimeModified, map)) {
-      await fireflyQueue(
-          FireflySyncEntityType.transaction, row.transactionPk);
+      if (map == null) {
+        if (row.paid) changes.transactionsAdded++;
+      } else {
+        changes.transactionsChanged++;
+      }
+      await queue(FireflySyncEntityType.transaction, row.transactionPk);
     }
   }
   for (DeleteLog log in await database.getAllNewDeleteLogs(since)) {
@@ -352,8 +384,98 @@ Future<void> _queueLocalChanges(DateTime since) async {
     };
     if (type == null) continue;
     if (await fireflyMapOf(type, log.entryPk) == null) continue;
-    await fireflyQueue(type, log.entryPk);
+    changes.transactionsDeleted++;
+    await queue(type, log.entryPk);
   }
+  return changes;
+}
+
+class FireflyLocalChanges {
+  int transactionsAdded = 0;
+  int transactionsChanged = 0;
+  int transactionsDeleted = 0;
+  int wallets = 0;
+  int categories = 0;
+  int queued = 0;
+
+  bool get isEmpty =>
+      transactionsAdded +
+          transactionsChanged +
+          transactionsDeleted +
+          wallets +
+          categories +
+          queued ==
+      0;
+}
+
+// The changes that the next cycle would send: the changes made here since
+// the last cycle, also while the sync was off, and the queued ones. The
+// settings page shows them before the sync goes on again, because a delete
+// made while the sync was off did not use the Firefly rules (a wallet delete
+// there deletes its transactions).
+Future<FireflyLocalChanges> fireflyLocalChangesToSend() async {
+  FireflyLocalChanges changes =
+      await _queueLocalChanges(_scanFrom(), dryRun: true);
+  changes.queued =
+      (await fireflyOutboxEntries(state: FireflyOutboxState.pending)).length;
+  return changes;
+}
+
+// Removes the wallets and the main categories that have no link and no
+// transaction: the defaults of the app and the records from before the
+// sync. The local data then holds the records of Firefly only. The primary
+// wallet "0" and the two categories of this app stay. Then sets the moment
+// of the link.
+Future<void> _removeUnlinkedLeftovers(FireflySyncReport report) async {
+  Set<String> usedCategories = {};
+  Set<String> usedWallets = {};
+  for (Transaction row in await database.select(database.transactions).get()) {
+    usedCategories.add(row.categoryFk);
+    if (row.subCategoryFk != null) usedCategories.add(row.subCategoryFk!);
+    usedWallets.add(row.walletFk);
+  }
+  int removed = 0;
+  for (TransactionCategory category in await database.getAllCategories()) {
+    if (category.mainCategoryPk != null) continue;
+    if (category.categoryPk == kBalanceCorrectionCategoryPk ||
+        category.categoryPk == kFireflyUncategorizedCategoryPk) {
+      continue;
+    }
+    if (await fireflyMapOf(
+            FireflySyncEntityType.category, category.categoryPk) !=
+        null) {
+      continue;
+    }
+    if (usedCategories.contains(category.categoryPk)) continue;
+    List<TransactionCategory> subs = await (database
+            .select(database.categories)
+          ..where((c) => c.mainCategoryPk.equals(category.categoryPk)))
+        .get();
+    if (subs.any((sub) => usedCategories.contains(sub.categoryPk))) continue;
+    TransactionCategory? current =
+        await database.getCategoryInstanceOrNull(category.categoryPk);
+    if (current == null) continue;
+    await database.deleteCategory(current.categoryPk, current.order);
+    removed++;
+  }
+  for (TransactionWallet wallet in await database.getAllWallets()) {
+    if (wallet.walletPk == "0") continue;
+    if (await fireflyMapOf(FireflySyncEntityType.wallet, wallet.walletPk) !=
+        null) {
+      continue;
+    }
+    if (usedWallets.contains(wallet.walletPk)) continue;
+    TransactionWallet? current =
+        await database.getWalletInstanceOrNull(wallet.walletPk);
+    if (current == null) continue;
+    await database.deleteWallet(current.walletPk, current.order);
+    removed++;
+  }
+  if (removed > 0) {
+    report.warn("$removed local categories and wallets that Firefly does not "
+        "have and that hold no transaction were removed.");
+  }
+  await setFireflyLinkedAt(DateTime.now());
 }
 
 // --- Pull -------------------------------------------------------------------

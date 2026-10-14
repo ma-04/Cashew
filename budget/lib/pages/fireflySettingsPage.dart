@@ -251,6 +251,15 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     // rebuild of the local copy from Firefly.
     bool willRebuild = hostChanged || await fireflyNeedsRebuild();
     if (willRebuild && !await _confirmRebuildOnEnable()) return false;
+    // The sync goes on again with the same server. The changes made here
+    // since the last cycle (also while the sync was off, when a delete did
+    // not use the Firefly rules) go to Firefly only after the user saw them.
+    bool discard = false;
+    if (!willRebuild) {
+      _OffChangesChoice choice = await _askAboutLocalChanges();
+      if (choice == _OffChangesChoice.cancel) return false;
+      discard = choice == _OffChangesChoice.discard;
+    }
     if (turnOffGoogleDrive) {
       await updateSettings("backupSync", false,
           pagesNeedingRefresh: [], updateGlobalState: false);
@@ -268,13 +277,56 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     setState(() {
       enabled = true;
     });
-    _syncAfterEnable();
+    _syncAfterEnable(discard: discard);
     return true;
   }
 
-  Future<void> _syncAfterEnable() async {
-    // The user confirmed the rebuild in _enable when one is due.
-    await fireflySyncNow(allowRebuild: true);
+  // Shows the changes that the first cycle would send, if there are any.
+  Future<_OffChangesChoice> _askAboutLocalChanges() async {
+    FireflyLocalChanges changes = await fireflyLocalChangesToSend();
+    if (changes.isEmpty || !mounted) return _OffChangesChoice.send;
+    _OffChangesChoice choice = _OffChangesChoice.cancel;
+    await openPopup(
+      context,
+      title: "firefly-changes-while-off-title".tr(),
+      description: "firefly-changes-while-off".tr(namedArgs: {
+        "added": changes.transactionsAdded.toString(),
+        "changed": changes.transactionsChanged.toString(),
+        "deleted": changes.transactionsDeleted.toString(),
+        "wallets": changes.wallets.toString(),
+        "categories": changes.categories.toString(),
+        "queued": changes.queued.toString(),
+      }),
+      icon: appStateSettings["outlinedIcons"]
+          ? Icons.warning_amber_outlined
+          : Icons.warning_amber_rounded,
+      onSubmitLabel: "firefly-send-changes".tr(),
+      onSubmit: () {
+        choice = _OffChangesChoice.send;
+        popRoute(context);
+      },
+      onExtraLabel: "firefly-discard-changes".tr(),
+      onExtra: () {
+        choice = _OffChangesChoice.discard;
+        popRoute(context);
+      },
+      onCancelLabel: "cancel".tr(),
+      onCancel: () {
+        popRoute(context);
+      },
+    );
+    return choice;
+  }
+
+  Future<void> _syncAfterEnable({bool discard = false}) async {
+    if (discard) {
+      // The rebuild makes a backup first, and then takes the server state
+      // over the local changes.
+      await fireflyRebuildFromFirefly();
+    } else {
+      // The user confirmed the rebuild in _enable when one is due.
+      await fireflySyncNow(allowRebuild: true);
+    }
     await _refreshQueuedChanges();
     await _refreshLinkedWallets();
   }
@@ -835,3 +887,5 @@ class _FireflySettingsPageState extends State<FireflySettingsPage> {
     }
   }
 }
+
+enum _OffChangesChoice { send, discard, cancel }

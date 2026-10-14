@@ -1244,5 +1244,11 @@
   "firefly-add-tag": "Add tag",
   "firefly-read-only": "Read-only",
   "firefly-read-only-description": "This transaction is reconciled, an opening balance, or a reconciliation on Firefly. Change it on Firefly.",
-  "firefly-cannot-mark-unpaid": "A transaction on Firefly cannot be marked as unpaid"
+  "firefly-cannot-mark-unpaid": "A transaction on Firefly cannot be marked as unpaid",
+  "firefly-system-category-delete-refused": "This category holds the transfers or the Firefly transactions with no category. It cannot be deleted while Firefly sync is on",
+  "firefly-delete-holds-firefly-rows": "This holds transactions from Firefly. Move them to another category or account first",
+  "firefly-changes-while-off-title": "Changes made while sync was off",
+  "firefly-changes-while-off": "Since the last sync: {added} new, {changed} changed and {deleted} deleted transactions, {wallets} accounts and {categories} categories, and {queued} queued changes. Send them to Firefly, or discard them and load the data from Firefly again (a backup is made first)?",
+  "firefly-send-changes": "Send to Firefly",
+  "firefly-discard-changes": "Discard"
 }

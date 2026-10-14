@@ -209,6 +209,15 @@ List<String> fireflyLocalTags(Transaction row, String? subcategoryTag) {
 String fireflySubcategoryTag(String categoryName, String subcategoryName) =>
     "${categoryName.trim()}/${subcategoryName.trim()}";
 
+// The spelling that the server has for the tag `tag`, from the tags `remote`
+// of the record: the pull reads "food / lunch" as the subcategory Lunch of
+// Food, thus the push must not send "Food/Lunch" in its place.
+String fireflyRemoteSpelling(String tag, List<String> remote) {
+  String key(String text) =>
+      text.split("/").map((part) => part.trim().toLowerCase()).join("/");
+  return remote.where((r) => key(r) == key(tag)).firstOrNull ?? tag;
+}
+
 String? fireflyLocalPayee(Transaction row) {
   String name = (row.payee ?? "").trim();
   return name.isEmpty ? null : name;
@@ -450,12 +459,16 @@ String fireflyPairType(String? sourceKind, String? destinationKind) {
 // --- Category colour ---------------------------------------------------------
 
 // The colour of a category is in the notes of the Firefly category, as a hex
-// colour such as "color: #ff8800" or "#ff8800". A "color:" or "colour:" label
-// has priority over a bare hex value. Firefly 6 also has a `color` field: the
-// client reads it only when the notes have no colour, and never writes it.
-final RegExp _labelledColour =
-    RegExp(r"colou?r\s*[:=]\s*#?([0-9a-f]{6})\b", caseSensitive: false);
-final RegExp _bareColour = RegExp(r"#([0-9a-f]{6})\b", caseSensitive: false);
+// colour with a label, such as "color: #ff8800", or as notes that are only a
+// hex colour ("#ff8800"). A hex value in other text ("Invoice #123456") is not
+// a colour: a colour change here would change that text on the server.
+// Firefly 6 also has a `color` field: the client reads it only when the notes
+// have no colour, and never writes it.
+final RegExp _labelledColour = RegExp(
+    r"(?<![a-z])colou?r\s*[:=]\s*#?([0-9a-f]{6})\b",
+    caseSensitive: false);
+final RegExp _bareColour =
+    RegExp(r"^\s*#([0-9a-f]{6})\s*$", caseSensitive: false);
 
 // The key in a category snapshot that holds the local colour at the time of
 // the last apply. A colour that differs from it is a change of the user.
