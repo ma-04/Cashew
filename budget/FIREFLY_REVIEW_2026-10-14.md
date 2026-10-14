@@ -25,7 +25,7 @@ Status labels:
 | A11 | Adding a Firefly withdrawal to a local-only Cashew budget sends `budget_id: null` and clears its Firefly budget. This is by design in the plan, but the user cannot see it. After the v3 backfill, a pending row in a local budget has the same effect. | CODE | fireflyPush.dart:423-431 |
 | A12 | A backup restore can POST a duplicate. `_lostCreate` finds the server record but returns on an open op without linking it, and the push skips the search because `attempts == 0`. `error_if_duplicate_hash` is never sent (plan §3.2 says it is). | PLAUSIBLE | fireflyPull.dart:653-657; fireflyPush.dart:472-526 |
 | A13 | The delete path checks only the snapshot's `reconciled` flag, not the live flag that the update path uses. A row reconciled on Firefly after the last pull can be deleted. | CODE (reviewer quote) | fireflyPush.dart:697-719 |
-| A14 | **Kept (owner's decision):** a PUT does not send `apply_rules`, so Firefly runs the user's "update" rules, the same as an edit in the web UI. The next pull shows the result. | — |
+| A14 | `apply_rules` is not sent on PUT. If Firefly runs the user's rules on update, a date edit could change other fields on the server. | Accepted by the owner (see the status table) | fireflyPush.dart:657-674 |
 | A15 | A date is sent as a UTC instant. A server in another time zone can book it on the previous day. | PLAUSIBLE (needs a server check) | fireflyProjection.dart:283-288 |
 | — | Amount float noise (`99999.99` → `"99999.990000000005"`) | **REJECTED**: Firefly stores `99999.990000000000` | fireflyProjection.dart:293 |
 
