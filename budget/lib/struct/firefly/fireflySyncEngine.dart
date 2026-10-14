@@ -195,7 +195,9 @@ Future<bool> fireflySyncNow({
       if (upgrade) pushOnly = false;
       // An installation that was linked before the moment of the link was
       // kept: its local records from before the link go now, once.
-      if (fireflyLinkedAt == null) await _removeUnlinkedLeftovers(report);
+      if (fireflyLinkedAt == null) {
+        await _removeUnlinkedLeftovers(report, archiveWallets: true);
+      }
       await _queueLocalChanges(_scanFrom());
       bool full = fullResync || upgrade || _fullPullIsDue(started);
       if (!pushOnly) {
@@ -425,8 +427,12 @@ Future<FireflyLocalChanges> fireflyLocalChangesToSend() async {
 // transaction: the defaults of the app and the records from before the
 // sync. The local data then holds the records of Firefly only. The primary
 // wallet "0" and the two categories of this app stay. Then sets the moment
-// of the link.
-Future<void> _removeUnlinkedLeftovers(FireflySyncReport report) async {
+// of the link. With `archiveWallets`, such a wallet becomes inactive and is
+// not deleted: an installation that was linked before this step did not
+// confirm a replace of its data now, and a budget or a home screen widget
+// can still name the wallet.
+Future<void> _removeUnlinkedLeftovers(FireflySyncReport report,
+    {bool archiveWallets = false}) async {
   Set<String> usedCategories = {};
   Set<String> usedWallets = {};
   for (Transaction row in await database.select(database.transactions).get()) {
@@ -468,12 +474,20 @@ Future<void> _removeUnlinkedLeftovers(FireflySyncReport report) async {
     TransactionWallet? current =
         await database.getWalletInstanceOrNull(wallet.walletPk);
     if (current == null) continue;
-    await database.deleteWallet(current.walletPk, current.order);
+    if (archiveWallets) {
+      if (current.archived == true) continue;
+      await (database.update(database.wallets)
+            ..where((w) => w.walletPk.equals(current.walletPk)))
+          .write(const WalletsCompanion(archived: Value(true)));
+    } else {
+      await database.deleteWallet(current.walletPk, current.order);
+    }
     removed++;
   }
   if (removed > 0) {
     report.warn("$removed local categories and wallets that Firefly does not "
-        "have and that hold no transaction were removed.");
+        "have and that hold no transaction were removed"
+        "${archiveWallets ? " (the wallets were made inactive)" : ""}.");
   }
   await setFireflyLinkedAt(DateTime.now());
 }

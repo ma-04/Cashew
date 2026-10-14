@@ -230,6 +230,36 @@ void main() {
           isNot(contains("Beauty")));
     });
 
+    test('A3: an installation linked before the link moment cleans up once, '
+        'and keeps its wallets as inactive', () async {
+      await sync();
+      appStateSettings["fireflyLinkedAt"] = "";
+      await database.createOrUpdateWallet(TransactionWallet(
+        walletPk: "old-wallet",
+        name: "Old cash",
+        dateCreated: DateTime(2020),
+        order: 20,
+        currency: "eur",
+        decimals: 2,
+      ));
+      await database.createOrUpdateCategory(TransactionCategory(
+        categoryPk: "old-category",
+        name: "Old default",
+        dateCreated: DateTime(2020),
+        order: 30,
+        income: false,
+      ));
+      await sync();
+      expect(await database.getCategoryInstanceOrNull("old-category"), isNull);
+      TransactionWallet? wallet =
+          await database.getWalletInstanceOrNull("old-wallet");
+      expect(wallet?.archived, isTrue);
+      List<Map<String, dynamic>> remote = List.from(
+          (await live.get("/accounts", {"type": "asset"})).json["data"]);
+      expect(remote.map((a) => a["attributes"]["name"]),
+          isNot(contains("Old cash")));
+    });
+
     test('A4: an account deleted on Firefly is not made again', () async {
       await sync();
       expect((await live.delete("/accounts/$savings")).status, 204);
