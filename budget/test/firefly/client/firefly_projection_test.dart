@@ -268,33 +268,27 @@ void main() {
           "attributes": {"notes": notes, "color": color}
         };
 
-    test("is read from a label, a bare hex value or the color field", () {
+    test("is read from the color line that the app writes", () {
       expect(fireflyCategoryColour(record("Food\ncolor: #12AB34")),
           "0xff12ab34");
-      expect(fireflyCategoryColour(record("colour=ff8800")), "0xffff8800");
-      expect(fireflyCategoryColour(record(" #ff8800\n")), "0xffff8800");
-      expect(fireflyCategoryColour(record("#000000 color: #ffffff")),
-          "0xffffffff");
-      expect(fireflyCategoryColour(record("no colour", "00ff00")),
-          "0xff00ff00");
+      expect(fireflyCategoryColour(record("Color: #ff8800")), "0xffff8800");
       expect(fireflyCategoryColour(record(null)), isNull);
-      expect(fireflyCategoryColour(record("issue #1234567")), isNull);
+      expect(fireflyCategoryColour(record("color: #1234567")), isNull);
     });
 
-    test("a hex value in other text is not a colour (review A8)", () {
+    test("no other text is a colour (review A8)", () {
       expect(fireflyCategoryColour(record("Invoice #123456")), isNull);
-      expect(fireflyCategoryColour(record("see #ff8800 here")), isNull);
+      expect(fireflyCategoryColour(record("#ff8800")), isNull);
       expect(fireflyCategoryColour(record("watercolor: #ff8800")), isNull);
+      expect(fireflyCategoryColour(record("colour=ff8800")), isNull);
+      expect(fireflyCategoryColour(record("no colour", "00ff00")), isNull);
       expect(fireflyNotesWithColour("Invoice #123456", "0xffff8800"),
           "Invoice #123456\ncolor: #ff8800");
-      expect(fireflyNotesWithColour("#123456", "0xffff8800"), "#ff8800");
     });
 
     test("is written in place, and keeps the rest of the text", () {
       expect(fireflyNotesWithColour("Trips\ncolor: #12ab34", "0xffff8800"),
           "Trips\ncolor: #ff8800");
-      expect(fireflyNotesWithColour("Colour: FF0000.", "0xff00ff00"),
-          "Colour: 00ff00.");
       expect(fireflyNotesWithColour("Trips", "0xffff8800"),
           "Trips\ncolor: #ff8800");
       expect(fireflyNotesWithColour(null, "0xffff8800"), "color: #ff8800");

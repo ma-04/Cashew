@@ -458,17 +458,14 @@ String fireflyPairType(String? sourceKind, String? destinationKind) {
 
 // --- Category colour ---------------------------------------------------------
 
-// The colour of a category is in the notes of the Firefly category, as a hex
-// colour with a label, such as "color: #ff8800", or as notes that are only a
-// hex colour ("#ff8800"). A hex value in other text ("Invoice #123456") is not
-// a colour: a colour change here would change that text on the server.
-// Firefly 6 also has a `color` field: the client reads it only when the notes
-// have no colour, and never writes it.
-final RegExp _labelledColour = RegExp(
-    r"(?<![a-z])colou?r\s*[:=]\s*#?([0-9a-f]{6})\b",
-    caseSensitive: false);
-final RegExp _bareColour =
-    RegExp(r"^\s*#([0-9a-f]{6})\s*$", caseSensitive: false);
+// The colour of a category is set here, and the app keeps it in the notes of
+// the Firefly category as a line "color: #rrggbb". Only this line is read: a
+// hex value in other text ("Invoice #123456") is not a colour, and a colour
+// change here would change that text on the server. The `color` field of
+// Firefly is not read or written.
+final RegExp _colourLine =
+    RegExp(r"^[ \t]*color:[ \t]*#([0-9a-f]{6})\b",
+        caseSensitive: false, multiLine: true);
 
 // The key in a category snapshot that holds the local colour at the time of
 // the last apply. A colour that differs from it is a change of the user.
@@ -476,7 +473,7 @@ const String kSnapshotLocalColour = "cashew_colour";
 
 RegExpMatch? _colourMatch(String? notes) {
   if (notes == null) return null;
-  return _labelledColour.firstMatch(notes) ?? _bareColour.firstMatch(notes);
+  return _colourLine.firstMatch(notes);
 }
 
 // Returns the six lowercase hex digits of a colour value of Cashew
@@ -494,8 +491,7 @@ String? fireflyColourDigits(String? colour) {
 // the record has no colour.
 String? fireflyCategoryColour(Map<String, dynamic> record) {
   Map attributes = record["attributes"] ?? {};
-  String? digits = _colourMatch(attributes["notes"]?.toString())?.group(1) ??
-      fireflyColourDigits(attributes["color"]?.toString());
+  String? digits = _colourMatch(attributes["notes"]?.toString())?.group(1);
   if (digits == null) return null;
   return "0xff" + digits.toLowerCase();
 }

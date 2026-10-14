@@ -25,7 +25,7 @@ Status labels:
 | A11 | Adding a Firefly withdrawal to a local-only Cashew budget sends `budget_id: null` and clears its Firefly budget. This is by design in the plan, but the user cannot see it. After the v3 backfill, a pending row in a local budget has the same effect. | CODE | fireflyPush.dart:423-431 |
 | A12 | A backup restore can POST a duplicate. `_lostCreate` finds the server record but returns on an open op without linking it, and the push skips the search because `attempts == 0`. `error_if_duplicate_hash` is never sent (plan §3.2 says it is). | PLAUSIBLE | fireflyPull.dart:653-657; fireflyPush.dart:472-526 |
 | A13 | The delete path checks only the snapshot's `reconciled` flag, not the live flag that the update path uses. A row reconciled on Firefly after the last pull can be deleted. | CODE (reviewer quote) | fireflyPush.dart:697-719 |
-| A14 | `apply_rules` is not sent on PUT. If Firefly runs the user's rules on update, a date edit could change other fields on the server. | PLAUSIBLE (Firefly default not verified) | fireflyPush.dart:657-674 |
+| A14 | **Kept (owner's decision):** a PUT does not send `apply_rules`, so Firefly runs the user's "update" rules, the same as an edit in the web UI. The next pull shows the result. | — |
 | A15 | A date is sent as a UTC instant. A server in another time zone can book it on the previous day. | PLAUSIBLE (needs a server check) | fireflyProjection.dart:283-288 |
 | — | Amount float noise (`99999.99` → `"99999.990000000005"`) | **REJECTED**: Firefly stores `99999.990000000000` | fireflyProjection.dart:293 |
 
@@ -94,13 +94,13 @@ Then everything in section A was fixed, plus B1 to B3. The tests in `test/firefl
 | A4 | An account deleted on Firefly: the wallet is deleted when it is empty, or else made inactive. An unlinked inactive wallet, or a deactivate intent with no link, is never POSTed. A 404 no longer stops the push. | live A4 |
 | A5 | Covered by the A3 change: a transaction in an unlinked category queues that category. | not tested |
 | A7 | A Firefly row matches its other leg by `pairedTransactionFk` only. "Update both" keeps the other leg's amount on a transfer between two currencies. | not tested (UI path) |
-| A8 | A colour is read only from a `color:`/`colour:` label (with a word boundary), or from notes that are only a hex value. Other text is never changed. | unit |
+| A8 | Owner's decision: Cashew sets the colour and only Cashew reads it. Cashew writes a `color: #rrggbb` line in the notes, and that line is the only thing it reads. Any other text in the notes is never treated as a colour and never changed, and Firefly's `color` field is not used. | unit |
 | A9 | The push keeps the server's spelling of the `Parent/Child` tag. When a category is deleted, its subcategory tag stays on the row as a plain tag. A rename still creates new tags (not fixed). | unit (spelling) |
 | A10 | Matching by name never links the two system categories. | — |
 | A11 | Local-only budgets are hidden from both pickers while sync is on. The push never clears `budget_id` because a row is in a local-only budget. | live A11 |
 | A12 | Creates send `error_if_duplicate_hash: true`. On Docker this was checked: the hash includes `external_id`, so only a second create of the same row is refused. A refused duplicate is linked through an `external_id` search. The pull links a lost create and does not skip it. | live A12 |
 | A13 | A delete checks the live `reconciled` flag. | — |
-| A14 | **Not changed:** a PUT does not send `apply_rules`. On Docker, Firefly accepts `apply_rules: false`. The web UI applies "update" rules when you edit, and the next pull shows their result. Waiting for the owner's decision. | — |
+| A14 | **Kept (owner's decision):** a PUT does not send `apply_rules`, so Firefly runs the user's "update" rules, the same as an edit in the web UI. The next pull shows the result. | — |
 | A15 | **Rejected:** on Docker, a date sent with `+06:00` is stored and shown in the server's time zone, the same as a `Z` date. The day is set by the server's `TZ`, not by the client. | Docker probe |
 | B1 | The pull keeps the local state of each split that has an open op, including a deleted row. | live B1 |
 | B2 | The wallet page keeps `archived` and `accountKind` on save. | — |
